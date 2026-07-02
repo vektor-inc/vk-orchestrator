@@ -141,6 +141,68 @@ export function writeVkTerminalsConfig(cfg = {}, vkDir = resolveVkTerminalsDir()
 }
 
 /**
+ * vk-terminals の設定パネル用「設定ディスクリプタ」を組み立てる。
+ *
+ * vk-terminals 側は特定ツールの設定内容を知らない汎用パネルで、env
+ * VK_TERMINALS_SETTINGS が指すこのディスクリプタ（targetPath + 項目スキーマ）に
+ * 従って読み書きする。ここで vk-orchestrator の統合 config.json のスキーマを与える
+ * ことで、GUI から config.json を直接手編集せずに済むようにする。
+ *
+ * @param {string} [targetPath] 編集対象の config.json パス（既定は解決済みパス）
+ * @returns {object} 設定ディスクリプタ
+ */
+export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
+  return {
+    title: 'vk-orchestrator 設定',
+    note: '保存後、orchestrator を再起動すると反映されます（vkTerminals 側の項目は次回 up/apply で反映）。',
+    targetPath,
+    groups: [
+      {
+        label: 'GitHub',
+        fields: [
+          { key: 'github.token',      label: 'Personal Access Token', type: 'password', help: 'repo スコープ', emptyToNull: true },
+          { key: 'github.owner',      label: 'Owner',                 type: 'text' },
+          { key: 'github.repo',       label: 'Repo',                  type: 'text' },
+          { key: 'github.sourceOrg',  label: 'Source Org',            type: 'text' },
+          { key: 'github.queueLabel', label: 'Queue Label',           type: 'text' },
+        ],
+      },
+      {
+        label: 'オーケストレーター',
+        fields: [
+          { key: 'orchestrator.pollIntervalMs',  label: 'ポーリング間隔 (ms)',  type: 'number' },
+          { key: 'orchestrator.watchdogIdleMs',  label: 'ウォッチドッグ idle (ms)', type: 'number' },
+          { key: 'orchestrator.assigneeFilter',  label: '担当者フィルタ (login)', type: 'text', help: '空で無効', emptyToNull: true },
+        ],
+      },
+      {
+        label: 'vk-terminals',
+        fields: [
+          { key: 'vkTerminals.port',            label: 'API ポート',          type: 'number' },
+          { key: 'vkTerminals.host',            label: 'API ホスト',          type: 'text' },
+          { key: 'vkTerminals.initialCommand',  label: '初期コマンド',        type: 'text' },
+          { key: 'vkTerminals.agentroom',       label: 'エージェントルーム表示', type: 'boolean' },
+          { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '例: [{"cwd":"/path"}]' },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * 設定ディスクリプタを vk-terminals のインストールディレクトリへ書き出す。
+ * up 実行時にここへ書き出し、env VK_TERMINALS_SETTINGS でパスを GUI へ渡す。
+ * @param {string} [vkDir] vk-terminals のインストールディレクトリ
+ * @param {string} [targetPath] 編集対象の config.json パス
+ * @returns {string} 書き出したディスクリプタのパス
+ */
+export function writeSettingsDescriptor(vkDir = resolveVkTerminalsDir(), targetPath = resolveConfigPath()) {
+  const descPath = join(vkDir, 'settings-descriptor.json');
+  writeFileSync(descPath, JSON.stringify(buildSettingsDescriptor(targetPath), null, 2) + '\n');
+  return descPath;
+}
+
+/**
  * env(＋事前に applyConfigToEnv 済みの config.json)から、オーケストレーターの
  * 構造化ランタイム設定を解決する。GITHUB_TOKEN 未設定なら例外。
  * @param {string[]} [argv]
