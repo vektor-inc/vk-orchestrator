@@ -48,13 +48,48 @@ export function setOwnPaneTitle(title, stream = process.stdout) {
 }
 
 // vk-terminals が起動しているか確認
-export async function checkHealth(port) {
+// timeoutMs: 応答しないホスト（Tailscale IP 未接続など）で fetch が無限にハングして
+// 呼び出し側（waitForHealth のポーリング等）が固まるのを防ぐための打ち切り時間。
+export async function checkHealth(port, { timeoutMs = 3_000 } = {}) {
   try {
-    const res = await fetch(`${BASE_URL(port)}/api/health`);
+    const res = await fetch(`${BASE_URL(port)}/api/health`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     const json = await res.json();
     return json.ok === true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * vk-terminals の HTTP API が healthy になるまでポーリングで待つ。
+ *
+ * `up` が GUI(Electron)を起動した直後は API サーバーがまだ listen していないため、
+ * orchestrator を起動する前にここで疎通を待つ（待たずに起動しても loop() は健全性
+ * ゲートで捌くが、初回 dispatch が POLL_INTERVAL 分遅れるのを避けるため）。
+ *
+ * @param {number} port vk-terminals API ポート
+ * @param {object} [options]
+ * @param {number}   [options.timeoutMs=60000]  全体タイムアウト
+ * @param {number}   [options.intervalMs=1000]  ポーリング間隔
+ * @param {(port:number)=>Promise<boolean>} [options.check=checkHealth] 疎通判定（テスト用に差し替え可能）
+ * @param {(ms:number)=>Promise<void>} [options.sleep] 待機関数（テスト用に差し替え可能）
+ * @returns {Promise<boolean>} healthy を確認できたら true、タイムアウトなら false
+ */
+export async function waitForHealth(port, options = {}) {
+  const {
+    timeoutMs  = 60_000,
+    intervalMs = 1_000,
+    check      = checkHealth,
+    sleep      = (ms) => new Promise(r => setTimeout(r, ms)),
+  } = options;
+
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await check(port)) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(intervalMs);
   }
 }
 
@@ -77,11 +112,16 @@ export async function findIdleTerminal(port, busyTermIds = new Set()) {
 
 // vk-terminals に新規ペインを作成して termId を返す
 //   cwd を指定するとそのディレクトリで開く（未指定なら vk-terminals 側で HOME にフォールバック）。
-export async function createNewPane(port, cwd = null) {
+//   options.noClaude=true を渡すと claude を自動起動せず素のシェルとしてペインを開く
+//   （orchestrator 自体をペインで動かす用途など）。
+export async function createNewPane(port, cwd = null, options = {}) {
+  const body = {};
+  if (cwd) body.cwd = cwd;
+  if (typeof options.noClaude === 'boolean') body.noClaude = options.noClaude;
   const res = await fetch(`${BASE_URL(port)}/api/new-pane`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(cwd ? { cwd } : {}),
+    body: JSON.stringify(body),
   });
   const json = await res.json();
   if (!json.ok) throw new Error(json.error ?? 'new-pane failed');

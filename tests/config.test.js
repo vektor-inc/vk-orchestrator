@@ -6,13 +6,15 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   loadUnifiedConfig,
   applyConfigToEnv,
   toVkTerminalsConfig,
+  vkTerminalsConfigPath,
+  writeVkTerminalsConfig,
 } from '../src/config.js';
 
 function withTmpConfig(obj, fn) {
@@ -124,6 +126,25 @@ test('applyConfigToEnv: .env の GITHUB_TOKEN が config.json より優先され
   } finally {
     if (saved === undefined) delete process.env.GITHUB_TOKEN;
     else process.env.GITHUB_TOKEN = saved;
+  }
+});
+
+test('vkTerminalsConfigPath: 指定した vk-terminals ディレクトリ内 config.json を指す', () => {
+  assert.equal(vkTerminalsConfigPath('/opt/vk-terminals'), '/opt/vk-terminals/config.json');
+});
+
+test('writeVkTerminalsConfig: 指定ディレクトリ内 config.json へ書き出す', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkdir-'));
+  try {
+    const target = writeVkTerminalsConfig(
+      { vkTerminals: { host: '127.0.0.1', agentroom: true } },
+      dir,
+    );
+    assert.equal(target, join(dir, 'config.json'));
+    const written = JSON.parse(readFileSync(target, 'utf8'));
+    assert.deepEqual(written, { apiHost: '127.0.0.1', agentroom: true });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

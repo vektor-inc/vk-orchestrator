@@ -2,7 +2,7 @@
 //
 // vk-orchestrator は「単一の設定ファイル(config.json)」を正とし、そこから
 //   1) 自分自身(オーケストレーター)のランタイム設定
-//   2) vk-terminals 用の設定ファイル(~/.vk-terminals/config.json)
+//   2) vk-terminals 用の設定ファイル(vk-terminals のインストールディレクトリ内 config.json)
 // の両方を賄う。秘密情報(GITHUB_TOKEN)だけは .env に置く（config.json はコミット対象に
 // しやすいよう秘密を含めない設計）。
 //
@@ -14,9 +14,11 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
+const require = createRequire(import.meta.url);
 
 /**
  * config.json の探索順:
@@ -92,18 +94,47 @@ export function toVkTerminalsConfig(cfg = {}) {
   return out;
 }
 
-/** vk-terminals が読む設定ファイルの書き出し先（~/.vk-terminals/config.json）。 */
-export function vkTerminalsConfigPath() {
-  return join(homedir(), '.vk-terminals', 'config.json');
+/**
+ * 同梱している vk-terminals のインストールディレクトリを解決する。
+ * (optionalDependencies として導入される package の実体パス)
+ * 未導入なら例外を投げる。
+ * @returns {string} vk-terminals パッケージのルートディレクトリ
+ */
+export function resolveVkTerminalsDir() {
+  return dirname(require.resolve('vk-terminals/package.json'));
 }
 
 /**
- * 統合設定の vkTerminals セクションを ~/.vk-terminals/config.json へ書き出す。
+ * vk-terminals が読む設定ファイルの書き出し先。
+ * 以前は ~/.vk-terminals/config.json（ユーザーごとに場所が変わる）へ書いていたが、
+ * vk-terminals 自身のディレクトリ内 config.json を正とするため、そこへ書き出す。
+ * @param {string} [vkDir] vk-terminals のインストールディレクトリ
+ * @returns {string}
+ */
+export function vkTerminalsConfigPath(vkDir = resolveVkTerminalsDir()) {
+  return join(vkDir, 'config.json');
+}
+
+/**
+ * ~/.vk-terminals/config.json は vk-terminals の設定探索でインストールディレクトリ内
+ * config.json より優先されるため、存在すると appDir 側へ書いた設定が無視される。
+ * 存在すればそのパスを、無ければ null を返す（呼び出し側で警告するため）。
+ * @returns {string|null}
+ */
+export function shadowingHomeConfigPath() {
+  const p = join(homedir(), '.vk-terminals', 'config.json');
+  return existsSync(p) ? p : null;
+}
+
+/**
+ * 統合設定の vkTerminals セクションを、vk-terminals のインストールディレクトリ内
+ * config.json へ書き出す。
  * @param {object} cfg loadUnifiedConfig() の戻り値
+ * @param {string} [vkDir] vk-terminals のインストールディレクトリ
  * @returns {string} 書き出したパス
  */
-export function writeVkTerminalsConfig(cfg = {}) {
-  const target = vkTerminalsConfigPath();
+export function writeVkTerminalsConfig(cfg = {}, vkDir = resolveVkTerminalsDir()) {
+  const target = vkTerminalsConfigPath(vkDir);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, JSON.stringify(toVkTerminalsConfig(cfg), null, 2) + '\n');
   return target;

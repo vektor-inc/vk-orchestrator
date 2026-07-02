@@ -9,8 +9,9 @@
   },
   "main": "src/engine/index.js",
   "scripts": {
+    "start": "node bin/vk-orchestrator.js up",
     "up": "node bin/vk-orchestrator.js up",
-    "start": "node bin/vk-orchestrator.js start",
+    "orchestrator": "node bin/vk-orchestrator.js start",
     "run-once": "node bin/vk-orchestrator.js start --once",
     "check-status": "node bin/vk-orchestrator.js check-status",
     "unblock": "node bin/vk-orchestrator.js unblock",
@@ -24,6 +25,7 @@
     "dotenv": "^16.4.5"
   },
   "optionalDependencies": {
-    "vk-terminals": "github:vektor-inc/vk-terminals"
+    "vk-terminals": "github:vektor-inc/vk-terminals",
+    "@electron/rebuild": "^3.6.0"
   }
 }
