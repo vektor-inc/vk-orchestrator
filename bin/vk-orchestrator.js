@@ -98,7 +98,8 @@ async function main() {
       // API が listen してからでないとペイン作成もできないため、waitForHealth で疎通を待つ。
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
-      const { writeVkTerminalsConfig } = await import('../src/config.js');
+      const { writeVkTerminalsConfig, writeSettingsDescriptor, resolveConfigPath } =
+        await import('../src/config.js');
       const { waitForHealth, createNewPane, sendToTerminal } =
         await import('../src/terminals/index.js');
 
@@ -107,10 +108,20 @@ async function main() {
       console.log(`vk-terminals 設定を反映しました → ${target}`);
       await warnIfShadowedByHomeConfig();
 
+      // GUI の設定パネルから統合 config.json を直接編集できるよう、設定ディスクリプタを
+      // 書き出し、env VK_TERMINALS_SETTINGS でそのパスを GUI へ渡す。
+      const configPath = resolveConfigPath();
+      const descriptorPath = writeSettingsDescriptor(vkDir, configPath);
+      console.log(`設定パネル用ディスクリプタを書き出しました → ${descriptorPath}（編集対象: ${configPath}）`);
+
       const startOrchestrator = !process.argv.includes('--no-orchestrator');
 
       console.log(`vk-terminals(GUI) を起動します（${vkDir}）...`);
-      const gui = spawn('npm', ['start'], { cwd: vkDir, stdio: 'inherit' });
+      const gui = spawn('npm', ['start'], {
+        cwd: vkDir,
+        stdio: 'inherit',
+        env: { ...process.env, VK_TERMINALS_SETTINGS: descriptorPath },
+      });
       gui.on('exit', (code) => process.exit(code ?? 0));
 
       if (startOrchestrator) {
