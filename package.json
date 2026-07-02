@@ -8,6 +8,7 @@
   },
   "main": "src/engine/index.js",
   "scripts": {
+    "up": "node bin/vk-orchestrator.js up",
     "start": "node bin/vk-orchestrator.js start",
     "run-once": "node bin/vk-orchestrator.js start --once",
     "check-status": "node bin/vk-orchestrator.js check-status",
@@ -21,9 +22,7 @@
     "@octokit/rest": "^20.1.1",
     "dotenv": "^16.4.5"
   },
-  "peerDependenciesMeta": {
-    "vk-terminals": {
-      "optional": true
-    }
+  "optionalDependencies": {
+    "vk-terminals": "github:vektor-inc/vk-terminals"
   }
 }

@@ -10,7 +10,7 @@
 // （移設した engine 側は従来どおり process.env を読むため、applyConfigToEnv() で
 //   config.json の値を process.env に流し込んでから engine を起動する。挙動は不変。）
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -95,6 +95,18 @@ export function toVkTerminalsConfig(cfg = {}) {
 /** vk-terminals が読む設定ファイルの書き出し先（~/.vk-terminals/config.json）。 */
 export function vkTerminalsConfigPath() {
   return join(homedir(), '.vk-terminals', 'config.json');
+}
+
+/**
+ * 統合設定の vkTerminals セクションを ~/.vk-terminals/config.json へ書き出す。
+ * @param {object} cfg loadUnifiedConfig() の戻り値
+ * @returns {string} 書き出したパス
+ */
+export function writeVkTerminalsConfig(cfg = {}) {
+  const target = vkTerminalsConfigPath();
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, JSON.stringify(toVkTerminalsConfig(cfg), null, 2) + '\n');
+  return target;
 }
 
 /**

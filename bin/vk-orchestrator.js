@@ -48,20 +48,45 @@ async function main() {
       break;
     case 'apply': {
       // 統合設定の vkTerminals セクションから ~/.vk-terminals/config.json を書き出す。
-      const { mkdirSync, writeFileSync } = await import('fs');
-      const { dirname: pdirname } = await import('path');
-      const { toVkTerminalsConfig, vkTerminalsConfigPath } = await import('../src/config.js');
-      const target = vkTerminalsConfigPath();
-      const body = JSON.stringify(toVkTerminalsConfig(unifiedConfig), null, 2) + '\n';
-      mkdirSync(pdirname(target), { recursive: true });
-      writeFileSync(target, body);
+      const { writeVkTerminalsConfig } = await import('../src/config.js');
+      const target = writeVkTerminalsConfig(unifiedConfig);
       console.log(`vk-terminals 設定を書き出しました → ${target}`);
+      break;
+    }
+    case 'up': {
+      // 設定を反映したうえで、同梱の vk-terminals を起動する。
+      // vk-terminals は Electron GUI アプリなので、その own start script(electron .)を
+      // 子プロセスとして実行する。orchestrator 本体は起動後、vk-terminals の任意のペインで
+      // `vk-orchestrator start` を実行する運用（orchestrator は自ペインにタイトルを立てるため）。
+      const { createRequire } = await import('module');
+      const { dirname: pdirname } = await import('path');
+      const { spawn } = await import('child_process');
+      const { writeVkTerminalsConfig } = await import('../src/config.js');
+
+      const req = createRequire(import.meta.url);
+      let vkDir;
+      try {
+        vkDir = pdirname(req.resolve('vk-terminals/package.json'));
+      } catch {
+        console.error(
+          'vk-terminals が見つかりません。`npm install` を実行してください' +
+          '（vk-terminals は依存として導入されます。macOS 以外では利用できない場合があります）。'
+        );
+        process.exit(1);
+      }
+
+      const target = writeVkTerminalsConfig(unifiedConfig);
+      console.log(`vk-terminals 設定を反映しました → ${target}`);
+      console.log(`vk-terminals を起動します（${vkDir}）...`);
+      const child = spawn('npm', ['start'], { cwd: vkDir, stdio: 'inherit' });
+      child.on('exit', (code) => process.exit(code ?? 0));
       break;
     }
     default:
       console.log(`vk-orchestrator <command>
 
 commands:
+  up                                    config.json を反映して vk-terminals(同梱)を起動
   start [--once] [--assignee <login>]   キューを監視して実行（--once で 1 周のみ）
   check-status                          現在のキュー／pane 状態を表示
   unblock                               waiting-input の issue を status:ready に戻す
