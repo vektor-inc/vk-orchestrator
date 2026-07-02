@@ -58,6 +58,9 @@ export function applyConfigToEnv(cfg = {}) {
     process.env[key] = String(val);
   };
   const gh = cfg.github ?? {};
+  // トークンも config.json で一元管理できるようにする（config.json は .gitignore 対象）。
+  // .env に GITHUB_TOKEN があればそちらが優先される（env > config.json）。
+  set('GITHUB_TOKEN', gh.token);
   set('GITHUB_OWNER', gh.owner);
   set('GITHUB_REPO', gh.repo);
   set('SOURCE_ORG', gh.sourceOrg);

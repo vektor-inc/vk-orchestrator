@@ -102,3 +102,36 @@ test('toVkTerminalsConfig: vk-terminals 用キーに変換する', () => {
 test('toVkTerminalsConfig: vkTerminals 未定義なら空オブジェクト', () => {
   assert.deepEqual(toVkTerminalsConfig({}), {});
 });
+
+test('applyConfigToEnv: GITHUB_TOKEN を config.json から反映できる', () => {
+  const saved = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  try {
+    applyConfigToEnv({ github: { token: 'ghp_fromconfig' } });
+    assert.equal(process.env.GITHUB_TOKEN, 'ghp_fromconfig');
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = saved;
+  }
+});
+
+test('applyConfigToEnv: .env の GITHUB_TOKEN が config.json より優先される', () => {
+  const saved = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = 'ghp_fromenv';
+  try {
+    applyConfigToEnv({ github: { token: 'ghp_fromconfig' } });
+    assert.equal(process.env.GITHUB_TOKEN, 'ghp_fromenv');
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = saved;
+  }
+});
+
+test('toVkTerminalsConfig: トークンを vk-terminals 設定に絶対に含めない', () => {
+  const out = toVkTerminalsConfig({
+    github: { token: 'ghp_secret' },
+    vkTerminals: { host: '127.0.0.1' },
+  });
+  assert.equal(JSON.stringify(out).includes('ghp_secret'), false);
+  assert.equal('token' in out, false);
+});

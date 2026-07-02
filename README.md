@@ -18,15 +18,14 @@ vk-terminals                     … 実際に Claude を動かす実行面
 
 ## セットアップ
 
-設定は**単一の `config.json` に集約**し、秘密情報（GitHub トークン）だけ `.env` に置きます。
+設定は**単一の `config.json` に集約**します（GitHub トークンも `github.token` に入れられます。`config.json` は `.gitignore` 対象）。
 
 ```bash
 npm install
-cp config.example.json config.json   # owner / repo / vk-terminals 設定などを編集
-cp .env.example .env                  # GITHUB_TOKEN を記入
+cp config.example.json config.json   # token / owner / repo / vk-terminals 設定などを編集
 ```
 
-優先順位は「環境変数(.env) > config.json > 既定値」です。`config.json` は `~/.vk-orchestrator/config.json` に置くとユーザー固有設定として優先的に読まれます（`VK_ORCHESTRATOR_CONFIG` で明示指定も可）。
+`config.json` は `~/.vk-orchestrator/config.json` に置くとユーザー固有設定として優先的に読まれます（`VK_ORCHESTRATOR_CONFIG` で明示指定も可）。`.env` は必須ではありません。CI などで環境変数として値を注入したい場合のみ利用でき、その値は `config.json` より優先されます（環境変数 > config.json > 既定値）。
 
 vk-terminals 側の設定（ペイン構成・initialCommand・agentroom）も同じ `config.json` の `vkTerminals` セクションにまとめ、次のコマンドで vk-terminals が読む `~/.vk-terminals/config.json` に反映できます。
 
@@ -48,16 +47,11 @@ vk-terminals のソースは取り込みません。結合は HTTP API 契約だ
 
 ## 設定項目
 
-`.env`（秘密）:
-
-| キー | 意味 | 既定 |
-|---|---|---|
-| `GITHUB_TOKEN` | PAT（repo スコープ） | （必須） |
-
-`config.json`（config.example.json 参照。env で個別上書き可）:
+`config.json`（config.example.json 参照。同名の環境変数があればそちらが優先）:
 
 | セクション.キー | 対応 env | 意味 | 既定 |
 |---|---|---|---|
+| `github.token` | `GITHUB_TOKEN` | PAT（repo スコープ） | （必須） |
 | `github.owner` / `github.repo` | `GITHUB_OWNER` / `GITHUB_REPO` | キューリポ | `your-org` / `task-queue` |
 | `github.sourceOrg` | `SOURCE_ORG` | 取り込み対象 org | owner と同じ |
 | `github.queueLabel` | `QUEUE_LABEL` | 取り込み対象ラベル名 | `task-queue` |
