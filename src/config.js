@@ -1,8 +1,8 @@
 // 設定の一元化。
 //
-// vk-orchestrator は「単一の設定ファイル(config.json)」を正とし、そこから
+// VK Orchestrator は「単一の設定ファイル(config.json)」を正とし、そこから
 //   1) 自分自身(オーケストレーター)のランタイム設定
-//   2) vk-terminals 用の設定ファイル(vk-terminals のインストールディレクトリ内 config.json)
+//   2) VK Terminals 用の設定ファイル(VK Terminals のインストールディレクトリ内 config.json)
 // の両方を賄う。秘密情報(GITHUB_TOKEN)だけは .env に置く（config.json はコミット対象に
 // しやすいよう秘密を含めない設計）。
 //
@@ -79,8 +79,8 @@ export function applyConfigToEnv(cfg = {}) {
 }
 
 /**
- * 統合設定の vkTerminals セクションから、vk-terminals が読む config.json の
- * オブジェクトを組み立てる。vk-terminals 側のキー名(apiHost 等)に変換する。
+ * 統合設定の vkTerminals セクションから、VK Terminals が読む config.json の
+ * オブジェクトを組み立てる。VK Terminals 側のキー名(apiHost 等)に変換する。
  * @param {object} cfg
  * @returns {object}
  */
@@ -95,20 +95,20 @@ export function toVkTerminalsConfig(cfg = {}) {
 }
 
 /**
- * 同梱している vk-terminals のインストールディレクトリを解決する。
+ * 同梱している VK Terminals のインストールディレクトリを解決する。
  * (optionalDependencies として導入される package の実体パス)
  * 未導入なら例外を投げる。
- * @returns {string} vk-terminals パッケージのルートディレクトリ
+ * @returns {string} VK Terminals パッケージのルートディレクトリ
  */
 export function resolveVkTerminalsDir() {
   return dirname(require.resolve('vk-terminals/package.json'));
 }
 
 /**
- * vk-terminals が読む設定ファイルの書き出し先。
+ * VK Terminals が読む設定ファイルの書き出し先。
  * 以前は ~/.vk-terminals/config.json（ユーザーごとに場所が変わる）へ書いていたが、
- * vk-terminals 自身のディレクトリ内 config.json を正とするため、そこへ書き出す。
- * @param {string} [vkDir] vk-terminals のインストールディレクトリ
+ * VK Terminals 自身のディレクトリ内 config.json を正とするため、そこへ書き出す。
+ * @param {string} [vkDir] VK Terminals のインストールディレクトリ
  * @returns {string}
  */
 export function vkTerminalsConfigPath(vkDir = resolveVkTerminalsDir()) {
@@ -116,7 +116,7 @@ export function vkTerminalsConfigPath(vkDir = resolveVkTerminalsDir()) {
 }
 
 /**
- * ~/.vk-terminals/config.json は vk-terminals の設定探索でインストールディレクトリ内
+ * ~/.vk-terminals/config.json は VK Terminals の設定探索でインストールディレクトリ内
  * config.json より優先されるため、存在すると appDir 側へ書いた設定が無視される。
  * 存在すればそのパスを、無ければ null を返す（呼び出し側で警告するため）。
  * @returns {string|null}
@@ -127,10 +127,10 @@ export function shadowingHomeConfigPath() {
 }
 
 /**
- * 統合設定の vkTerminals セクションを、vk-terminals のインストールディレクトリ内
+ * 統合設定の vkTerminals セクションを、VK Terminals のインストールディレクトリ内
  * config.json へ書き出す。
  * @param {object} cfg loadUnifiedConfig() の戻り値
- * @param {string} [vkDir] vk-terminals のインストールディレクトリ
+ * @param {string} [vkDir] VK Terminals のインストールディレクトリ
  * @returns {string} 書き出したパス
  */
 export function writeVkTerminalsConfig(cfg = {}, vkDir = resolveVkTerminalsDir()) {
@@ -141,11 +141,11 @@ export function writeVkTerminalsConfig(cfg = {}, vkDir = resolveVkTerminalsDir()
 }
 
 /**
- * vk-terminals の設定パネル用「設定ディスクリプタ」を組み立てる。
+ * VK Terminals の設定パネル用「設定ディスクリプタ」を組み立てる。
  *
- * vk-terminals 側は特定ツールの設定内容を知らない汎用パネルで、env
+ * VK Terminals 側は特定ツールの設定内容を知らない汎用パネルで、env
  * VK_TERMINALS_SETTINGS が指すこのディスクリプタ（targetPath + 項目スキーマ）に
- * 従って読み書きする。ここで vk-orchestrator の統合 config.json のスキーマを与える
+ * 従って読み書きする。ここで VK Orchestrator の統合 config.json のスキーマを与える
  * ことで、GUI から config.json を直接手編集せずに済むようにする。
  *
  * @param {string} [targetPath] 編集対象の config.json パス（既定は解決済みパス）
@@ -153,7 +153,7 @@ export function writeVkTerminalsConfig(cfg = {}, vkDir = resolveVkTerminalsDir()
  */
 export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
   return {
-    title: 'vk-orchestrator 設定',
+    title: 'VK Orchestrator 設定',
     note: '保存後、orchestrator を再起動すると反映されます（vkTerminals 側の項目は次回 up/apply で反映）。',
     targetPath,
     groups: [
@@ -176,7 +176,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         ],
       },
       {
-        label: 'vk-terminals',
+        label: 'VK Terminals',
         fields: [
           { key: 'vkTerminals.port',            label: 'API ポート',          type: 'number' },
           { key: 'vkTerminals.host',            label: 'API ホスト',          type: 'text' },
@@ -190,9 +190,9 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
 }
 
 /**
- * 設定ディスクリプタを vk-terminals のインストールディレクトリへ書き出す。
+ * 設定ディスクリプタを VK Terminals のインストールディレクトリへ書き出す。
  * up 実行時にここへ書き出し、env VK_TERMINALS_SETTINGS でパスを GUI へ渡す。
- * @param {string} [vkDir] vk-terminals のインストールディレクトリ
+ * @param {string} [vkDir] VK Terminals のインストールディレクトリ
  * @param {string} [targetPath] 編集対象の config.json パス
  * @returns {string} 書き出したディスクリプタのパス
  */

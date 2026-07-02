@@ -1,7 +1,7 @@
 /**
  * waitForHealth のユニットテスト。
  *
- * `up` が GUI(Electron)を起動した後、orchestrator を起動する前に vk-terminals の
+ * `up` が GUI(Electron)を起動した後、orchestrator を起動する前に VK Terminals の
  * HTTP API 疎通を待つポーリングの挙動を検証する。疎通判定(check)と待機(sleep)を
  * 依存注入で差し替えて、実際の fetch / タイマーに依存せずテストする。
  */

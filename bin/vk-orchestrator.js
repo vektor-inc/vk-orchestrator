@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// vk-orchestrator CLI エントリ。
+// VK Orchestrator CLI エントリ。
 //
 // これまで task-queue の `npm start` / `run-once` / check-status.mjs / unblock.mjs に
 // 分かれていた入口を 1 つの CLI に統合する。サブコマンド:
@@ -33,28 +33,28 @@ applyConfigToEnv(unifiedConfig);
 
 const [, , sub] = process.argv;
 
-// 同梱の vk-terminals のインストールディレクトリを解決する。未導入なら分かりやすく終了。
+// 同梱の VK Terminals のインストールディレクトリを解決する。未導入なら分かりやすく終了。
 async function resolveVkDirOrExit() {
   const { resolveVkTerminalsDir } = await import('../src/config.js');
   try {
     return resolveVkTerminalsDir();
   } catch {
     console.error(
-      'vk-terminals が見つかりません。`npm install` を実行してください' +
-      '（vk-terminals は依存として導入されます。macOS 以外では利用できない場合があります）。'
+      'VK Terminals が見つかりません。`npm install` を実行してください' +
+      '（VK Terminals は依存として導入されます。macOS 以外では利用できない場合があります）。'
     );
     process.exit(1);
   }
 }
 
-// ~/.vk-terminals/config.json が存在すると、vk-terminals の設定探索で
+// ~/.vk-terminals/config.json が存在すると、VK Terminals の設定探索で
 // インストールディレクトリ内 config.json より優先され、反映が効かない。警告する。
 async function warnIfShadowedByHomeConfig() {
   const { shadowingHomeConfigPath } = await import('../src/config.js');
   const shadow = shadowingHomeConfigPath();
   if (shadow) {
     console.warn(
-      `⚠ ${shadow} が存在します。これは vk-terminals ディレクトリ内 config.json より\n` +
+      `⚠ ${shadow} が存在します。これは VK Terminals ディレクトリ内 config.json より\n` +
       `  優先されるため、今回書き出した設定が無視されます。反映するには ${shadow} を\n` +
       `  削除（またはリネーム）してください。`
     );
@@ -76,17 +76,17 @@ async function main() {
       await import('../src/engine/unblock.mjs');
       break;
     case 'apply': {
-      // 統合設定の vkTerminals セクションから、vk-terminals のインストールディレクトリ内
+      // 統合設定の vkTerminals セクションから、VK Terminals のインストールディレクトリ内
       // config.json を書き出す。
       const { writeVkTerminalsConfig } = await import('../src/config.js');
       const vkDir = await resolveVkDirOrExit();
       const target = writeVkTerminalsConfig(unifiedConfig, vkDir);
-      console.log(`vk-terminals 設定を書き出しました → ${target}`);
+      console.log(`VK Terminals 設定を書き出しました → ${target}`);
       await warnIfShadowedByHomeConfig();
       break;
     }
     case 'up': {
-      // 設定を反映したうえで、同梱の vk-terminals(GUI) を起動し、その GUI の中に
+      // 設定を反映したうえで、同梱の VK Terminals(GUI) を起動し、その GUI の中に
       // orchestrator 用ペインを1つ開いて `vk-orchestrator start` を走らせる。
       //
       // orchestrator を外部ターミナル（npm start を叩いた端末）の子プロセスにするのではなく、
@@ -105,7 +105,7 @@ async function main() {
 
       const vkDir = await resolveVkDirOrExit();
       const target = writeVkTerminalsConfig(unifiedConfig, vkDir);
-      console.log(`vk-terminals 設定を反映しました → ${target}`);
+      console.log(`VK Terminals 設定を反映しました → ${target}`);
       await warnIfShadowedByHomeConfig();
 
       // GUI の設定パネルから統合 config.json を直接編集できるよう、設定ディスクリプタを
@@ -116,7 +116,7 @@ async function main() {
 
       const startOrchestrator = !process.argv.includes('--no-orchestrator');
 
-      console.log(`vk-terminals(GUI) を起動します（${vkDir}）...`);
+      console.log(`VK Terminals(GUI) を起動します（${vkDir}）...`);
       const gui = spawn('npm', ['start'], {
         cwd: vkDir,
         stdio: 'inherit',
@@ -127,14 +127,14 @@ async function main() {
       if (startOrchestrator) {
         const port = Number(process.env.VK_TERMINALS_PORT ?? 13847);
         const host = process.env.VK_TERMINALS_HOST ?? '127.0.0.1';
-        console.log(`vk-terminals API (${host}:${port}) の起動を待っています...`);
+        console.log(`VK Terminals API (${host}:${port}) の起動を待っています...`);
         const healthy = await waitForHealth(port, { timeoutMs: 60_000, intervalMs: 1_000 });
 
         if (gui.exitCode !== null) break; // 疎通待ちの間に GUI が閉じられた
 
         if (!healthy) {
           console.warn(
-            `[up] vk-terminals API (${host}:${port}) に疎通できませんでした。` +
+            `[up] VK Terminals API (${host}:${port}) に疎通できませんでした。` +
             `orchestrator ペインは作成しません。\n` +
             `  VK_TERMINALS_HOST / config.json の vkTerminals.host（現在: ${host}）を確認するか、` +
             `GUI 内のペインで手動で \`node ${__filename} start\` を実行してください。`
@@ -170,12 +170,12 @@ async function main() {
       console.log(`vk-orchestrator <command>
 
 commands:
-  up [--no-orchestrator]                config.json を反映し vk-terminals(GUI) と orchestrator を起動
+  up [--no-orchestrator]                config.json を反映し VK Terminals(GUI) と orchestrator を起動
                                         （--no-orchestrator で GUI のみ起動）
   start [--once] [--assignee <login>]   キューを監視して実行（--once で 1 周のみ）
   check-status                          現在のキュー／pane 状態を表示
   unblock                               waiting-input の issue を status:ready に戻す
-  apply                                 config.json の vkTerminals 設定を vk-terminals ディレクトリ内 config.json へ反映
+  apply                                 config.json の vkTerminals 設定を VK Terminals ディレクトリ内 config.json へ反映
 `);
       process.exit(sub ? 1 : 0);
   }

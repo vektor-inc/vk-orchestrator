@@ -1,5 +1,5 @@
-// vk-terminals API の接続先ホスト。既定は localhost。
-// vk-terminals が Tailscale IP 等の特定インターフェースだけにバインドしている場合は
+// VK Terminals API の接続先ホスト。既定は localhost。
+// VK Terminals が Tailscale IP 等の特定インターフェースだけにバインドしている場合は
 // .env の VK_TERMINALS_HOST で接続先を上書きできる。
 // 注意: dotenv の config() は index.js の ES import より後に走るため、ここで
 // モジュール読み込み時に process.env を固定すると .env の値が間に合わない。
@@ -8,12 +8,12 @@ const apiHost = () => process.env.VK_TERMINALS_HOST ?? '127.0.0.1';
 const BASE_URL = (port) => `http://${apiHost()}:${port}`;
 
 /**
- * 自分自身が動作している vk-terminals ペインのタイトルを設定するための
+ * 自分自身が動作している VK Terminals ペインのタイトルを設定するための
  * OSC 0 エスケープシーケンス文字列を組み立てる。
  *
  * orchestrator（npm start）は自分自身の termId を知らないため、ワーカーペイン用の
  * `/api/set-title`（apiTitle）は使えない。代わりに stdout へ OSC 0/2 を書き込むと
- * vk-terminals(xterm.js) の `onTitleChange` が拾って taskTitle としてペイン上部に
+ * VK Terminals(xterm.js) の `onTitleChange` が拾って taskTitle としてペイン上部に
  * 表示する（renderer 側 `getDisplayTitle` は apiTitle || taskTitle。orchestrator の
  * ペインには apiTitle を立てる主体がいないため taskTitle がそのまま表示される）。
  *
@@ -47,7 +47,7 @@ export function setOwnPaneTitle(title, stream = process.stdout) {
   return true;
 }
 
-// vk-terminals が起動しているか確認
+// VK Terminals が起動しているか確認
 // timeoutMs: 応答しないホスト（Tailscale IP 未接続など）で fetch が無限にハングして
 // 呼び出し側（waitForHealth のポーリング等）が固まるのを防ぐための打ち切り時間。
 export async function checkHealth(port, { timeoutMs = 3_000 } = {}) {
@@ -63,13 +63,13 @@ export async function checkHealth(port, { timeoutMs = 3_000 } = {}) {
 }
 
 /**
- * vk-terminals の HTTP API が healthy になるまでポーリングで待つ。
+ * VK Terminals の HTTP API が healthy になるまでポーリングで待つ。
  *
  * `up` が GUI(Electron)を起動した直後は API サーバーがまだ listen していないため、
  * orchestrator を起動する前にここで疎通を待つ（待たずに起動しても loop() は健全性
  * ゲートで捌くが、初回 dispatch が POLL_INTERVAL 分遅れるのを避けるため）。
  *
- * @param {number} port vk-terminals API ポート
+ * @param {number} port VK Terminals API ポート
  * @param {object} [options]
  * @param {number}   [options.timeoutMs=60000]  全体タイムアウト
  * @param {number}   [options.intervalMs=1000]  ポーリング間隔
@@ -110,8 +110,8 @@ export async function findIdleTerminal(port, busyTermIds = new Set()) {
   return null;
 }
 
-// vk-terminals に新規ペインを作成して termId を返す
-//   cwd を指定するとそのディレクトリで開く（未指定なら vk-terminals 側で HOME にフォールバック）。
+// VK Terminals に新規ペインを作成して termId を返す
+//   cwd を指定するとそのディレクトリで開く（未指定なら VK Terminals 側で HOME にフォールバック）。
 //   options.noClaude=true を渡すと claude を自動起動せず素のシェルとしてペインを開く
 //   （orchestrator 自体をペインで動かす用途など）。
 export async function createNewPane(port, cwd = null, options = {}) {
@@ -139,10 +139,10 @@ export async function sendToTerminal(port, termId, input) {
 }
 
 // 指定ターミナルのタスクタイトル行に表示するテキストをセット
-// （vk-terminals 側で空文字なら非表示扱い）
+// （VK Terminals 側で空文字なら非表示扱い）
 /**
  * @param {string|null} [url] タスクに紐づくリンク先 URL。文字列なら body に含めて送信し、
- *   null/undefined なら body に含めない（vk-terminals 旧バージョンとの後方互換のため）。
+ *   null/undefined なら body に含めない（VK Terminals 旧バージョンとの後方互換のため）。
  */
 export async function setTerminalTitle(port, termId, title, url = null) {
   const payload = { termId, title };
@@ -162,12 +162,12 @@ export async function setTerminalTitle(port, termId, title, url = null) {
 /**
  * 指定ターミナルに PR URL をセットする。
  *
- * vk-terminals issue #44 で導入された PR ボタン表示用のフィールド `apiPrUrl` に流し込む。
+ * VK Terminals issue #44 で導入された PR ボタン表示用のフィールド `apiPrUrl` に流し込む。
  * task-queue 側（orchestrator）は PR を検知した時点でこの関数を呼び、ペイン上部の
  * タスクタイトル行から PR ページへ直接ジャンプできるようにする。
  *
  * 実装メモ:
- *   vk-terminals 側は `/api/set-title` の `prUrl` フィールドで受け取る仕様で、
+ *   VK Terminals 側は `/api/set-title` の `prUrl` フィールドで受け取る仕様で、
  *   `title` / `url` / `prUrl` の 3 つをペアで置換するセマンティクスを持つ。
  *   そのため prUrl だけ単独更新するには、先に getStates で現在の apiTitle / apiUrl を
  *   取得してから一緒に送り直す必要がある。
@@ -175,7 +175,7 @@ export async function setTerminalTitle(port, termId, title, url = null) {
  *   呼び出し側 (recordPRAcrossSurfaces) は失敗を warn で握りつぶす運用なので、
  *   状態取得などの途中失敗は throw して上に伝える。
  *
- * @param {number} port           vk-terminals API ポート
+ * @param {number} port           VK Terminals API ポート
  * @param {string|number} termId  対象ターミナル ID
  * @param {string|null} prUrl     PR の HTML URL（クリアしたい場合は空文字）
  */
@@ -185,7 +185,7 @@ export async function setTerminalPrUrl(port, termId, prUrl) {
   // Object.values(undefined) で TypeError になり原因が追いづらいため、
   // 明示的に検証して原因が分かるエラーメッセージを返す。
   if (!terminals || typeof terminals !== 'object') {
-    throw new Error(`invalid states response from vk-terminals (port=${port}): terminals missing`);
+    throw new Error(`invalid states response from VK Terminals (port=${port}): terminals missing`);
   }
   const term = Object.values(terminals).find(t => String(t.termId) === String(termId));
   if (!term) {
@@ -218,7 +218,7 @@ export async function setTerminalPrUrl(port, termId, prUrl) {
  * 指定 termId の現在の lastOutputTime / lastLines を baseline として取得する。
  * 取得失敗時は null を返し、呼び出し側でフォールスルーさせる。
  *
- * @param {number} port    vk-terminals API ポート
+ * @param {number} port    VK Terminals API ポート
  * @param {string} termId  対象ターミナルID
  * @returns {Promise<{lastOutputTime:number,lastLines:string}|null>}
  */
@@ -289,7 +289,7 @@ async function confirmOutputProgressed(port, termId, baseline, timeoutMs, pollIn
  * （呼び出し側はそのまま送信を試みる＝従来挙動へフォールバックする。ファイル全体の
  * graceful degradation 方針に合わせ、ここではプロセスを落とさない）。
  *
- * @param {number} port    vk-terminals API ポート
+ * @param {number} port    VK Terminals API ポート
  * @param {string} termId  対象ターミナルID
  * @param {object} [options]
  * @param {number} [options.readyTimeoutMs=15000] 静止待ちの全体タイムアウト
@@ -381,7 +381,7 @@ export async function waitForClaudeReady(port, termId, options = {}) {
  * baseline にすると「Enter が効いていなくても出力は進む」状態になり、Enter が
  * 確定されていなくても progressed=true と誤判定してしまうため。
  *
- * @param {number} port           vk-terminals API ポート
+ * @param {number} port           VK Terminals API ポート
  * @param {string} termId         送信先のターミナルID
  * @param {string} prompt         確定したい本文（末尾の \r/\n は剥がす）
  * @param {number} [delayMs=500]  本文送信後 Enter までの待機時間（baseline はこの待機の後に取得する）

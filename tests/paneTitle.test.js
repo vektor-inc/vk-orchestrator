@@ -1,7 +1,7 @@
 /**
  * buildPaneTitleSequence / setOwnPaneTitle のユニットテスト（issue #157）。
  *
- * orchestrator（npm start）が自分自身の vk-terminals ペインタイトルを
+ * orchestrator（npm start）が自分自身の VK Terminals ペインタイトルを
  * OSC 0 エスケープシーケンスで設定する挙動を検証する:
  *
  *   - OSC 0 + BEL 終端のシーケンスを組み立てること

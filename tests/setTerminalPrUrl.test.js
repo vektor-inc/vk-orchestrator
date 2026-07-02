@@ -1,7 +1,7 @@
 /**
  * setTerminalPrUrl のユニットテスト。
  *
- * vk-terminals 側は `/api/set-title` の `prUrl` フィールドで PR URL を受け取る仕様
+ * VK Terminals 側は `/api/set-title` の `prUrl` フィールドで PR URL を受け取る仕様
  * （`title` / `url` / `prUrl` をペアで置換するセマンティクス）。
  * 過去に `/api/set-pr-url` という存在しないエンドポイントを叩いて prUrl が
  * 反映されない不具合があったため、以下を回帰検証する:
@@ -156,7 +156,7 @@ describe('setTerminalPrUrl', () => {
 
     await assert.rejects(
       () => setTerminalPrUrl(PORT, TERMID, 'https://example.com/pr/1'),
-      /invalid states response from vk-terminals/,
+      /invalid states response from VK Terminals/,
     );
     assert.equal(scenario.setTitleCalls.length, 0, 'set-title は呼ばれない');
 
@@ -166,7 +166,7 @@ describe('setTerminalPrUrl', () => {
 
     await assert.rejects(
       () => setTerminalPrUrl(PORT, TERMID, 'https://example.com/pr/1'),
-      /invalid states response from vk-terminals/,
+      /invalid states response from VK Terminals/,
     );
     assert.equal(scenario.setTitleCalls.length, 0);
   });

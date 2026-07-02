@@ -37,7 +37,7 @@ const POLL_INTERVAL      = Number(process.env.POLL_INTERVAL_MS    ?? 60_000);
 // ウォッチドッグ: in-progress なのに PR も無く pane も無反応な時間がこれを超えたら
 // 「自動進行できない異常」とみなして status:failed に倒す（通常遷移には使わない安全網）。
 const WATCHDOG_IDLE      = Number(process.env.WATCHDOG_IDLE_MS     ?? 3 * 60 * 60 * 1000);
-// pane 消失を failed と判断するまでの連続観測回数（vk-terminals 再起動等の一時的欠落で
+// pane 消失を failed と判断するまでの連続観測回数（VK Terminals 再起動等の一時的欠落で
 // 早とちりしないため、2 tick 連続で消えていたら確定とする）。
 const PANE_MISSING_TICKS = 2;
 const RUN_ONCE           = process.argv.includes('--once');
@@ -158,19 +158,19 @@ function buildCommand(title, body, termId) {
 }
 
 // -------------------------------------------------------
-// PR 検出時に PR 側 / vk-terminals 側へ反映する共通フック。
+// PR 検出時に PR 側 / VK Terminals 側へ反映する共通フック。
 //
 // - PR 本文末尾に task-queue 側 issue URL を back-reference として追記
 //   （PR を単体で見ても task-queue 側のどの issue から出たかが追えるようにする）
-// - vk-terminals に PR URL を流して apiPrUrl をセット
+// - VK Terminals に PR URL を流して apiPrUrl をセット
 //   （ペイン上部の PR ボタンから PR ページにジャンプできるようにする）
 //
 // どちらも失敗してもタスク本処理は継続させたいため、warn のみで握る。
-// vk-terminals 側のエンドポイント（/api/set-pr-url）は vk-terminals issue #44 で導入予定で、
+// VK Terminals 側のエンドポイント（/api/set-pr-url）は VK Terminals issue #44 で導入予定で、
 // 未対応のバージョンでも本処理が止まらないように設計している。
 //
 // @param {object} args
-// @param {string|number|null} args.termId        対象ターミナル ID（null なら vk-terminals 通知は省略）
+// @param {string|number|null} args.termId        対象ターミナル ID（null なら VK Terminals 通知は省略）
 // @param {string} args.queueIssueHtmlUrl         task-queue 側 issue の HTML URL（back-ref に使う）
 // @param {{owner:string,repo:string,number:number}} args.prRef  対象 PR の owner/repo/number
 // @param {string} args.prUrl                     対象 PR の HTML URL
@@ -189,7 +189,7 @@ async function recordPRAcrossSurfaces({ termId, queueIssueHtmlUrl, prRef, prUrl,
     try {
       await setTerminalPrUrl(VK_PORT, termId, prUrl);
     } catch (err) {
-      console.warn(`  ${logTag} vk-terminals への PR URL 送信失敗（処理は継続）: ${err.message}`);
+      console.warn(`  ${logTag} VK Terminals への PR URL 送信失敗（処理は継続）: ${err.message}`);
     }
   }
 }
@@ -458,10 +458,10 @@ async function scanInProgressIssues() {
 // answered 復帰スキャン: 司がペイン経由で質問を直接解決し `Status: answered` を
 // 明示宣言した waiting-input issue を in-progress へ復帰させる。
 //
-// answered はペインで既に解決済み＝返信転送が不要なので、vk-terminals の健全性に
+// answered はペインで既に解決済み＝返信転送が不要なので、VK Terminals の健全性に
 // 依存しない。GitHub 上の客観状態（コメント）だけで復帰できるのが本機能の肝なので、
 // loop() の checkHealth() ゲートより前（scanInProgressIssues と同じ健全性非依存ゾーン）
-// で回す。健全性ゲートの内側に置くと vk-terminals 停止中に waiting-input が解除されず
+// で回す。健全性ゲートの内側に置くと VK Terminals 停止中に waiting-input が解除されず
 // 固着するため（answered の設計目標を損なう）。
 // -------------------------------------------------------
 async function scanAnsweredRecovery() {
@@ -582,10 +582,10 @@ async function scanWaitingInputIssues() {
 //
 // 新方針では秒数で通常遷移しないが、「vk-kore が無言で死んだ／ハングした」ケースは
 // シグナルも返信も来ず永久に in-progress のまま詰まる。これを異常として拾うのが目的。
-//   - pane 消失（vk-terminals states に termId が居ない）が PANE_MISSING_TICKS 連続 → failed
+//   - pane 消失（VK Terminals states に termId が居ない）が PANE_MISSING_TICKS 連続 → failed
 //   - pane が WATCHDOG_IDLE 以上 無反応（lastOutputTime が古い） → failed
 // いずれも「PR が無い」場合に限る。PR があれば scanInProgress / merge-watch が駆動するので触らない。
-// vk-terminals が落ちている時は pane の生死を判定できないため、loop() の checkHealth() 後ろで呼ぶ。
+// VK Terminals が落ちている時は pane の生死を判定できないため、loop() の checkHealth() 後ろで呼ぶ。
 // -------------------------------------------------------
 async function scanWatchdog() {
   let issues;
@@ -601,7 +601,7 @@ async function scanWatchdog() {
   try {
     states = await getStates(VK_PORT);
   } catch (err) {
-    console.warn(`[watchdog] vk-terminals states 取得失敗: ${err.message}`);
+    console.warn(`[watchdog] VK Terminals states 取得失敗: ${err.message}`);
     return;
   }
   const terms = states?.terminals ?? {};
@@ -1247,7 +1247,7 @@ async function importNewTasks() {
 // メインループ
 // -------------------------------------------------------
 async function loop() {
-  // 1. ソースリポから新規タスクを取り込む（vk-terminals 不要）
+  // 1. ソースリポから新規タスクを取り込む（VK Terminals 不要）
   //    取り込みはどの端末からでも実行できる。複数端末が同時に取り込みを試みても、
   //    importNewTasks 内で REST の removeLabel（強整合）を所有権ロックに使い、
   //    ラベルを実際に外せた1台だけが create するため二重取り込みにはならない。
@@ -1255,23 +1255,23 @@ async function loop() {
   await importNewTasks();
 
   // 2. in-progress スキャン: 指示待ち検知 → waiting-input / PR 完了 → waiting-merge /
-  //    PR マージ → done / PR 未マージ closed → failed（vk-terminals 不要。PR アイコンのみ任意）
+  //    PR マージ → done / PR 未マージ closed → failed（VK Terminals 不要。PR アイコンのみ任意）
   await scanInProgressIssues();
 
-  // 3. マージ待ち issue のマージ検知 + automerge（vk-terminals 不要）
+  // 3. マージ待ち issue のマージ検知 + automerge（VK Terminals 不要）
   await checkWaitingMergeIssues();
 
-  // 4. 失敗扱いになった issue の事後復旧チェック（vk-terminals 不要）
+  // 4. 失敗扱いになった issue の事後復旧チェック（VK Terminals 不要）
   await recheckFailedIssues();
 
   // 5. answered 復帰スキャン: `Status: answered` の waiting-input を in-progress へ戻す。
-  //    返信転送不要なので vk-terminals に依存せず、健全性ゲートより前で回す（vk-terminals 不要）。
+  //    返信転送不要なので VK Terminals に依存せず、健全性ゲートより前で回す（VK Terminals 不要）。
   await scanAnsweredRecovery();
 
-  // 6. ここから先（返信転送・dispatch）は vk-terminals が必要
+  // 6. ここから先（返信転送・dispatch）は VK Terminals が必要
   const healthy = await checkHealth(VK_PORT);
   if (!healthy) {
-    console.log(`[warn] vk-terminals (port ${VK_PORT}) に接続できません。返信転送・起動をスキップします。`);
+    console.log(`[warn] VK Terminals (port ${VK_PORT}) に接続できません。返信転送・起動をスキップします。`);
     return;
   }
 
@@ -1279,7 +1279,7 @@ async function loop() {
   await scanWaitingInputIssues();
 
   // 8. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す
-  //    （vk-terminals states で pane の生死・無反応を見るため checkHealth 後ろ）
+  //    （VK Terminals states で pane の生死・無反応を見るため checkHealth 後ろ）
   await scanWatchdog();
 
   // 9. ready をディスパッチ
@@ -1331,7 +1331,7 @@ async function loop() {
 // エントリポイント
 // -------------------------------------------------------
 async function main() {
-  // vk-terminals 上で実行されている場合、自分のペインタイトルを「オーケストレーター」に
+  // VK Terminals 上で実行されている場合、自分のペインタイトルを「オーケストレーター」に
   // 設定して、どのペインが orchestrator か一目で分かるようにする（issue #157）。
   // TTY でない場合（ログへのリダイレクト等）は setOwnPaneTitle 側で何もしない。
   setOwnPaneTitle('オーケストレーター');
@@ -1346,7 +1346,7 @@ async function main() {
   console.log(`  mode         : ${RUN_ONCE ? 'run-once' : 'watch'}`);
   console.log('');
 
-  // 起動時リカバリーは廃止（新方針 案B）。orchestrator を再起動しても vk-terminals 側の
+  // 起動時リカバリーは廃止（新方針 案B）。orchestrator を再起動しても VK Terminals 側の
   // pane は生き残っているため、in-progress / waiting-input の issue はラベルのまま残し、
   // 通常ループのスキャナに委ねる（古い pane が生きていれば作業継続、死んでいれば
   // scanWatchdog が wp-env クリーンアップのうえ failed に倒す）。これにより、既存 PR が
