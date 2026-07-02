@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Reusable orchestrator that drives Claude sessions in vk-terminals from a GitHub issues-based task queue.",
   "type": "module",
+  "license": "GPL-2.0-only",
   "bin": {
     "vk-orchestrator": "bin/vk-orchestrator.js"
   },
