@@ -32,8 +32,10 @@ VK Terminals は `npm install` 時に依存として自動導入されます（`
 
 ```bash
 npm install                          # VK Terminals も一緒に導入される
-cp config.example.json config.json   # token / owner / repo / VK Terminals 設定などを編集
+cp config.example.json config.json   # 下記の必須項目だけ埋めれば動きます
 ```
+
+**最低限、`github.token` / `github.owner` / `github.repo` の 3 つを自分の値に書き換えれば動きます。** その他の項目（`orchestrator.*` や `vkTerminals.*`）はすべて既定値が用意されているので、通常はそのままで構いません。とくに `vkTerminals.port`（既定 `13847`）と `vkTerminals.host`（既定 `127.0.0.1`）は**自分で値を決める必要はなく**、ポート衝突など特別な事情があるときだけ変更してください（設定を省略しても既定値で動作します）。
 
 設定は**単一の `config.json` に集約**します（GitHub トークンも `github.token` に入れられます。`config.json` は `.gitignore` 対象）。`~/.vk-orchestrator/config.json` に置くとユーザー固有設定として優先的に読まれます（`VK_ORCHESTRATOR_CONFIG` で明示指定も可）。`.env` は必須ではありません（環境変数 > config.json > 既定値）。
 
