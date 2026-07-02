@@ -1,0 +1,1373 @@
+import { config } from 'dotenv';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+// orchestrator/ の一つ上（task-queue/）の .env を読む
+const __dirname = dirname(fileURLToPath(import.meta.url));
+config({ path: resolve(__dirname, '..', '..', '.env') });
+
+import { GitHubClient } from '../github/index.js';
+import {
+  checkHealth,
+  createNewPane,
+  getStates,
+  setOwnPaneTitle,
+  setTerminalPrUrl,
+  setTerminalTitle,
+  submitToClaude,
+  waitForClaudeReady,
+} from '../terminals/index.js';
+import { recordTaskStart, updateTask, removeTask, getTask } from './state.js';
+import { cleanupForIssue, formatCleanupSummary, inspectWorktreeByPort } from './cleanup.js';
+import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
+import { decideInProgressAction } from './in-progress-decision.js';
+import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
+
+// --- 設定 ---
+const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
+const GITHUB_OWNER       = process.env.GITHUB_OWNER        ?? 'vektor-inc';
+const GITHUB_REPO        = process.env.GITHUB_REPO         ?? 'task-queue';
+// 取り込み対象の Organization。省略時は task-queue リポと同じ owner を見る。
+const SOURCE_ORG         = process.env.SOURCE_ORG          ?? GITHUB_OWNER;
+// 取り込み対象を識別するラベル名。汎用化のため env 化（既定は従来の 'task-queue'）。
+// 他組織は QUEUE_LABEL を自組織のキュー用ラベルに変えれば、そのラベルで運用できる。
+const QUEUE_LABEL        = process.env.QUEUE_LABEL         ?? 'task-queue';
+const VK_PORT            = Number(process.env.VK_TERMINALS_PORT   ?? 13847);
+const POLL_INTERVAL      = Number(process.env.POLL_INTERVAL_MS    ?? 60_000);
+// ウォッチドッグ: in-progress なのに PR も無く pane も無反応な時間がこれを超えたら
+// 「自動進行できない異常」とみなして status:failed に倒す（通常遷移には使わない安全網）。
+const WATCHDOG_IDLE      = Number(process.env.WATCHDOG_IDLE_MS     ?? 3 * 60 * 60 * 1000);
+// pane 消失を failed と判断するまでの連続観測回数（vk-terminals 再起動等の一時的欠落で
+// 早とちりしないため、2 tick 連続で消えていたら確定とする）。
+const PANE_MISSING_TICKS = 2;
+const RUN_ONCE           = process.argv.includes('--once');
+
+// `--flag=value` / `--flag value` の両形式から値を取り出す簡易パーサ。
+function readArgValue(name) {
+  const eq = process.argv.find(a => a.startsWith(`--${name}=`));
+  if (eq) return eq.slice(`--${name}=`.length);
+  const idx = process.argv.indexOf(`--${name}`);
+  if (idx !== -1 && process.argv[idx + 1] && !process.argv[idx + 1].startsWith('--')) {
+    return process.argv[idx + 1];
+  }
+  return undefined;
+}
+
+// 自分にアサインされた issue だけを監視・実行するための assignee フィルタ（GitHub ログイン名）。
+// 優先順: --assignee 引数 > ASSIGNEE_FILTER 環境変数 > なし（＝従来どおり全件・後方互換）。
+// 設定すると複数メンバーが同じ task-queue リポを衝突なく共用できる。
+const ASSIGNEE_FILTER = readArgValue('assignee') ?? process.env.ASSIGNEE_FILTER ?? null;
+
+if (!GITHUB_TOKEN) {
+  console.error('[Error] GITHUB_TOKEN が設定されていません。.env ファイルを確認してください。');
+  process.exit(1);
+}
+
+const github = new GitHubClient({
+  token: GITHUB_TOKEN,
+  owner: GITHUB_OWNER,
+  repo:  GITHUB_REPO,
+  assignee: ASSIGNEE_FILTER,
+  queueLabel: QUEUE_LABEL,
+});
+
+// 現在 startTask を起動中の issue 番号のセット。
+// setInterval で並行発火する複数 loop が同じ issue を二重に起動するのを防ぐ。
+// dispatch は撃ちっぱなし（ペイン作成＋送信のみ）になったので保持期間は短いが、
+// status:in-progress ラベル反映前に並行 loop が同じ ready issue を fetch した場合の
+// レースを抑えるために残す。
+const inFlightIssues = new Set();
+
+// issue の本文・タイトルから作業対象リポジトリのキー（"owner/repo"）を抽出する。
+// GitHub issue URL を含まない汎用タスクは null（＝他と干渉しない独立タスクとして扱う）。
+function getTargetRepoKey(issue) {
+  const target = extractGitHubIssueUrl(
+    [issue.title, issue.body].filter(Boolean).join('\n')
+  );
+  return target ? `${target.owner}/${target.repo}` : null;
+}
+
+// -------------------------------------------------------
+// ターミナルID → wp-env ポート割り当て（8888/8889 は禁止）
+// terminal 1 → 9100、terminal 2 → 9102 …（testsPort は vk-kore 側で +1 する）
+// -------------------------------------------------------
+function assignWpEnvPort(termId) {
+  return 9100 + (Number(termId) - 1) * 2;
+}
+
+// -------------------------------------------------------
+// GitHub issue URL の抽出
+// -------------------------------------------------------
+function extractGitHubIssueUrl(text) {
+  if (!text) return null;
+  const match = text.match(
+    /https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/issues\/(\d+)/
+  );
+  if (!match) return null;
+  return { url: match[0], owner: match[1], repo: match[2], number: Number(match[3]) };
+}
+
+// -------------------------------------------------------
+// done 遷移ゲート（薄いラッパー）
+// -------------------------------------------------------
+// 実体は `done-gate.js`。`extractGitHubIssueUrl` と `github.getIssueState` を
+// 依存注入することでユニットテスト可能にしている。
+//
+// 背景: 対象 issue (= task-queue issue 本文に含まれる他リポジトリの issue URL) が
+// まだ open のまま、対応 PR がマージされただけで done に進めてしまうと、
+// 部分対応マージなどで task-queue 側が誤って close される事故が起きる。
+// 例: task-queue#49 で対象 issue は未完了のままなのに PR マージ検知で
+// done 化 → 手動 reopen が即座に再 close される、というループになった。
+// 現在は scanInProgressIssues / checkWaitingMergeIssues / recheckFailedIssues の
+// 全 done 遷移経路でこのゲートを通している。
+function canTransitionToDone(issue, logTag = '[done-gate]') {
+  return canTransitionToDoneImpl(
+    issue,
+    {
+      extractGitHubIssueUrl,
+      getIssueState: github.getIssueState.bind(github),
+    },
+    { logTag }
+  );
+}
+
+// -------------------------------------------------------
+// Claudeへの送信コマンドを組み立てる
+// -------------------------------------------------------
+function buildCommand(title, body, termId) {
+  const fullText = [title, body].filter(Boolean).join('\n\n');
+  const targetIssue = extractGitHubIssueUrl(fullText);
+
+  if (targetIssue) {
+    const wpPort = assignWpEnvPort(termId);
+    console.log(`  → GitHub issue URLを検出: ${targetIssue.url} → /vk-kore を使用`);
+    console.log(`  → wp-env ポート割り当て: ${wpPort} (testsPort=${wpPort + 1})`);
+
+    // vk-kore スキルが wp-env-port=NNNN 引数を受け取り、
+    // 和田への依頼に .wp-env.override.json の作成指示を含める。
+    return {
+      prompt: `/vk-kore ${targetIssue.url} wp-env-port=${wpPort}`,
+      targetIssue,
+    };
+  }
+
+  // 汎用タスク
+  let prompt = title;
+  if (body && body.trim()) prompt += `\n\n${body.trim()}`;
+  return { prompt, targetIssue: null };
+}
+
+// -------------------------------------------------------
+// PR 検出時に PR 側 / vk-terminals 側へ反映する共通フック。
+//
+// - PR 本文末尾に task-queue 側 issue URL を back-reference として追記
+//   （PR を単体で見ても task-queue 側のどの issue から出たかが追えるようにする）
+// - vk-terminals に PR URL を流して apiPrUrl をセット
+//   （ペイン上部の PR ボタンから PR ページにジャンプできるようにする）
+//
+// どちらも失敗してもタスク本処理は継続させたいため、warn のみで握る。
+// vk-terminals 側のエンドポイント（/api/set-pr-url）は vk-terminals issue #44 で導入予定で、
+// 未対応のバージョンでも本処理が止まらないように設計している。
+//
+// @param {object} args
+// @param {string|number|null} args.termId        対象ターミナル ID（null なら vk-terminals 通知は省略）
+// @param {string} args.queueIssueHtmlUrl         task-queue 側 issue の HTML URL（back-ref に使う）
+// @param {{owner:string,repo:string,number:number}} args.prRef  対象 PR の owner/repo/number
+// @param {string} args.prUrl                     対象 PR の HTML URL
+// @param {string} args.logTag                    ログプレフィクス
+// -------------------------------------------------------
+async function recordPRAcrossSurfaces({ termId, queueIssueHtmlUrl, prRef, prUrl, logTag }) {
+  if (queueIssueHtmlUrl) {
+    try {
+      await github.appendQueueIssueRefToPR(prRef, queueIssueHtmlUrl);
+    } catch (err) {
+      console.warn(`  ${logTag} PR 本文への task-queue URL 追記失敗（処理は継続）: ${err.message}`);
+    }
+  }
+
+  if (termId != null) {
+    try {
+      await setTerminalPrUrl(VK_PORT, termId, prUrl);
+    } catch (err) {
+      console.warn(`  ${logTag} vk-terminals への PR URL 送信失敗（処理は継続）: ${err.message}`);
+    }
+  }
+}
+
+// -------------------------------------------------------
+// タスク起動（撃ちっぱなし）
+//
+// 新方針（案B）では runTask の per-task 監視ループを廃止し、ここはペイン作成・
+// プロンプト送信・state 記録までで終了する。以降の状態遷移は loop() のスキャナ
+// （scanInProgressIssues / scanWaitingInputIssues / checkWaitingMergeIssues）が
+// GitHub の客観状態と decision-record コメントを見て駆動する。
+// -------------------------------------------------------
+async function startTask(issue) {
+  const { number, title, body, html_url: htmlUrl } = issue;
+  console.log(`\n[Task #${number}] "${title}" を起動`);
+
+  let termId;
+  try {
+    termId = await createNewPane(VK_PORT);
+    console.log(`  → 新規ペイン作成 (termId: ${termId})`);
+  } catch (err) {
+    console.error(`  新規ペイン作成失敗: ${err.message}`);
+    return false;
+  }
+
+  // ペイン上部にタスクタイトルを表示（失敗しても続行）。
+  const titleText = `#${number} ${title}`;
+  try {
+    await setTerminalTitle(VK_PORT, termId, titleText, htmlUrl);
+  } catch (err) {
+    if (typeof htmlUrl === 'string') {
+      try {
+        await setTerminalTitle(VK_PORT, termId, titleText);
+      } catch (retryErr) {
+        console.warn(`  [set-title] タイトル送信失敗（処理は継続）: ${retryErr.message}`);
+      }
+    } else {
+      console.warn(`  [set-title] タイトル送信失敗（処理は継続）: ${err.message}`);
+    }
+  }
+
+  const { prompt, targetIssue } = buildCommand(title, body, termId);
+
+  // state を記録する。termId は scanWaitingInputIssues が返信を pane に転送する際の
+  // 引き当てに使うため、汎用タスク（targetIssue なし）でも必ず残す。
+  // wpPort / repo は wp-env クリーンアップ用なので対象 issue ありのときだけ意味を持つ。
+  try {
+    await recordTaskStart({
+      issueNumber: number,
+      termId,
+      wpPort: targetIssue ? assignWpEnvPort(termId) : null,
+      repo:   targetIssue ? `${targetIssue.owner}/${targetIssue.repo}` : null,
+    });
+  } catch (err) {
+    console.warn(`  [state] 記録失敗（処理は継続）: ${err.message}`);
+  }
+
+  // status:in-progress に遷移してからプロンプトを送る（スキャナが拾えるように）。
+  await github.setStatus(number, 'status:in-progress');
+
+  // Claude Code の TUI 起動完了を待ってから送信する。コールドスタートや高負荷時に
+  // 入力欄が現れる前に本文を送ると取りこぼす可能性があるため（#127 の残存リスク対策）。
+  // タイムアウトしても従来どおり送信は試みる（waitForClaudeReady の戻り値で警告のみ出す）。
+  const ready = await waitForClaudeReady(VK_PORT, termId);
+  if (!ready) {
+    console.warn(`  [ready] Claude 起動完了を確認できませんでした。送信を試みます (termId=${termId})`);
+  }
+
+  console.log(`  → terminal #${termId} に送信`);
+  await submitToClaude(VK_PORT, termId, prompt);
+  return true;
+}
+
+// -------------------------------------------------------
+// スキャナ共通: task-queue issue から「対象」を解決する。
+// 本文に他リポの issue URL があればそれを対象に、無ければ task-queue issue 自身を対象とする。
+// -------------------------------------------------------
+function resolveTarget(issue) {
+  const ext = extractGitHubIssueUrl(
+    [issue.title, issue.body].filter(Boolean).join('\n')
+  );
+  if (ext) return { owner: ext.owner, repo: ext.repo, number: ext.number, isSelf: false };
+  return { owner: GITHUB_OWNER, repo: GITHUB_REPO, number: issue.number, isSelf: true };
+}
+
+// -------------------------------------------------------
+// スキャナ共通: 対象 issue / PR の客観状態とコメントを集める。
+// - findPRForIssue で PR を検知（あれば getPRState / 完了条件 checkPRCompletion）
+// - decision-record コメント検知のため、対象 issue と PR のコメントを時系列で結合
+// 失敗は warn で握り、取得できた範囲を返す（次ループで再試行）。
+// -------------------------------------------------------
+async function gatherTargetState(issue) {
+  const target = resolveTarget(issue);
+
+  let pr = null;
+  let prState = null;
+  let prCompletionReady = false;
+  try {
+    pr = await github.findPRForIssue(target.owner, target.repo, target.number);
+  } catch (err) {
+    console.warn(`  [scan] issue #${issue.number}: PR 検索失敗: ${err.message}`);
+  }
+  if (pr) {
+    try {
+      prState = await github.getPRState(target.owner, target.repo, pr.number);
+    } catch (err) {
+      console.warn(`  [scan] issue #${issue.number}: PR 状態取得失敗: ${err.message}`);
+    }
+    if (prState && prState.state === 'open' && !prState.merged) {
+      try {
+        const completion = await github.checkPRCompletion(target.owner, target.repo, pr.number);
+        prCompletionReady = completion.ready;
+      } catch (err) {
+        console.warn(`  [scan] issue #${issue.number}: PR 完了判定失敗: ${err.message}`);
+      }
+    }
+  }
+
+  const comments = [];
+  try {
+    comments.push(...await github.listIssueComments(target.owner, target.repo, target.number));
+  } catch (err) {
+    console.warn(`  [scan] issue #${issue.number}: 対象 issue コメント取得失敗: ${err.message}`);
+  }
+  if (pr) {
+    try {
+      comments.push(...await github.listIssueComments(target.owner, target.repo, pr.number));
+    } catch (err) {
+      console.warn(`  [scan] issue #${issue.number}: PR コメント取得失敗: ${err.message}`);
+    }
+  }
+  comments.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+  return { target, pr, prState, prCompletionReady, comments };
+}
+
+// -------------------------------------------------------
+// PR URL の本文記録 + PR アイコン反映（冪等）。状態遷移とは独立の副作用。
+// 本文に既に同じ PR URL が記録済みなら何もしない（毎ティックの再 PATCH / 再送信を避ける）。
+// -------------------------------------------------------
+async function ensurePRRecorded(issue, target, pr) {
+  if (github.extractPRUrlFromIssueBody(issue.body) === pr.html_url) return;
+
+  let termId = null;
+  try {
+    termId = (await getTask(issue.number))?.termId ?? null;
+  } catch { /* state 取得失敗は致命的でない */ }
+
+  try {
+    await github.appendPRUrlToIssue(issue.number, pr.html_url);
+  } catch (err) {
+    console.warn(`  [scan] issue #${issue.number}: PR URL 追記失敗（処理は継続）: ${err.message}`);
+  }
+  await recordPRAcrossSurfaces({
+    termId,
+    queueIssueHtmlUrl: issue.html_url,
+    prRef: { owner: target.owner, repo: target.repo, number: pr.number },
+    prUrl: pr.html_url,
+    logTag: `[scan #${issue.number}]`,
+  });
+}
+
+// -------------------------------------------------------
+// in-progress スキャン: 対象 issue/PR の客観状態と decision-record コメントから
+// 次の状態遷移を決めて適用する（新方針 案B の中核）。
+// -------------------------------------------------------
+async function scanInProgressIssues() {
+  let issues;
+  try {
+    issues = await github.fetchInProgressIssues();
+  } catch (err) {
+    console.warn(`[scan-in-progress] in-progress issue 取得失敗: ${err.message}`);
+    return;
+  }
+  if (issues.length === 0) return;
+
+  for (const issue of issues) {
+    // dispatch 直後で status 反映直後のレース中（起動処理中）の issue は次ループに回す。
+    if (inFlightIssues.has(issue.number)) continue;
+
+    let state;
+    try {
+      state = await gatherTargetState(issue);
+    } catch (err) {
+      console.warn(`  [scan-in-progress] issue #${issue.number}: 状態収集失敗: ${err.message}`);
+      continue;
+    }
+    const { target, pr, prState, prCompletionReady, comments } = state;
+
+    // PR URL 記録 + アイコン（冪等。状態遷移とは独立）
+    if (pr && prState) {
+      await ensurePRRecorded(issue, target, pr);
+    }
+
+    const action = decideInProgressAction({
+      comments,
+      pr: prState ? { state: prState.state, merged: prState.merged } : null,
+      prCompletionReady,
+      // automerge 指定時は「完了済み PR に対するマージ判断依頼」の waiting-input で
+      // 自動マージを止めない（司のマージ判断依頼コメントによる waiting-input 滞留を防ぐ）。
+      automerge: github.hasAutomergeLabel(issue),
+    });
+
+    if (action.type === 'none') continue;
+
+    if (action.type === 'waiting-input') {
+      // 未応答の waiting-input を検知。指示待ちに倒す（確認内容は対象 issue/PR 側にある）。
+      try {
+        await github.setStatus(issue.number, 'status:waiting-input');
+        console.log(`  [scan-in-progress] issue #${issue.number}: 未応答の指示待ち検知 → waiting-input`);
+      } catch (err) {
+        console.warn(`  [scan-in-progress] issue #${issue.number}: waiting-input 遷移失敗: ${err.message}`);
+      }
+      continue;
+    }
+
+    if (action.type === 'merged') {
+      if (!(await canTransitionToDone(issue, `[scan-in-progress #${issue.number}]`))) continue;
+      try {
+        await github.addComment(issue.number, `✅ 完了\n\nPR がマージされました。`);
+        await github.closeIssue(issue.number);
+        await github.setStatus(issue.number, 'status:done');
+        await removeTask(issue.number);
+        console.log(`  [scan-in-progress] issue #${issue.number}: PR マージ済み → done`);
+      } catch (err) {
+        console.warn(`  [scan-in-progress] issue #${issue.number}: done 化失敗（次ループ再試行）: ${err.message}`);
+      }
+      continue;
+    }
+
+    if (action.type === 'pr-closed-unmerged') {
+      try {
+        await github.setStatus(issue.number, 'status:failed');
+        await github.addComment(issue.number, `❌ 検出した PR が未マージのまま closed されています。手動で確認してください。`);
+        console.log(`  [scan-in-progress] issue #${issue.number}: PR 未マージ closed → failed`);
+      } catch (err) {
+        console.warn(`  [scan-in-progress] issue #${issue.number}: failed 遷移失敗: ${err.message}`);
+      }
+      continue;
+    }
+
+    if (action.type === 'waiting-merge') {
+      // checkWaitingMergeIssues は本文の PR URL を起点にするため、追記成功を保証してから遷移する。
+      const prUrl = pr.html_url;
+      try {
+        await github.appendPRUrlToIssue(issue.number, prUrl);
+      } catch (err) {
+        console.warn(`  [scan-in-progress] issue #${issue.number}: PR URL 記録失敗（waiting-merge 見送り、次ループ再試行）: ${err.message}`);
+        continue;
+      }
+      try {
+        await github.setStatus(issue.number, 'status:waiting-merge');
+        await github.addComment(
+          issue.number,
+          `🟢 マージ待ち\n\nPR: ${prUrl}\n\n- CI 全通過\n- CodeRabbit の指摘が 30 分間なし\n\nマージされたらこの issue は自動で close されます。`
+        );
+        console.log(`  [scan-in-progress] issue #${issue.number}: 完了条件充足 → waiting-merge`);
+      } catch (err) {
+        console.warn(`  [scan-in-progress] issue #${issue.number}: waiting-merge 遷移失敗: ${err.message}`);
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------
+// answered 復帰スキャン: 司がペイン経由で質問を直接解決し `Status: answered` を
+// 明示宣言した waiting-input issue を in-progress へ復帰させる。
+//
+// answered はペインで既に解決済み＝返信転送が不要なので、vk-terminals の健全性に
+// 依存しない。GitHub 上の客観状態（コメント）だけで復帰できるのが本機能の肝なので、
+// loop() の checkHealth() ゲートより前（scanInProgressIssues と同じ健全性非依存ゾーン）
+// で回す。健全性ゲートの内側に置くと vk-terminals 停止中に waiting-input が解除されず
+// 固着するため（answered の設計目標を損なう）。
+// -------------------------------------------------------
+async function scanAnsweredRecovery() {
+  let issues;
+  try {
+    issues = await github.fetchWaitingInputIssues();
+  } catch (err) {
+    console.warn(`[answered-recovery] waiting-input issue 取得失敗: ${err.message}`);
+    return;
+  }
+  if (issues.length === 0) return;
+
+  for (const issue of issues) {
+    let state;
+    try {
+      state = await gatherTargetState(issue);
+    } catch (err) {
+      console.warn(`  [answered-recovery] issue #${issue.number}: 状態収集失敗: ${err.message}`);
+      continue;
+    }
+
+    if (!hasAgentAnsweredAfterWaitingInput(state.comments)) continue;
+
+    try {
+      await github.setStatus(issue.number, 'status:in-progress');
+      console.log(`  [answered-recovery] issue #${issue.number}: Status: answered 検知（転送不要）→ in-progress`);
+    } catch (err) {
+      // 失敗時は次ループで再試行（waiting-input のまま据え置き）。
+      console.warn(`  [answered-recovery] issue #${issue.number}: in-progress 復帰失敗（次ループ再試行）: ${err.message}`);
+    }
+  }
+}
+
+// -------------------------------------------------------
+// 指示待ちスキャン: 対象 issue/PR に付いたユーザー返信（= Comment by vk-agents で
+// 始まらない、直近 waiting-input より後のコメント）を pane に転送して in-progress に戻す。
+// bot 投稿（CodeRabbit 等）は返信扱いせず転送しない（#141）。返信内容の意味解釈はせず、
+// 識別行の有無と投稿者種別だけで機械的に判定する（中身は vk-kore が判断し、必要なら再度 waiting-input を出す）。
+// （`Status: answered` による転送不要の復帰は scanAnsweredRecovery が健全性ゲート前で処理する。）
+// -------------------------------------------------------
+async function scanWaitingInputIssues() {
+  let issues;
+  try {
+    issues = await github.fetchWaitingInputIssues();
+  } catch (err) {
+    console.warn(`[scan-waiting-input] waiting-input issue 取得失敗: ${err.message}`);
+    return;
+  }
+  if (issues.length === 0) return;
+
+  for (const issue of issues) {
+    let saved = null;
+    try {
+      saved = await getTask(issue.number);
+    } catch { /* state 取得失敗 */ }
+
+    let state;
+    try {
+      state = await gatherTargetState(issue);
+    } catch (err) {
+      console.warn(`  [scan-waiting-input] issue #${issue.number}: 状態収集失敗: ${err.message}`);
+      continue;
+    }
+
+    // 指示待ち中に PR ができたケースの URL/アイコン補完（確認中も PR に飛べるように）。
+    if (state.pr && state.prState) {
+      await ensurePRRecorded(issue, state.target, state.pr);
+    }
+
+    // `Status: answered`（ペイン経由で解決済み＝転送不要）の復帰は scanAnsweredRecovery が
+    // 健全性ゲートより前で処理済み。ここに来る waiting-input issue は返信転送が必要なケース。
+    if (!saved || saved.termId == null) {
+      // termId が分からないと返信を pane に転送できない（再起動等で state 喪失）。
+      console.warn(`  [scan-waiting-input] issue #${issue.number}: termId 不明のため返信転送をスキップ`);
+      continue;
+    }
+
+    const reply = findReplyAfterWaitingInput(state.comments);
+    if (!reply) continue;
+    // 二重転送ガード（毎ティック走るため、転送済み返信は再送しない）。
+    // ただし「転送は成功したが直後の setStatus('status:in-progress') が失敗した」場合、
+    // この issue は waiting-input のまま残り、次ティック以降は毎回ここで continue するため
+    // setStatus が二度と再試行されず永久に固着する（#154）。
+    // 転送（submitToClaude）はスキップしつつ、in-progress 復帰だけを再試行する。
+    // scanWaitingInputIssues は waiting-input の issue しか走査しないので、復帰成功後は
+    // 自然に対象から外れる（冪等）。
+    if (saved.lastForwardedCommentId === reply.id) {
+      try {
+        await github.setStatus(issue.number, 'status:in-progress');
+        console.log(`  [scan-waiting-input] issue #${issue.number}: 転送済み・in-progress 復帰のみ再試行 → in-progress`);
+      } catch (err) {
+        console.warn(`  [scan-waiting-input] issue #${issue.number}: in-progress 復帰再試行失敗（次ループ再試行）: ${err.message}`);
+      }
+      continue;
+    }
+
+    try {
+      await submitToClaude(VK_PORT, saved.termId, reply.body);
+    } catch (err) {
+      console.warn(`  [scan-waiting-input] issue #${issue.number}: 返信転送失敗（次ループ再試行）: ${err.message}`);
+      continue;
+    }
+    // 転送成功直後にカーソルを記録（setStatus 失敗時でも二重転送を防ぐ）。
+    try {
+      await updateTask(issue.number, { lastForwardedCommentId: reply.id });
+    } catch { /* カーソル記録失敗は致命的でない */ }
+    try {
+      await github.setStatus(issue.number, 'status:in-progress');
+      console.log(`  [scan-waiting-input] issue #${issue.number}: 返信(id:${reply.id})を転送 → in-progress`);
+    } catch (err) {
+      console.warn(`  [scan-waiting-input] issue #${issue.number}: in-progress 復帰失敗（次ループ再試行）: ${err.message}`);
+    }
+  }
+}
+
+// -------------------------------------------------------
+// ウォッチドッグ（安全網）: in-progress タスクの pane 生存と無反応時間を監視する。
+//
+// 新方針では秒数で通常遷移しないが、「vk-kore が無言で死んだ／ハングした」ケースは
+// シグナルも返信も来ず永久に in-progress のまま詰まる。これを異常として拾うのが目的。
+//   - pane 消失（vk-terminals states に termId が居ない）が PANE_MISSING_TICKS 連続 → failed
+//   - pane が WATCHDOG_IDLE 以上 無反応（lastOutputTime が古い） → failed
+// いずれも「PR が無い」場合に限る。PR があれば scanInProgress / merge-watch が駆動するので触らない。
+// vk-terminals が落ちている時は pane の生死を判定できないため、loop() の checkHealth() 後ろで呼ぶ。
+// -------------------------------------------------------
+async function scanWatchdog() {
+  let issues;
+  try {
+    issues = await github.fetchInProgressIssues();
+  } catch (err) {
+    console.warn(`[watchdog] in-progress issue 取得失敗: ${err.message}`);
+    return;
+  }
+  if (issues.length === 0) return;
+
+  let states;
+  try {
+    states = await getStates(VK_PORT);
+  } catch (err) {
+    console.warn(`[watchdog] vk-terminals states 取得失敗: ${err.message}`);
+    return;
+  }
+  const terms = states?.terminals ?? {};
+
+  for (const issue of issues) {
+    if (inFlightIssues.has(issue.number)) continue; // 起動処理中はスキップ
+
+    let saved = null;
+    try {
+      saved = await getTask(issue.number);
+    } catch { /* state 取得失敗 */ }
+    if (!saved || saved.termId == null) continue; // termId 不明は pane 判定できない
+
+    const term = Object.values(terms).find(t => String(t.termId) === String(saved.termId));
+
+    // pane 消失検知（連続観測）
+    if (!term) {
+      const missing = (saved.paneMissingTicks ?? 0) + 1;
+      try { await updateTask(issue.number, { paneMissingTicks: missing }); } catch {}
+      if (missing < PANE_MISSING_TICKS) {
+        console.log(`  [watchdog] issue #${issue.number}: pane(termId:${saved.termId}) 消失観測 ${missing}/${PANE_MISSING_TICKS}`);
+        continue;
+      }
+      // pane が消失（クラッシュ等）→ 残った wp-env コンテナ・worktree を掃除のうえ failed。
+      await failIfNoPR(issue, `作業ペイン（termId:${saved.termId}）が消失しました`, { cleanupWpPort: saved.wpPort });
+      continue;
+    }
+
+    // pane 復活 → 消失カウンタをリセット
+    if (saved.paneMissingTicks) {
+      try { await updateTask(issue.number, { paneMissingTicks: 0 }); } catch {}
+    }
+
+    // 長時間無反応検知（pane は生きているので wp-env は掃除せず、人の調査に残す）
+    const idleMs = Date.now() - (term.lastOutputTime ?? Date.now());
+    if (idleMs >= WATCHDOG_IDLE) {
+      await failIfNoPR(issue, `作業ペインが ${Math.floor(idleMs / 60000)} 分以上 無反応です`);
+    }
+  }
+}
+
+// ウォッチドッグの failed 化。PR が既にある場合は scanInProgress / merge-watch が
+// 駆動するのでウォッチドッグでは触らない（誤って進行中タスクを殺さないための保険）。
+// cleanupWpPort が渡された場合（pane 消失時）は、残った wp-env コンテナ・worktree を掃除する。
+async function failIfNoPR(issue, reason, { cleanupWpPort = null } = {}) {
+  const target = resolveTarget(issue);
+  let pr = null;
+  try {
+    pr = await github.findPRForIssue(target.owner, target.repo, target.number);
+  } catch (err) {
+    console.warn(`  [watchdog] issue #${issue.number}: PR 確認失敗（今回は見送り）: ${err.message}`);
+    return;
+  }
+  if (pr) return; // PR あり → 通常ルートに任せる
+
+  // クラッシュで残った wp-env リソースを掃除する（失敗しても failed 化は続行）。
+  let cleanupReport = null;
+  if (cleanupWpPort != null) {
+    try {
+      const summary = await cleanupForIssue({ issueNumber: issue.number, wpPort: cleanupWpPort });
+      cleanupReport = formatCleanupSummary(summary);
+    } catch (err) {
+      cleanupReport = `⚠️ クリーンアップ中にエラー: ${err.message}`;
+    }
+  }
+
+  try {
+    await github.setStatus(issue.number, 'status:failed');
+    await github.addComment(
+      issue.number,
+      [
+        `❌ ${reason}。自動で進められないため \`status:failed\` にしました。手動で確認してください。`,
+        cleanupReport ? `\n**クリーンアップ結果:**\n${cleanupReport}` : '',
+      ].filter(Boolean).join('\n')
+    );
+    await removeTask(issue.number);
+    console.log(`  [watchdog] issue #${issue.number} → failed: ${reason}`);
+  } catch (err) {
+    console.warn(`  [watchdog] issue #${issue.number}: failed 遷移失敗（次ループ再試行）: ${err.message}`);
+  }
+}
+
+// -------------------------------------------------------
+// sequential 判定用: 現在「作業中」の作業対象リポジトリ（"owner/repo"）の集合を集める。
+// in-progress / waiting-input / waiting-merge の issue から抽出する。
+// 取得失敗時は緩め（待たせない）に倒す。
+// -------------------------------------------------------
+async function getOccupiedRepoKeys() {
+  const occupied = new Set();
+  const collect = async (fetchFn, tag) => {
+    try {
+      const list = await fetchFn();
+      for (const i of list) {
+        const k = getTargetRepoKey(i);
+        if (k) occupied.add(k);
+      }
+    } catch (err) {
+      console.warn(`  [dispatch] ${tag} 取得失敗（sequential 判定が緩くなる可能性）: ${err.message}`);
+    }
+  };
+  await collect(() => github.fetchInProgressIssues(), 'in-progress');
+  await collect(() => github.fetchWaitingInputIssues(), 'waiting-input');
+  await collect(() => github.fetchWaitingMergeIssues(), 'waiting-merge');
+  return occupied;
+}
+
+// -------------------------------------------------------
+// マージ待ちissueのマージ検知
+// status:waiting-merge の issue を毎ループでスキャンし、
+// 紐づくPRがマージされていたら status:done + close する
+// -------------------------------------------------------
+async function checkWaitingMergeIssues() {
+  let issues;
+  try {
+    issues = await github.fetchWaitingMergeIssues();
+  } catch (err) {
+    console.warn(`[merge-watch] waiting-merge issue 取得失敗: ${err.message}`);
+    return;
+  }
+
+  if (issues.length === 0) return;
+
+  console.log(`[merge-watch] マージ待ち ${issues.length} 件をチェック`);
+
+  for (const issue of issues) {
+    const prUrl = github.extractPRUrlFromIssueBody(issue.body);
+    if (!prUrl) {
+      console.warn(`  [merge-watch] issue #${issue.number}: 本文からPR URLを抽出できませんでした`);
+      continue;
+    }
+
+    const prRef = github.parsePRUrl(prUrl);
+    if (!prRef) {
+      console.warn(`  [merge-watch] issue #${issue.number}: PR URLのパースに失敗: ${prUrl}`);
+      continue;
+    }
+
+    // マージ前（wp-env コンテナが生存しているうちに）worktree パスを state へ snapshot しておく。
+    // automerge は数ティック後に発火しうるため、その時点でコンテナが destroy 済みでも
+    // runPostMergeCleanup が記録済みパスで worktree・ブランチを掃除できるようにする。
+    await snapshotWorktreePath(issue.number);
+
+    let prState;
+    try {
+      prState = await github.getPRState(prRef.owner, prRef.repo, prRef.number);
+    } catch (err) {
+      console.warn(`  [merge-watch] issue #${issue.number}: PR状態取得失敗: ${err.message}`);
+      continue;
+    }
+
+    if (prState.merged) {
+      console.log(`  [merge-watch] issue #${issue.number}: PR #${prRef.number} がマージ済み → 完了`);
+      // 対象 issue が open のままなら部分対応マージの可能性があるため done へ進めず、
+      // waiting-merge ラベルを維持して次ループで再評価する。
+      if (!(await canTransitionToDone(issue, '[merge-watch]'))) {
+        continue;
+      }
+      // close を先に行い、成功した場合のみ status:done に切り替える。
+      // 途中で失敗してもラベルが waiting-merge のまま残り、次ループで再試行される。
+      try {
+        await github.addComment(issue.number, `✅ 完了\n\nPR: ${prUrl} がマージされました。`);
+        await github.closeIssue(issue.number);
+        await github.setStatus(issue.number, 'status:done');
+      } catch (err) {
+        console.warn(`  [merge-watch] issue #${issue.number}: 完了処理失敗（次ループで再試行）: ${err.message}`);
+      }
+
+      // automerge・外部マージ（GitHub UI 等）いずれで merged になった場合も、
+      // 残った wp-env コンテナ・worktree・マージ済みブランチをここで掃除する。
+      await runPostMergeCleanup(issue, prState, '[merge-watch]');
+    } else {
+      // open / 未マージで closed のどちらも「待ち続ける」方針（手動で再open or 再マージされる可能性を考慮）
+      console.log(`  [merge-watch] issue #${issue.number}: PR #${prRef.number} は ${prState.state}${prState.merged ? '(merged)' : ''} のため待機継続`);
+
+      // automerge ラベル付き issue は条件を再検証して自動 squash merge する。
+      // - waiting-merge 到達後に CodeRabbit が新たにコメントしたケースを避けるため毎ループで再検証
+      // - 後から automerge ラベルを付けても拾われるよう、ここで毎回チェックする
+      // - 実 merge 後は次ループの merged 判定で通常の close + done ルートに乗る
+      if (prState.state === 'open' && github.hasAutomergeLabel(issue)) {
+        await tryAutoMerge(issue, prRef, prState, prUrl);
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------
+// automerge ラベル付き issue について PR の自動マージを試みる
+// -------------------------------------------------------
+async function tryAutoMerge(issue, prRef, prState, prUrl) {
+  const tag = `[automerge] issue #${issue.number}`;
+
+  if (prState.draft) {
+    console.log(`  ${tag}: PR #${prRef.number} は Draft のためスキップ`);
+    return;
+  }
+
+  // mergeable は GitHub 側で非同期計算され null（計算中）になりうる。
+  // 計算中は次ループで再判定する（保守的に止める）。
+  if (prState.mergeable === null) {
+    console.log(`  ${tag}: PR #${prRef.number} の mergeable 判定が計算中（null）→ 次ループで再判定`);
+    return;
+  }
+  if (prState.mergeable === false || prState.mergeableState === 'dirty') {
+    console.log(`  ${tag}: PR #${prRef.number} はコンフリクト等で mergeable=false（state=${prState.mergeableState}）→ スキップ`);
+    return;
+  }
+
+  // CI + CodeRabbit 30 分静観を再検証する。
+  // waiting-merge 到達後に CodeRabbit が再コメントしたケースで誤マージを防ぐ。
+  let completion;
+  try {
+    completion = await github.checkPRCompletion(prRef.owner, prRef.repo, prRef.number);
+  } catch (err) {
+    console.warn(`  ${tag}: PR完了条件の再検証に失敗（次ループで再試行）: ${err.message}`);
+    return;
+  }
+  if (!completion.ready) {
+    console.log(`  ${tag}: 再検証で未充足（CI=${completion.ciPassing} / CodeRabbit=${completion.coderabbitOk}）→ 待機継続`);
+    return;
+  }
+
+  // e2e 完了ゲート: vk-kore の最終レビュー・e2e ゲート通過マーカーが現 head SHA に対して存在するときだけ進める。
+  // 必ず completion.headSha（検証時点の head）で照合する（prState 側の古い sha を使わない＝TOCTOU 回避）。
+  // ゲート未充足は「保留（次ループで再判定）」であり失敗ではない。マーカーが付けば次ループでマージされる。
+  // マーカー確認の API 失敗も checkPRCompletion と対称に「次ループ再試行（return）」へ丸める。
+  // fail-closed: 確認できない間はマージへ進まず保留する（過去の PR 監視 tick クラッシュ対策とも整合）。
+  let e2ePassed;
+  try {
+    e2ePassed = await github.hasE2ePassedMarker(prRef.owner, prRef.repo, prRef.number, completion.headSha);
+  } catch (err) {
+    console.warn(`  ${tag}: e2e-passed マーカー確認に失敗（次ループで再試行）: ${err.message}`);
+    return;
+  }
+  if (!e2ePassed) {
+    console.log(`  ${tag}: PR #${prRef.number} は e2e-passed マーカー（現 head SHA 一致）が無いため自動マージ保留`);
+    return;
+  }
+
+  try {
+    // 検証時点の head SHA を渡して、検証後・マージ前に push されたコミットを GitHub 側でブロックさせる。
+    await github.mergePR(prRef.owner, prRef.repo, prRef.number, {
+      method: 'squash',
+      sha: completion.headSha,
+    });
+    await github.addComment(
+      issue.number,
+      `🤖 automerge ラベルに基づき PR を自動マージしました: ${prUrl}\n\n- CI 全通過\n- CodeRabbitAI のコメントが 30 分間なし\n- mergeable=true`
+    );
+    console.log(`  ${tag}: PR #${prRef.number} を squash merge しました`);
+  } catch (err) {
+    // 405（mergeable=false）, 409（head SHA mismatch / base SHA mismatch）等は次ループで再試行する。
+    console.warn(`  ${tag}: PR #${prRef.number} の自動マージ失敗（次ループで再試行）: ${err.message}`);
+    return;
+  }
+
+  // run-once モードでは次回 checkWaitingMergeIssues() が来ないため、その場で close + done まで進める。
+  // 通常ループでも次回の merged 判定が冪等に走るので二重処理にはならないが、こちらで先に閉じることで
+  // ユーザーから見た「マージ→close」の体感遅延を短縮する。
+  // 対象 issue（個別リポ側）が open のままの場合は部分対応の可能性があるため waiting-merge を維持する。
+  if (!(await canTransitionToDone(issue, '[automerge]'))) {
+    return;
+  }
+  try {
+    await github.closeIssue(issue.number);
+    await github.setStatus(issue.number, 'status:done');
+    console.log(`  ${tag}: issue #${issue.number} を close + status:done に遷移`);
+  } catch (err) {
+    // ここで失敗してもラベルは waiting-merge のままなので、次ループの merge-watch が拾って再試行する。
+    console.warn(`  ${tag}: issue #${issue.number} の完了処理失敗（次ループで再試行）: ${err.message}`);
+  }
+
+  // automerge は司ではなく orchestrator がマージするため、司の手動マージ時に vk-kore が
+  // 呼ぶ vk-clean-repo（マージ後 cleanup）が走らない。ここで同等の掃除を肩代わりする。
+  await runPostMergeCleanup(issue, prState, tag);
+}
+
+// -------------------------------------------------------
+// マージ済み issue の作業環境クリーンアップ（automerge / 外部マージ共通）
+// state.json に残った wpPort から wp-env コンテナ・worktree を destroy し、
+// PR head ブランチも削除する（司の手動マージ時に vk-clean-repo が担う掃除の自動版）。
+// 掃除後に state レコードを消すためべき等（二度目は getTask が null で即 return）。
+// 失敗しても致命扱いせず done 遷移を優先する（クラッシュ時の cleanupForIssue と同思想）。
+// -------------------------------------------------------
+// -------------------------------------------------------
+// wp-env コンテナが生存しているうちに worktree パスを state.json へ記録する。
+// cleanupForIssue は worktree パスを基本的にコンテナのラベルから取るが、
+// automerge / 外部マージ検知時にはコンテナが既に destroy 済みのことがある。
+// 生存中に snapshot しておけば、コンテナ消滅後でも worktree・ブランチを掃除できる。
+// 既に記録済み（同値）なら何もしない。失敗しても致命扱いしない。
+// -------------------------------------------------------
+async function snapshotWorktreePath(issueNumber) {
+  let saved;
+  try {
+    saved = await getTask(issueNumber);
+  } catch {
+    saved = null;
+  }
+  if (!saved || !saved.wpPort) return; // task-queue 管理外 or ポート未記録
+
+  try {
+    const info = await inspectWorktreeByPort(saved.wpPort);
+    if (info?.worktreePath && info.worktreePath !== saved.worktreePath) {
+      await updateTask(issueNumber, { worktreePath: info.worktreePath });
+    }
+  } catch {
+    // docker 未起動・コンテナ消滅などは無視（次ティックで再試行 or 既存記録を使う）
+  }
+}
+
+async function runPostMergeCleanup(issue, prState, tag) {
+  let saved;
+  try {
+    saved = await getTask(issue.number);
+  } catch {
+    saved = null;
+  }
+  if (!saved) return; // 記録なし＝既に掃除済み or task-queue 管理外のマージ
+
+  try {
+    const summary = await cleanupForIssue({
+      issueNumber: issue.number,
+      wpPort: saved.wpPort ?? null,
+      branch: prState?.headRefName ?? null,
+      worktreePath: saved.worktreePath ?? null,
+    });
+    await github.addComment(
+      issue.number,
+      `🧹 マージ後クリーンアップを実行しました。\n\n${formatCleanupSummary(summary)}`
+    );
+    console.log(`  ${tag}: issue #${issue.number} のマージ後クリーンアップ完了`);
+  } catch (err) {
+    console.warn(`  ${tag}: issue #${issue.number} のマージ後クリーンアップ失敗（致命ではない）: ${err.message}`);
+  } finally {
+    try { await removeTask(issue.number); } catch {}
+  }
+}
+
+// -------------------------------------------------------
+// 失敗扱いissueの事後復旧
+// status:failed の issue について、対象 issue が close 済みになっていれば
+// マージ済み PR を timeline 経由で再特定し、見つかれば status:done + close する。
+// timeline から close した PR を特定できない場合も、対象 issue が close 済みなら
+// 既存の `no_pr_found_target_closed` ルート（「PRなし完了」）と同じ扱いで done にする。
+// -------------------------------------------------------
+async function recheckFailedIssues() {
+  let issues;
+  try {
+    issues = await github.fetchFailedIssues();
+  } catch (err) {
+    console.warn(`[failed-recheck] status:failed issue 取得失敗: ${err.message}`);
+    return;
+  }
+
+  if (issues.length === 0) return;
+
+  console.log(`[failed-recheck] failed ${issues.length} 件を再チェック`);
+
+  for (const issue of issues) {
+    const targetIssue = extractGitHubIssueUrl(
+      [issue.title, issue.body].filter(Boolean).join('\n')
+    );
+
+    if (!targetIssue) {
+      // 汎用タスク（GitHub issue URL を持たない）は対象外
+      continue;
+    }
+
+    const { owner, repo, number } = targetIssue;
+
+    let targetState;
+    try {
+      targetState = await github.getIssueState(owner, repo, number);
+    } catch (err) {
+      console.warn(
+        `  [failed-recheck] issue #${issue.number}: 対象 ${owner}/${repo}#${number} 状態取得失敗: ${err.message}`
+      );
+      continue;
+    }
+
+    if (targetState.state !== 'closed') {
+      // 対象が open のままでも、PR が既に出ているなら waiting-merge / done に持ち上げる。
+      // 30分タイムアウトで failed になった後にPRが立ったケース（ターミナルのidle判定が早すぎたケース等）の救済。
+      let openSidePR = null;
+      try {
+        openSidePR = await github.findPRForIssue(owner, repo, number);
+      } catch (err) {
+        console.warn(
+          `  [failed-recheck] issue #${issue.number}: 対象open側のPR検索失敗: ${err.message}`
+        );
+        continue;
+      }
+      if (!openSidePR) {
+        // 対象 open + PR 無し: 復旧条件未充足。次ループに送る
+        continue;
+      }
+
+      let prState;
+      try {
+        prState = await github.getPRState(owner, repo, openSidePR.number);
+      } catch (err) {
+        console.warn(
+          `  [failed-recheck] issue #${issue.number}: PR状態取得失敗（次ループで再試行）: ${err.message}`
+        );
+        continue;
+      }
+
+      // 本文への PR URL 追記は必ず先に通しておく（後続のマージ検知で参照されるため）。
+      // 失敗時は status:failed のまま据え置き、次ループで再試行する。
+      // ここで失敗を握りつぶして status:waiting-merge に進めると、本文にPR URLが無いまま
+      // 状態だけ進んでしまい、checkWaitingMergeIssues が PR を見失う。
+      try {
+        await github.appendPRUrlToIssue(issue.number, openSidePR.html_url);
+      } catch (err) {
+        console.warn(
+          `  [failed-recheck] issue #${issue.number}: PR URL 追記失敗（次ループで再試行）: ${err.message}`
+        );
+        continue;
+      }
+
+      if (prState.merged) {
+        // 対象 issue が open のままだが PR がマージ済みのルート。
+        // 対象 issue が open のうちは部分対応マージで done 化される事故を防ぐためゲートで弾く。
+        // この経路に来ている時点で対象は open のはずなので、ヘルパーは false を返して継続。
+        // 対象が closed に変わっていた場合は次ループでこの分岐ではなく後段の closed ルートへ遷移する。
+        if (!(await canTransitionToDone(issue, '[failed-recheck]'))) {
+          continue;
+        }
+        console.log(
+          `  [failed-recheck] issue #${issue.number}: 対象 ${owner}/${repo}#${number} は open のままだがPR #${openSidePR.number} がマージ済み → 完了`
+        );
+        try {
+          await github.addComment(
+            issue.number,
+            `✅ 完了（事後検知）\n\nPR: ${openSidePR.html_url} がマージ済みのため復旧しました。対象 issue は open のままなので必要に応じて手動で close してください。`
+          );
+          await github.closeIssue(issue.number);
+          await github.setStatus(issue.number, 'status:done');
+        } catch (err) {
+          console.warn(
+            `  [failed-recheck] issue #${issue.number}: 完了処理失敗（次ループで再試行）: ${err.message}`
+          );
+        }
+      } else if (prState.state === 'open') {
+        console.log(
+          `  [failed-recheck] issue #${issue.number}: 対象 ${owner}/${repo}#${number} に open PR #${openSidePR.number} → status:waiting-merge に復旧`
+        );
+        try {
+          await github.setStatus(issue.number, 'status:waiting-merge');
+          await github.addComment(
+            issue.number,
+            `🟢 マージ待ちに復旧（事後検知）\n\nPR: ${openSidePR.html_url}\n\nマージされたら自動で close されます。`
+          );
+        } catch (err) {
+          console.warn(
+            `  [failed-recheck] issue #${issue.number}: 状態遷移失敗（次ループで再試行）: ${err.message}`
+          );
+        }
+      } else {
+        // closed_unmerged: 人手レビューが必要なので failed のまま据え置く（無限ループ防止のため再コメントもしない）
+        console.log(
+          `  [failed-recheck] issue #${issue.number}: PR #${openSidePR.number} が未マージのまま closed → failed 継続`
+        );
+      }
+      continue;
+    }
+
+    // ここから先は対象 issue が closed のケース（従来通り）
+    // close した PR を timeline から特定（マージ済みでなければ「PRなし完了」扱い）
+    let closedPR = null;
+    try {
+      closedPR = await github.findPRThatClosedIssue(owner, repo, number);
+    } catch (err) {
+      console.warn(
+        `  [failed-recheck] issue #${issue.number}: close PR 探索失敗: ${err.message}`
+      );
+      continue;
+    }
+
+    if (closedPR && closedPR.merged_at) {
+      // この経路に来ているのは対象が closed と確認できた後だが、
+      // 全 done 遷移箇所で同じゲートを通す方針に合わせて改めて再確認する。
+      // 万一 reopen 等で open に変わっていたら見送り、次ループで再評価する。
+      if (!(await canTransitionToDone(issue, '[failed-recheck]'))) {
+        continue;
+      }
+      console.log(
+        `  [failed-recheck] issue #${issue.number}: 対象 ${owner}/${repo}#${number} がマージ済み PR #${closedPR.number} で close 済み → 完了`
+      );
+      try {
+        await github.appendPRUrlToIssue(issue.number, closedPR.html_url);
+      } catch (err) {
+        console.warn(
+          `  [failed-recheck] issue #${issue.number}: PR URL 追記失敗（処理は継続）: ${err.message}`
+        );
+      }
+      try {
+        await github.addComment(
+          issue.number,
+          `✅ 完了（事後検知）\n\nPR: ${closedPR.html_url} がマージ済みのため復旧しました。`
+        );
+        await github.closeIssue(issue.number);
+        await github.setStatus(issue.number, 'status:done');
+      } catch (err) {
+        console.warn(
+          `  [failed-recheck] issue #${issue.number}: 完了処理失敗（次ループで再試行）: ${err.message}`
+        );
+      }
+    } else {
+      // 対象は closed だが merged PR を特定できない（手動 close 等）。
+      // 既存の `no_pr_found_target_closed` ルートに揃えて「PRなし完了」とみなす。
+      // ただし対象 issue が open に変わっていれば見送り、次ループで再評価する。
+      if (!(await canTransitionToDone(issue, '[failed-recheck]'))) {
+        continue;
+      }
+      console.log(
+        `  [failed-recheck] issue #${issue.number}: 対象 ${owner}/${repo}#${number} は close 済みだが merged PR を特定できず → PRなし完了として処理`
+      );
+      try {
+        await github.addComment(
+          issue.number,
+          `✅ 完了（事後検知 / PRなし）\n\n対象 issue ${owner}/${repo}#${number} が close 済みのため復旧しました。`
+        );
+        await github.closeIssue(issue.number);
+        await github.setStatus(issue.number, 'status:done');
+      } catch (err) {
+        console.warn(
+          `  [failed-recheck] issue #${issue.number}: 完了処理失敗（次ループで再試行）: ${err.message}`
+        );
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------
+// ソースリポからのタスク取り込み（polling 方式）
+// SOURCE_ORG 内で `task-queue` ラベルが付いた open issue を組織横断検索し、
+// 未取り込みのものを task-queue リポに status:awaiting-approval で複製する。
+// 承認（status:ready への切り替え）と sequential / priority の付与は人手で行う。
+// -------------------------------------------------------
+
+// importNewTasks の単一実行ガード（同一プロセス内の再入防止のみ）。
+// watch モードでは setInterval が前回 loop の完了を待たずに次の loop を発火させうるため、
+// 同一プロセスで search → create が二重に走るのを防ぐ。
+// 別プロセス／別端末との二重取り込みはこのフラグでは防げないため、
+// ループ本体で removeLabel（強整合）を所有権ロックに使って防いでいる。
+let isImportingTasks = false;
+
+async function importNewTasks() {
+  if (isImportingTasks) {
+    console.log('[import] 前回の取り込み処理が継続中のためスキップ');
+    return;
+  }
+  isImportingTasks = true;
+
+  try {
+    let sourceIssues;
+    try {
+      sourceIssues = await github.searchSourceIssuesByLabel(SOURCE_ORG, QUEUE_LABEL);
+    } catch (err) {
+      console.warn(`[import] source issue 検索失敗: ${err.message}`);
+      return;
+    }
+
+    if (sourceIssues.length === 0) return;
+
+    console.log(`[import] task-queue ラベル付き source issue ${sourceIssues.length} 件を検出`);
+
+    for (const src of sourceIssues) {
+      let existing;
+      try {
+        existing = await github.findTaskQueueIssueBySourceUrl(src.html_url);
+      } catch (err) {
+        console.warn(`  [import] 既存チェック失敗 (${src.html_url}): ${err.message}`);
+        continue;
+      }
+      if (existing) {
+        // open / closed どちらでも取り込み済みなのでスキップ
+        continue;
+      }
+
+      // 所有権の確保: source 側の `task-queue` ラベルを「先に」外す。
+      // REST の removeLabel は強整合なので、複数端末が同時に取り込みを試みても
+      // ここを成功させた1台だけが create に進む（他端末は 404 → false でスキップ）。
+      // dedup（findTaskQueueIssueBySourceUrl）は Search API 経由でインデックス遅延が
+      // あり単独では二重取り込みを防げないため、この removeLabel がクレームの要。
+      let claimed;
+      try {
+        claimed = await github.claimSourceIssueByLabelRemoval(src);
+      } catch (err) {
+        console.warn(`  [import] 所有権確保（ラベル剥がし）失敗 (${src.html_url}): ${err.message}`);
+        continue;
+      }
+      if (!claimed) {
+        // 他端末が先に確保済み（ラベルは既に無い）。スキップ。
+        continue;
+      }
+
+      let created;
+      try {
+        created = await github.createTaskQueueIssueFromSource(src);
+        console.log(`  [import] ${src.html_url} → ${created.html_url}`);
+      } catch (err) {
+        // 所有権は確保した（ラベルを外した）が create に失敗した。
+        // このままだと source がどのラベルも無い orphan になり二度と拾われないため、
+        // `task-queue` ラベルを再付与してロールバックし、次ループでリトライ可能にする。
+        console.warn(`  [import] 作成失敗 (${src.html_url}): ${err.message} → ラベル再付与でロールバック`);
+        try {
+          await github.restoreSourceTaskQueueLabel(src);
+        } catch (rollbackErr) {
+          console.warn(`  [import] ロールバック（ラベル再付与）失敗 (${src.html_url}): ${rollbackErr.message}`);
+        }
+        continue;
+      }
+
+      // 取り込み成功後は source 側 issue に「作業中」ラベルを付ける。
+      // vk-kore の実行開始時点まで待つと awaiting-approval 〜 ready の間
+      // source 側にマーカーが無く進行状況が分かりにくいため、取り込み時点で付与する
+      // （vk-kore 実行開始時の付与は冪等なのでそのまま共存できる）。
+      // 失敗しても取り込み自体は成功しているので warn のみ。
+      try {
+        await github.addSourceWorkingLabel(src);
+      } catch (err) {
+        console.warn(`  [import] source 作業中ラベル付与失敗 (${src.html_url}): ${err.message}`);
+      }
+
+      // source 側 issue に「task-queue で取り込みました」通知コメントを投稿する。
+      // 取り込み後はラベルが外れて一覧でも見分けが付かなくなるため、
+      // source 側を見る人がメタ issue へ辿れるようコメントで補完する。
+      // dedup は二重作成防止だけを担保しており、コメント投稿に失敗しても次ループで
+      // 再投稿はしない（同じ issue に何度もコメントが付くのを避ける）。warn ログのみ。
+      try {
+        await github.postSourceImportComment(src, created.html_url);
+      } catch (err) {
+        console.warn(`  [import] source 取り込みコメント投稿失敗 (${src.html_url}): ${err.message}`);
+      }
+    }
+  } finally {
+    isImportingTasks = false;
+  }
+}
+
+// -------------------------------------------------------
+// メインループ
+// -------------------------------------------------------
+async function loop() {
+  // 1. ソースリポから新規タスクを取り込む（vk-terminals 不要）
+  //    取り込みはどの端末からでも実行できる。複数端末が同時に取り込みを試みても、
+  //    importNewTasks 内で REST の removeLabel（強整合）を所有権ロックに使い、
+  //    ラベルを実際に外せた1台だけが create するため二重取り込みにはならない。
+  //    （取り込まれたメタ issue の実行は assignee フィルタ側で別途絞られる。）
+  await importNewTasks();
+
+  // 2. in-progress スキャン: 指示待ち検知 → waiting-input / PR 完了 → waiting-merge /
+  //    PR マージ → done / PR 未マージ closed → failed（vk-terminals 不要。PR アイコンのみ任意）
+  await scanInProgressIssues();
+
+  // 3. マージ待ち issue のマージ検知 + automerge（vk-terminals 不要）
+  await checkWaitingMergeIssues();
+
+  // 4. 失敗扱いになった issue の事後復旧チェック（vk-terminals 不要）
+  await recheckFailedIssues();
+
+  // 5. answered 復帰スキャン: `Status: answered` の waiting-input を in-progress へ戻す。
+  //    返信転送不要なので vk-terminals に依存せず、健全性ゲートより前で回す（vk-terminals 不要）。
+  await scanAnsweredRecovery();
+
+  // 6. ここから先（返信転送・dispatch）は vk-terminals が必要
+  const healthy = await checkHealth(VK_PORT);
+  if (!healthy) {
+    console.log(`[warn] vk-terminals (port ${VK_PORT}) に接続できません。返信転送・起動をスキップします。`);
+    return;
+  }
+
+  // 7. 指示待ちスキャン: ユーザー返信を pane に転送して in-progress に戻す
+  await scanWaitingInputIssues();
+
+  // 8. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す
+  //    （vk-terminals states で pane の生死・無反応を見るため checkHealth 後ろ）
+  await scanWatchdog();
+
+  // 9. ready をディスパッチ
+  const issues = await github.fetchPendingIssues();
+  if (issues.length === 0) {
+    console.log('[poll] 実行待ちタスクなし');
+    return;
+  }
+
+  console.log(`[poll] ${issues.length} 件のタスクを検出`);
+
+  // sequential 判定: 現在「作業中」の作業対象リポジトリ集合を GitHub の状態から集める
+  // （in-memory のカウンタではなくラベル状態を真実の源にする）。
+  const occupiedRepos = await getOccupiedRepoKeys();
+
+  for (const issue of issues) {
+    if (inFlightIssues.has(issue.number)) {
+      console.log(`[poll] issue #${issue.number} は起動処理中のためスキップ`);
+      continue;
+    }
+
+    const repoKey = getTargetRepoKey(issue);
+
+    // sequential ラベル付き issue は、同じ作業対象リポジトリのタスクが作業中なら
+    // 起動を見送り、次のポーリングで再評価する。別 repo・汎用・ラベル無しは即起動。
+    if (github.isSequential(issue) && repoKey && occupiedRepos.has(repoKey)) {
+      console.log(
+        `[poll] issue #${issue.number} (${repoKey}): 同じ作業対象リポジトリのタスクが作業中のため待機`
+      );
+      continue;
+    }
+
+    // 起動は撃ちっぱなし（ペイン作成＋送信＋state 記録で完了）。
+    // inFlightIssues は「status:in-progress 反映前に並行 loop が同じ ready を拾う」レース対策。
+    inFlightIssues.add(issue.number);
+    try {
+      const started = await startTask(issue);
+      // 同ティック内の後続 sequential タスクを待たせるため occupied に追加
+      if (started && repoKey) occupiedRepos.add(repoKey);
+    } catch (err) {
+      console.error(`[poll] issue #${issue.number} 起動エラー:`, err);
+    } finally {
+      inFlightIssues.delete(issue.number);
+    }
+  }
+}
+
+// -------------------------------------------------------
+// エントリポイント
+// -------------------------------------------------------
+async function main() {
+  // vk-terminals 上で実行されている場合、自分のペインタイトルを「オーケストレーター」に
+  // 設定して、どのペインが orchestrator か一目で分かるようにする（issue #157）。
+  // TTY でない場合（ログへのリダイレクト等）は setOwnPaneTitle 側で何もしない。
+  setOwnPaneTitle('オーケストレーター');
+
+  console.log(`=== task-queue orchestrator ===`);
+  console.log(`  repo         : ${GITHUB_OWNER}/${GITHUB_REPO}`);
+  console.log(`  source org   : ${SOURCE_ORG}`);
+  console.log(`  assignee     : ${ASSIGNEE_FILTER ?? '(なし・全件)'}${ASSIGNEE_FILTER ? '（実行は担当分のみ・取り込みは全端末で実施）' : ''}`);
+  console.log(`  terminal     : http://127.0.0.1:${VK_PORT}`);
+  console.log(`  interval     : ${POLL_INTERVAL / 1000}s`);
+  console.log(`  watchdog idle: ${WATCHDOG_IDLE / 60000}min`);
+  console.log(`  mode         : ${RUN_ONCE ? 'run-once' : 'watch'}`);
+  console.log('');
+
+  // 起動時リカバリーは廃止（新方針 案B）。orchestrator を再起動しても vk-terminals 側の
+  // pane は生き残っているため、in-progress / waiting-input の issue はラベルのまま残し、
+  // 通常ループのスキャナに委ねる（古い pane が生きていれば作業継続、死んでいれば
+  // scanWatchdog が wp-env クリーンアップのうえ failed に倒す）。これにより、既存 PR が
+  // あるのに ready へ戻して重複 PR を作る #40 の事故も構造的に起きない。
+
+  if (RUN_ONCE) {
+    // 案B（ステートレス・スキャナ方式）では起動は撃ちっぱなしで、状態は GitHub の
+    // ラベルに永続する。run-once は 1 周だけ走って終了する（進行中タスクは次回起動の
+    // スキャナが拾う）。
+    await loop();
+    return;
+  }
+
+  // watch モード: 初回 loop を起動し、setInterval で定期実行する。
+  // setInterval 経由の呼び出しは safe wrapper を通して unhandled rejection を防ぐ。
+  const runLoopSafely = () => loop().catch(err => console.error('[Loop]', err));
+  runLoopSafely();
+  setInterval(runLoopSafely, POLL_INTERVAL);
+}
+
+main().catch(err => {
+  console.error('[Fatal]', err);
+  process.exit(1);
+});

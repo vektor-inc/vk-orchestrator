@@ -1,0 +1,23 @@
+{
+  "github": {
+    "owner": "your-org",
+    "repo": "task-queue",
+    "sourceOrg": "your-org",
+    "queueLabel": "task-queue"
+  },
+  "orchestrator": {
+    "pollIntervalMs": 60000,
+    "watchdogIdleMs": 10800000,
+    "assigneeFilter": null
+  },
+  "vkTerminals": {
+    "port": 13847,
+    "host": "127.0.0.1",
+    "initialCommand": "",
+    "agentroom": true,
+    "additionalPanes": [
+      { "cwd": "/absolute/path/to/another/project" },
+      { "cwd": "/absolute/path/to/plain/dir", "noClaude": true }
+    ]
+  }
+}

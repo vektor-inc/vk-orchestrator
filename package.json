@@ -1,0 +1,29 @@
+{
+  "name": "vk-orchestrator",
+  "version": "0.1.0",
+  "description": "Reusable orchestrator that drives Claude sessions in vk-terminals from a GitHub issues-based task queue.",
+  "type": "module",
+  "bin": {
+    "vk-orchestrator": "bin/vk-orchestrator.js"
+  },
+  "main": "src/engine/index.js",
+  "scripts": {
+    "start": "node bin/vk-orchestrator.js start",
+    "run-once": "node bin/vk-orchestrator.js start --once",
+    "check-status": "node bin/vk-orchestrator.js check-status",
+    "unblock": "node bin/vk-orchestrator.js unblock",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@octokit/rest": "^20.1.1",
+    "dotenv": "^16.4.5"
+  },
+  "peerDependenciesMeta": {
+    "vk-terminals": {
+      "optional": true
+    }
+  }
+}
