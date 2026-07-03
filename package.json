@@ -16,6 +16,7 @@
     "check-status": "node bin/vk-orchestrator.js check-status",
     "unblock": "node bin/vk-orchestrator.js unblock",
     "setup:terminals": "node bin/vk-orchestrator.js setup-terminals",
+    "bump:terminals": "node scripts/bump-vk-terminals.mjs",
     "setup:labels": "node src/engine/ensure-task-queue-label.mjs",
     "setup:queue-labels": "node src/engine/ensure-task-queue-label.mjs --status",
     "test": "node --test tests/*.test.js"
