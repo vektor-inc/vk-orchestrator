@@ -55,7 +55,7 @@ export function loadUnifiedConfig(path = resolveConfigPath()) {
  */
 export function applyConfigToEnv(cfg = {}) {
   const set = (key, val) => {
-    if (val === undefined || val === null) return;
+    if (val === undefined || val === null || val === '') return;
     if (process.env[key] !== undefined && process.env[key] !== '') return;
     process.env[key] = String(val);
   };
