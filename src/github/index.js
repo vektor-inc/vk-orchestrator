@@ -835,7 +835,11 @@ export class GitHubClient {
   // GitHub Search API はインデックス遅延（通常数秒〜数分、稀に30分程度）があるが、
   // 取り込みはリアルタイム性より確実性が大事なので許容する。
   async searchSourceIssuesByLabel(org, label) {
-    const q = `org:${org} label:${label} is:issue is:open -repo:${this.owner}/${this.repo}`;
+    // assignee が設定されている場合は「自分にアサインされた source issue だけ」を取り込む。
+    // これにより取り込み担当が明確になり、複数メンバー運用でも各自が自分の担当分だけを取り込む
+    // （assignee 未設定なら従来どおり全件が対象）。
+    const assigneeQ = this.assignee ? ` assignee:${this.assignee}` : '';
+    const q = `org:${org} label:${label} is:issue is:open -repo:${this.owner}/${this.repo}${assigneeQ}`;
     const items = await this.octokit.paginate(
       this.octokit.search.issuesAndPullRequests,
       { q, per_page: 100 }
@@ -861,6 +865,9 @@ export class GitHubClient {
 
   // source issue を task-queue リポに新規 issue として取り込む。
   // ラベルは status:awaiting-approval のみ。sequential / priority は人が承認時に付与する。
+  // assignee が設定されていれば、取り込んだユーザー（＝この orchestrator の担当者）を
+  // 新規 issue にそのままアサインし、誰が取り込み・処理するかを task-queue 側でも示す。
+  // push 権限の無い assignee は GitHub API 側で無視される（エラーにはならない）。
   async createTaskQueueIssueFromSource(sourceIssue) {
     // repository_url は "https://api.github.com/repos/{owner}/{repo}" 形式
     const repoName = sourceIssue.repository_url.split('/').pop();
@@ -870,6 +877,7 @@ export class GitHubClient {
       title: `[${repoName}] ${sourceIssue.title}`,
       body:  sourceIssue.html_url,
       labels: ['status:awaiting-approval'],
+      ...(this.assignee ? { assignees: [this.assignee] } : {}),
     });
     return data;
   }
