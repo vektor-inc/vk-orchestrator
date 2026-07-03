@@ -7,3 +7,4 @@
 - [ 機能追加 ] VK Terminals を明示的に導入・検証する `setup-terminals` サブコマンド（`npm run setup:terminals`）を追加。optionalDependencies のビルド失敗で黙って除外されるケースを検知し、ビルドログと原因（Xcode CLT 未導入・非 macOS 等）を表示。`up`／`apply` 時の未導入メッセージも原因と復旧手順を示すよう改善
 - [ 機能追加 ] キューリポに運用ラベル一式（`status:*` / `priority:*` / `sequential` / `parallel` / `automerge`）を色・説明つきで一括登録する `--status` モードを `ensure-task-queue-label.mjs` に追加し、`npm run setup:queue-labels` として実行できるよう package.json に登録
 - [ その他 ] 取り込み対象ラベルの一括登録手順を README に追記し、`npm run setup:labels`（`ensure-task-queue-label.mjs`）として実行できるよう package.json に登録。ラベル名は config.json / `QUEUE_LABEL` に追従（既定 `task-queue`）
+- [ その他 ] README に GitHub Personal Access Token の発行手順（Classic PAT / `repo` スコープ / SAML SSO 認可）・設定方法（config.json / 環境変数 / GUI）・取り扱い注意を追記
