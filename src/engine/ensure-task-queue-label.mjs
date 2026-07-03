@@ -1,18 +1,24 @@
 /**
  * ensure-task-queue-label.mjs
  *
- * vektor-inc org の各リポジトリに `task-queue` ラベルが存在することを保証する。
+ * org の各リポジトリに取り込み対象ラベル（既定 `task-queue`）が存在することを保証する。
  *
  * 背景:
- *   orchestrator は GitHub Search API で `label:task-queue` を組織横断検索して
+ *   orchestrator は GitHub Search API で `label:<queueLabel>` を組織横断検索して
  *   取り込み対象 issue を見つける（github.js の searchSourceIssuesByLabel）。
  *   ラベルは GitHub の issue 画面から都度作れるが、各リポジトリに事前に作っておくと
  *   依頼者がラベル名のタイプミスや未作成で詰まらない。新規リポジトリ追加時に流すと便利。
  *
+ * ラベル名・対象 org / キューリポは config.json（`github.queueLabel` / `owner` / `repo`）
+ * または環境変数（`QUEUE_LABEL` / `GITHUB_OWNER` / `GITHUB_REPO`）で切り替えられる。
+ * 優先順位は他のコードと同じく env > config.json > 既定値。
+ *
  * 実行:
- *   node ensure-task-queue-label.mjs                # org の全リポジトリを対象
+ *   node ensure-task-queue-label.mjs                # org 各リポに queueLabel を ensure
  *   node ensure-task-queue-label.mjs repo1 repo2    # 指定リポジトリのみ
  *   node ensure-task-queue-label.mjs --list         # 対象リポジトリ一覧を表示するだけ
+ *   node ensure-task-queue-label.mjs --status       # キューリポに status:* / priority:* など運用ラベル一式を ensure
+ *   node ensure-task-queue-label.mjs --status --list # 登録するラベル一覧を表示するだけ
  *
  * 認証:
  *   gh CLI（`gh auth login` 済み）を利用する。org の private repo にもアクセスする必要が
@@ -21,9 +27,15 @@
  */
 
 import { execFileSync } from 'child_process';
+import { loadUnifiedConfig, applyConfigToEnv } from '../config.js';
+
+// config.json の値を env へ流し込んでから読む（既存の env は上書きしない＝ env 優先）。
+// これで orchestrator 本体と同じ設定（queueLabel / owner / repo）を共有できる。
+applyConfigToEnv(loadUnifiedConfig());
 
 const OWNER     = process.env.GITHUB_OWNER ?? 'vektor-inc';
 const TASK_REPO = process.env.GITHUB_REPO  ?? 'task-queue';
+const LABEL     = process.env.QUEUE_LABEL  ?? 'task-queue';
 
 const SETUP_TOKEN = process.env.SETUP_TOKEN || null;
 
@@ -37,6 +49,37 @@ function assertSafeName(label, value) {
 }
 assertSafeName('GITHUB_OWNER', OWNER);
 assertSafeName('GITHUB_REPO', TASK_REPO);
+
+// ラベル名は `status:ready` のようにコロン等を含み得るため NAME_PATTERN では縛らない。
+// 空文字だけ弾き、API パスに埋め込む箇所（GET）では encodeURIComponent する。
+if (!LABEL) {
+  throw new Error('取り込み対象ラベル名（QUEUE_LABEL / github.queueLabel）が空です。');
+}
+
+// キューリポ（OWNER/TASK_REPO）に登録する運用ラベル一式（--status モードで使用）。
+// 色・説明は現行 task-queue リポの定義をそのまま写したもの。
+// orchestrator が自動付与する status:* は未存在でも API 側で自動作成されるが、
+// その場合ランダム色・説明なしになる。人が付ける status:ready / priority:* /
+// sequential / parallel / automerge は事前に作っておかないと候補に出ず手動作成が要る。
+// e2e-passed は各 source リポの PR に vk-kore が付けるラベルのためここには含めない。
+const QUEUE_REPO_LABELS = [
+  { name: 'status:awaiting-approval', color: 'fbca04', description: '実行承認待ち（人の確認待ち。orchestrator は拾わない）' },
+  { name: 'status:ready',            color: 'e4e669', description: '実行待ち（承認済み。orchestrator が拾う対象）' },
+  { name: 'status:in-progress',      color: '0075ca', description: '実行中' },
+  { name: 'status:waiting-input',    color: 'e99695', description: '指示待ち（ユーザーの返信を待っています）' },
+  { name: 'status:waiting-merge',    color: '8a2be2', description: 'マージ待ち（PRがCI通過＆CodeRabbit静観30分済み）' },
+  { name: 'status:done',             color: '0e8a16', description: '完了' },
+  { name: 'status:failed',           color: 'd93f0b', description: '失敗' },
+  { name: 'priority:high',           color: 'b60205', description: '優先度：高' },
+  { name: 'priority:medium',         color: 'fbca04', description: '優先度：中' },
+  { name: 'priority:low',            color: 'd4c5f9', description: '優先度：低' },
+  { name: 'sequential',              color: 'c5def5', description: '順番に実行（デフォルト）' },
+  { name: 'parallel',                color: 'bfd4f2', description: '並列実行可能' },
+  { name: 'automerge',               color: '6d1e95', description: 'マージ手順を事前承認（orchestrator が自動マージ）' },
+];
+
+// 取り込み対象ラベル（queueLabel）1 種類の定義。org 各リポへ ensure する既定モードで使用。
+const QUEUE_LABEL_DEF = { name: LABEL, color: '0075ca', description: `${LABEL} 取り込み対象ラベル` };
 
 if (!SETUP_TOKEN) {
   try {
@@ -67,6 +110,7 @@ function ghJSON(argv) {
 
 const args = process.argv.slice(2);
 const listOnly = args.includes('--list');
+const statusMode = args.includes('--status');
 const targetRepos = args.filter(a => !a.startsWith('--'));
 
 function fetchOrgRepos() {
@@ -74,29 +118,58 @@ function fetchOrgRepos() {
   return repos.filter(r => !r.fork && r.name !== TASK_REPO);
 }
 
-function ensureLabel(repo) {
+// 単一ラベル定義（{name, color, description}）を 1 リポジトリに ensure する。
+// 既存ならスキップ（色・説明は上書きしない＝手動調整を尊重）、404 なら定義どおり作成。冪等。
+function ensureLabel(repo, def) {
   assertSafeName('repository', repo);
   try {
-    ghJSON(['api', `/repos/${OWNER}/${repo}/labels/task-queue`]);
-    console.log(`    ✔ label 'task-queue' 既存`);
+    ghJSON(['api', `/repos/${OWNER}/${repo}/labels/${encodeURIComponent(def.name)}`]);
+    console.log(`    ✔ label '${def.name}' 既存`);
     return;
   } catch (err) {
     // 404（ラベル未存在）だけ「作成」分岐に入れ、それ以外（権限不足・ネットワーク等）は上位へ。
     const stderr = err.stderr?.toString() ?? '';
     if (!/HTTP 404/.test(stderr)) throw err;
   }
-  gh([
+  const argv = [
     'api', '--method', 'POST',
     `/repos/${OWNER}/${repo}/labels`,
-    '-f', 'name=task-queue',
-    '-f', 'color=0075ca',
-    '-f', 'description=task-queue に自動登録',
-  ]);
-  console.log(`    ✅ label 'task-queue' 作成`);
+    '-f', `name=${def.name}`,
+    '-f', `color=${def.color}`,
+  ];
+  if (def.description) argv.push('-f', `description=${def.description}`);
+  gh(argv);
+  console.log(`    ✅ label '${def.name}' 作成`);
 }
 
-function main() {
-  console.log(`=== task-queue ラベル ensure (org: ${OWNER}) ===\n`);
+// キューリポ（OWNER/TASK_REPO）に運用ラベル一式（QUEUE_REPO_LABELS）を ensure する。
+function ensureQueueRepoLabels() {
+  console.log(`=== キューリポ '${OWNER}/${TASK_REPO}' に運用ラベル一式を ensure ===\n`);
+
+  if (listOnly) {
+    console.log('登録するラベル一覧:');
+    QUEUE_REPO_LABELS.forEach(d => console.log(`  - ${d.name} (#${d.color})`));
+    return;
+  }
+
+  let ok = 0, ng = 0;
+  for (const def of QUEUE_REPO_LABELS) {
+    try {
+      ensureLabel(TASK_REPO, def);
+      ok++;
+    } catch (err) {
+      const msg = err.stderr?.toString().trim() || err.message;
+      console.error(`    ❌ '${def.name}': ${msg}`);
+      ng++;
+    }
+  }
+
+  console.log(`\n完了: ${ok} 件成功、${ng} 件失敗`);
+}
+
+// org 各リポジトリに取り込み対象ラベル（queueLabel）を ensure する（既定モード）。
+function ensureQueueLabelOnOrgRepos() {
+  console.log(`=== '${LABEL}' ラベル ensure (org: ${OWNER}) ===\n`);
 
   let repos;
   if (targetRepos.length > 0) {
@@ -117,7 +190,7 @@ function main() {
   for (const r of repos) {
     console.log(`[${r.name}]`);
     try {
-      ensureLabel(r.name);
+      ensureLabel(r.name, QUEUE_LABEL_DEF);
       ok++;
     } catch (err) {
       const msg = err.stderr?.toString().trim() || err.message;
@@ -127,6 +200,14 @@ function main() {
   }
 
   console.log(`\n完了: ${ok} 件成功、${ng} 件失敗`);
+}
+
+function main() {
+  if (statusMode) {
+    ensureQueueRepoLabels();
+  } else {
+    ensureQueueLabelOnOrgRepos();
+  }
 }
 
 main();
