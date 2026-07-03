@@ -31,9 +31,17 @@ VK Terminals は `npm install` 時に依存として自動導入されます（`
 ## セットアップ
 
 ```bash
-npm install                          # VK Terminals も一緒に導入される
+npm install                          # VK Terminals も一緒に導入される（optionalDependencies）
 cp config.example.json config.json   # 下記の必須項目だけ埋めれば動きます
 ```
+
+> **VK Terminals が「見つからない」と言われる場合** — `vk-terminals` は `optionalDependencies` かつ postinstall で node-pty / electron のネイティブビルドを行うため、ビルドに失敗すると **`npm install` は成功したまま vk-terminals だけ黙って除外**され、`up` 実行時に「VK Terminals が見つかりません」となります。次のコマンドで**ビルドログを表示しながら導入し直し、結果を検証**できます。
+>
+> ```bash
+> npm run setup:terminals
+> ```
+>
+> よくある失敗原因: **macOS で Xcode Command Line Tools 未導入**（→ `xcode-select --install`）、**macOS 以外**（GUI は macOS 専用。別マシンの VK Terminals API を使う構成なら `up` ではなく `start` を使い `vkTerminals.host` を対象マシンに向ける）、C/C++ ビルドツール不足やネットワークエラー。
 
 **最低限、`github.token` / `github.owner` / `github.repo` の 3 つを自分の値に書き換えれば動きます。** その他の項目（`orchestrator.*` や `vkTerminals.*`）はすべて既定値が用意されているので、通常はそのままで構いません。とくに `vkTerminals.port`（既定 `13847`）と `vkTerminals.host`（既定 `127.0.0.1`）は**自分で値を決める必要はなく**、ポート衝突など特別な事情があるときだけ変更してください（設定を省略しても既定値で動作します）。
 

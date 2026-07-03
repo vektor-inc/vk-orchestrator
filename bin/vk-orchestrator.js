@@ -40,8 +40,13 @@ async function resolveVkDirOrExit() {
     return resolveVkTerminalsDir();
   } catch {
     console.error(
-      'VK Terminals が見つかりません。`npm install` を実行してください' +
-      '（VK Terminals は依存として導入されます。macOS 以外では利用できない場合があります）。'
+      'VK Terminals が見つかりません（未導入、または optional 依存のビルド失敗で除外されています）。\n' +
+      '  導入するには: npm run setup:terminals（ビルドログを表示しながら導入し、結果を検証します）\n' +
+      (process.platform === 'darwin'
+        ? '  macOS では Xcode Command Line Tools が必要です → `xcode-select --install`'
+        : `  現在のプラットフォームは ${process.platform} です。VK Terminals(GUI) は macOS 専用のため\n` +
+          '  この環境では起動できません。別マシンの VK Terminals API を使う場合は `up` ではなく\n' +
+          '  `start` を使い、config.json の vkTerminals.host を対象マシンに向けてください。')
     );
     process.exit(1);
   }
@@ -166,6 +171,45 @@ async function main() {
       }
       break;
     }
+    case 'setup-terminals': {
+      // VK Terminals を明示的に導入する。optionalDependencies はビルド失敗でも
+      // npm が exit 0 を返して黙って除外するため、通常の `npm install` だと
+      // 「入ったつもりで入っていない」状態に気づけない。ここではビルドログを
+      // 表示（--foreground-scripts）したうえで、実際に解決できるかで成否を判定する。
+      const { spawnSync } = await import('child_process');
+      const { resolveVkTerminalsDir } = await import('../src/config.js');
+      const repoRoot = resolve(__dirname, '..');
+
+      if (process.platform !== 'darwin') {
+        console.warn(
+          `⚠ 現在のプラットフォームは ${process.platform} です。VK Terminals(GUI) は node-pty /\n` +
+          `  electron のネイティブビルドを伴い macOS 専用です。macOS 以外では GUI を起動できません。\n` +
+          `  別マシンの VK Terminals API を叩く構成（vkTerminals.host 指定 + start）なら導入は不要です。\n`
+        );
+      }
+
+      console.log('VK Terminals を導入します（ビルドログを表示します）...\n');
+      spawnSync('npm', ['install', '--foreground-scripts', '--include=optional'], {
+        cwd: repoRoot,
+        stdio: 'inherit',
+      });
+
+      try {
+        const dir = resolveVkTerminalsDir();
+        console.log(`\n✅ VK Terminals を導入しました → ${dir}`);
+      } catch {
+        console.error(
+          '\n❌ VK Terminals の導入に失敗しました（optional 依存のビルドが失敗し除外されています）。\n' +
+          '   上のビルドログのエラーを確認してください。よくある原因:\n' +
+          (process.platform === 'darwin'
+            ? '   - Xcode Command Line Tools 未導入 → `xcode-select --install` を実行して再試行\n'
+            : `   - macOS 以外のため node-pty / electron をビルドできない（GUI は macOS のみ対応）\n`) +
+          '   - C/C++ ビルドツール不足、または clone 時のネットワークエラー'
+        );
+        process.exit(1);
+      }
+      break;
+    }
     default:
       console.log(`vk-orchestrator <command>
 
@@ -176,6 +220,7 @@ commands:
   check-status                          現在のキュー／pane 状態を表示
   unblock                               waiting-input の issue を status:ready に戻す
   apply                                 config.json の vkTerminals 設定を VK Terminals ディレクトリ内 config.json へ反映
+  setup-terminals                       VK Terminals を（ビルドログ付きで）明示的に導入し導入結果を検証
 `);
       process.exit(sub ? 1 : 0);
   }
