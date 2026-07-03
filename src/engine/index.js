@@ -1248,10 +1248,12 @@ async function importNewTasks() {
 // -------------------------------------------------------
 async function loop() {
   // 1. ソースリポから新規タスクを取り込む（VK Terminals 不要）
-  //    取り込みはどの端末からでも実行できる。複数端末が同時に取り込みを試みても、
-  //    importNewTasks 内で REST の removeLabel（強整合）を所有権ロックに使い、
-  //    ラベルを実際に外せた1台だけが create するため二重取り込みにはならない。
-  //    （取り込まれたメタ issue の実行は assignee フィルタ側で別途絞られる。）
+  //    assignee 設定時は「自分にアサインされた source issue だけ」を取り込み、
+  //    取り込んだメタ issue にも取り込んだユーザーをアサインする（担当が task-queue 側でも分かる）。
+  //    それでも複数端末が同時に取り込みを試みる可能性はあるため、importNewTasks 内で
+  //    REST の removeLabel（強整合）を所有権ロックに使い、ラベルを実際に外せた1台だけが
+  //    create するため二重取り込みにはならない。
+  //    （assignee 未設定時は従来どおり全件取り込み。実行は assignee フィルタ側でも絞られる。）
   await importNewTasks();
 
   // 2. in-progress スキャン: 指示待ち検知 → waiting-input / PR 完了 → waiting-merge /
@@ -1339,7 +1341,7 @@ async function main() {
   console.log(`=== task-queue orchestrator ===`);
   console.log(`  repo         : ${GITHUB_OWNER}/${GITHUB_REPO}`);
   console.log(`  source org   : ${SOURCE_ORG}`);
-  console.log(`  assignee     : ${ASSIGNEE_FILTER ?? '(なし・全件)'}${ASSIGNEE_FILTER ? '（実行は担当分のみ・取り込みは全端末で実施）' : ''}`);
+  console.log(`  assignee     : ${ASSIGNEE_FILTER ?? '(なし・全件)'}${ASSIGNEE_FILTER ? '（取り込み・実行とも担当分のみ。取り込み時に担当者をアサイン）' : ''}`);
   console.log(`  terminal     : http://127.0.0.1:${VK_PORT}`);
   console.log(`  interval     : ${POLL_INTERVAL / 1000}s`);
   console.log(`  watchdog idle: ${WATCHDOG_IDLE / 60000}min`);
