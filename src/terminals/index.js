@@ -363,18 +363,80 @@ export async function waitForClaudeReady(port, termId, options = {}) {
 }
 
 /**
+ * 送信した本文の中から、画面エコー確認に使う「特徴的なトークン」を抽出する。
+ *
+ * コールドスタート時は起動バナーが本文を飲み込み、Enter だけが消費されて
+ * 本文が入力欄に一切入らないことがある（task-queue のバグ再現ケース）。この
+ * 取りこぼしを検知するため、Claude Code 側の UI 文字列（バージョンで変わりうる
+ * バナーやプロンプト記号）ではなく「自分が送った本文そのもの」の一部が
+ * `lastLines` に現れたかどうかで判定する（バージョン非依存）。
+ *
+ * 空白区切りのトークンのうち、末尾側から見て 4 文字以上のものを拾う。
+ * 短い助詞・記号だけのトークンは端末出力（バナーやプロンプト記号など）に偶然
+ * 一致しやすく、confirmBodyEchoed が誤って「エコーされた」と判定する原因になる
+ * ため照合対象にしない。4 文字以上のトークンが 1 つも無い場合は null を返し、
+ * エコー確認自体をスキップさせる（confirmBodyEchoed がフォールスルーで true を
+ * 返す＝「判定不能なら誤検知でブロックしない」既存方針に合わせる）。実運用の
+ * `/vk-kore <url> wp-env-port=NNNN` 等では十分長いトークンが必ず含まれるため
+ * 実害は限定的。
+ *
+ * @param {string} body 送信した本文（改行除去済み）
+ * @returns {string|null} 照合に使うトークン。本文が空、または 4 文字以上の
+ *   トークンが無い場合は null（エコー確認自体をスキップする）
+ */
+function pickEchoFragment(body) {
+  const trimmed = String(body).trim();
+  if (!trimmed) return null;
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (tokens[i].length >= 4) return tokens[i];
+  }
+  return null;
+}
+
+/**
+ * baseline（本文送信後に取得した lastLines）の中に本文のエコーが確認できるかを判定する。
+ *
+ * echoFragment が null（本文が空）、または baseline が null（API 一時エラーで取得失敗）の
+ * 場合は判定不能として「確認できた」扱いにフォールスルーする（誤検知でブロックし続けない
+ * ため。confirmOutputProgressed の baseline=null 時の扱いと同じ方針）。
+ *
+ * @param {{lastLines:string}|null} baseline
+ * @param {string|null} echoFragment
+ * @returns {boolean}
+ */
+function confirmBodyEchoed(baseline, echoFragment) {
+  if (!echoFragment) return true;
+  if (!baseline) return true;
+  return baseline.lastLines.includes(echoFragment);
+}
+
+/**
  * Claude Code のプロンプト UI に本文を流し込んで Enter で確定させる。
  *
  * /api/send で `本文 + '\r'` を 1 リクエストで送ると、Claude Code 側が `\r` を
  * 入力欄の改行として吸収し Enter 確定にならない（入力待ちのまま止まる）。
  * 本文と Enter を別リクエストに分け、間に短い待機を入れることで確実に確定させる。
  *
- * さらに、Enter が一度では確定されず入力欄に張り付いたままになる稀なケースに備え、
- * Enter 送信「直前」の lastOutputTime / lastLines を baseline として記録し、Enter
- * 送信後に出力が変化しなければ Enter を再送する。規定回数まで再試行し、最後まで
- * 変化が確認できなければ警告ログを出して return する（呼び出し側の
- * waitForTerminalEvent が別途タイムアウト等で検知するので、ここではプロセスを
- * 落とさない）。
+ * ■ 本文エコー確認・再送（主軸）
+ * コールドスタート時、起動バナーが描画中に本文を送ると本文が入力欄に届かず
+ * 飲み込まれることがある。その状態で Enter を送るとバナー→プロンプトの
+ * 再描画が起き、出力自体は「進んだ」ように見えてしまうため、Enter の
+ * 確定確認（下記）だけでは本文欠落を検知できない（task-queue の再現バグ）。
+ * これを防ぐため、本文送信後の `lastLines` に本文の一部（pickEchoFragment）が
+ * 実際にエコーされたかを確認し、確認できなければ Enter だけでなく本文ごと
+ * 再送する。Claude Code 側の UI 文字列（バージョンで変わりうるバナー等）には
+ * 依存せず、自分が送ったテキストと照合するためバージョン非依存である。
+ *
+ * ■ Enter 確定確認（補助）
+ * 本文エコーを確認できた後も、Enter が一度では確定されず入力欄に張り付いた
+ * ままになる稀なケースに備え、Enter 送信「直前」の lastOutputTime / lastLines
+ * を baseline として記録し、Enter 送信後に出力が変化しなければ Enter を
+ * 再送する（本文は再送しない）。
+ *
+ * いずれの再送ループも規定回数まで再試行し、最後まで確認できなければ警告ログを
+ * 出して return する（呼び出し側の waitForTerminalEvent が別途タイムアウト等で
+ * 検知するので、ここではプロセスを落とさない）。
  *
  * baseline を「本文送信前」ではなく「本文送信後・Enter 送信前」に取るのは、
  * Claude Code が本文を受け取った瞬間に入力欄を再描画するため、本文送信前を
@@ -384,14 +446,24 @@ export async function waitForClaudeReady(port, termId, options = {}) {
  * @param {number} port           VK Terminals API ポート
  * @param {string} termId         送信先のターミナルID
  * @param {string} prompt         確定したい本文（末尾の \r/\n は剥がす）
- * @param {number} [delayMs=500]  本文送信後 Enter までの待機時間（baseline はこの待機の後に取得する）
- * @param {object} [options]                  Enter 再送制御
- * @param {boolean} [options.confirm=true]    出力変化を確認して再送するか
- * @param {number}  [options.confirmTimeoutMs=8000]  1 回あたりの確認タイムアウト
+ * @param {number} [delayMs=500]  送信後に再描画が落ち着くまでの待機時間（本文再送時にも同じ待機を挟む）
+ * @param {object} [options]                  再送制御
+ * @param {boolean} [options.confirm=true]    本文エコー・出力変化を確認して再送するか
+ * @param {number}  [options.confirmTimeoutMs=8000]  Enter 確定確認 1 回あたりのタイムアウト
  * @param {number}  [options.pollIntervalMs=500]     確認ポーリング間隔
- * @param {number}  [options.maxRetries=2]           Enter 再送の最大回数
- *                                                   （最初の Enter と合わせて最大 maxRetries+1 回送信する。
- *                                                   デフォルトの 2 なら計 3 回まで Enter を打つ）
+ * @param {number}  [options.maxRetries=2]           本文再送・Enter 再送それぞれの最大回数
+ *                                                   （最初の送信と合わせて最大 maxRetries+1 回まで送信する。
+ *                                                   デフォルトの 2 なら本文・Enter それぞれ計 3 回まで送る）
+ * @returns {Promise<object>} `/api/send`（Enter 送信）のレスポンスに `bodyConfirmed` を
+ *   加えたオブジェクト（例: `{ ok: true, bodyConfirmed: true }`）。`bodyConfirmed` は
+ *   本文が入力欄にエコーされたことを確認できたか:
+ *     - `true`  … エコーを確認できた、またはエコー確認をスキップした
+ *                 （本文が空 / 4 文字以上のトークンなし / baseline 取得が API エラー）。
+ *                 「取りこぼしを検知しなかった」の意。
+ *     - `false` … 本文再送を規定回数使い切ってもエコーを確認できなかった＝本文が
+ *                 入力欄に届いていない可能性がある。呼び出し側で警告する材料にする。
+ *     - `null`  … `confirm:false` のため確認自体を行っていない（true/false と区別する）。
+ *   既存の呼び出し側は `result.ok` を見るだけなので、この追加フィールドは後方互換。
  */
 export async function submitToClaude(port, termId, prompt, delayMs = 500, options = {}) {
   // 数値オプションを有限な非負整数に正規化するヘルパー（NaN/Infinity/負数はフォールバック）
@@ -412,27 +484,54 @@ export async function submitToClaude(port, termId, prompt, delayMs = 500, option
   const safeMaxRetries       = toNonNegativeInt(maxRetries, 2);
 
   const body = String(prompt).replace(/[\r\n]+$/, '');
+  const echoFragment = pickEchoFragment(body);
 
   // 1) 本文を送信し、入力欄の再描画が落ち着くまで待機
   await sendToTerminal(port, termId, body);
   await new Promise(r => setTimeout(r, delayMs));
 
-  // 2) Enter 送信「直前」の baseline を記録する（API エラー時は null でフォールスルー）。
-  //    本文受信後の入力欄再描画はこの時点までに反映されているはずなので、
-  //    以降の出力変化は Enter による確定後のものとみなせる。
-  const baseline = confirm ? await getTerminalBaseline(port, termId) : null;
+  if (!confirm) {
+    // 従来通り、確認せず即 Enter して return（bodyConfirmed は「未確認」を表す null）
+    const enterResult = await sendToTerminal(port, termId, '\r');
+    return { ...enterResult, bodyConfirmed: null };
+  }
+
+  // 2) 本文が実際に入力欄へ入った（エコーされた）かを確認する。
+  //    確認できるまで（規定回数を上限に）本文ごと再送する。
+  //    最後に取得した baseline は、確認できてもできなくても、続く Enter 確定
+  //    チェックの baseline としてそのまま流用する（Enter 送信「直前」の状態のため）。
+  let baseline      = await getTerminalBaseline(port, termId);
+  let bodyConfirmed = confirmBodyEchoed(baseline, echoFragment);
+
+  for (let attempt = 0; !bodyConfirmed && attempt < safeMaxRetries; attempt++) {
+    console.warn(
+      `  [submitToClaude] 本文のエコーを確認できません。本文ごと再送します (termId=${termId}, attempt=${attempt + 1}/${safeMaxRetries})`
+    );
+    try {
+      await sendToTerminal(port, termId, body);
+    } catch (err) {
+      console.warn(`  [submitToClaude] 本文再送失敗（処理は継続）: ${err.message}`);
+    }
+    await new Promise(r => setTimeout(r, delayMs));
+    baseline      = await getTerminalBaseline(port, termId);
+    bodyConfirmed = confirmBodyEchoed(baseline, echoFragment);
+  }
+
+  if (!bodyConfirmed) {
+    console.warn(
+      `  [submitToClaude] 本文再送${safeMaxRetries}回後もエコーを確認できませんでした。Enter 送信を試みます (termId=${termId})`
+    );
+  }
 
   // 3) Enter を送信して確定
   const result = await sendToTerminal(port, termId, '\r');
 
-  if (!confirm) return result;
-
-  // 4) 出力変化を確認、変わらなければ Enter を再送
+  // 4) 出力変化を確認、変わらなければ Enter を再送（本文は再送しない）
   for (let attempt = 0; attempt <= safeMaxRetries; attempt++) {
     const progressed = await confirmOutputProgressed(
       port, termId, baseline, safeConfirmTimeoutMs, safePollIntervalMs
     );
-    if (progressed) return result;
+    if (progressed) return { ...result, bodyConfirmed };
 
     if (attempt < safeMaxRetries) {
       console.warn(
@@ -449,7 +548,7 @@ export async function submitToClaude(port, termId, prompt, delayMs = 500, option
   console.warn(
     `  [submitToClaude] Enter 再送${safeMaxRetries}回後も出力変化を確認できませんでした (termId=${termId})`
   );
-  return result;
+  return { ...result, bodyConfirmed };
 }
 
 /**

@@ -38,15 +38,20 @@ function mockFetch() {
 
     if (u.endsWith('/api/states')) {
       scenario.statesCalls += 1;
-      // 送信状況（=現在「いくつ /api/send が呼ばれたか」）でターミナル状態を差し替える。
-      //   - sendCalls 0:   本文未送信時（baseline を本文送信前に取りに来る旧コード向け）
-      //   - sendCalls 1:   本文送信済み・Enter 未送信（baseline を Enter 直前に取りに来る新コード向け）
-      //   - sendCalls 2+:  Enter 送信後の確認ポーリング
+      // 送信状況（=これまでに送られた本文/Enter の回数）でターミナル状態を差し替える。
+      //   - Enter 未送信 & 本文 0 回:  beforeBody     （本文未送信時）
+      //   - Enter 未送信 & 本文 1 回:  afterBody       （本文送信済み・Enter 未送信、baseline 取得タイミング）
+      //   - Enter 未送信 & 本文 2 回以上: afterBodyRetry（本文再送後。未定義なら afterBody にフォールバック
+      //                                    = 「再送しても画面は変わらない」動作になる）
+      //   - Enter 送信済み（何回でも）:  afterEnter     （Enter 送信後の確認ポーリング）
+      const bodySends  = scenario.sendCalls.filter(c => c.input !== '\r').length;
+      const enterSends = scenario.sendCalls.filter(c => c.input === '\r').length;
       const phase =
-        scenario.sendCalls.length === 0 ? 'beforeBody'
-        : scenario.sendCalls.length === 1 ? 'afterBody'
-        : 'afterEnter';
-      const value = scenario.statesByPhase[phase];
+        enterSends > 0 ? 'afterEnter'
+        : bodySends === 0 ? 'beforeBody'
+        : bodySends === 1 ? 'afterBody'
+        : 'afterBodyRetry';
+      const value = scenario.statesByPhase[phase] ?? scenario.statesByPhase.afterBody;
       if (value === 'error') {
         throw new Error('mock api/states error');
       }
@@ -123,6 +128,7 @@ describe('submitToClaude', () => {
     const result = await submitToClaude(PORT, TERMID, 'hello', 10, FAST_OPTIONS);
 
     assert.equal(result.ok, true, '送信結果が ok で返る');
+    assert.equal(result.bodyConfirmed, true, 'エコーを確認できたので bodyConfirmed=true');
 
     // /api/send は 本文 + Enter の計 2 回
     assert.equal(scenario.sendCalls.length, 2, '再送なしで Enter は 1 回だけ送られる');
@@ -179,8 +185,78 @@ describe('submitToClaude', () => {
     });
 
     assert.equal(result.ok, true);
+    assert.equal(result.bodyConfirmed, null, 'confirm:false では確認しないので bodyConfirmed=null');
     assert.equal(scenario.statesCalls, 0, 'confirm:false では /api/states が呼ばれない');
     assert.equal(scenario.sendCalls.length, 2, '本文 + Enter の 2 回のみ');
+  });
+
+  it('(e) [RED] コールドスタートのバナーが本文を飲み込み、Enterでバナーが消えるだけで出力は進む → 本文が再送されるべき（現行コードは見逃す）', async () => {
+    // コールドスタート再現シナリオ:
+    //   beforeBody / afterBody: 起動バナーが表示されたまま（本文 'hello' はどこにもエコーされない
+    //   = 入力欄が出る前にペインへ送った本文が飲み込まれた状態）
+    //   afterEnter: バナーが消えてプロンプトが再描画される（lastOutputTime も lastLines も変わる
+    //   ため、現行の AND 判定では「出力が進んだ」と誤判定してしまう）が、ここにも 'hello' は
+    //   一度も現れない＝本文は結局どこにも入力されていない。
+    scenario.statesByPhase = {
+      beforeBody: { lastOutputTime: 100, lastLines: 'Fable 5 is back and better than ever!' },
+      afterBody:  { lastOutputTime: 100, lastLines: 'Fable 5 is back and better than ever!' },
+      afterEnter: { lastOutputTime: 900, lastLines: '> ' },
+    };
+
+    const result = await submitToClaude(PORT, TERMID, 'hello', 10, FAST_OPTIONS);
+
+    const bodySends = scenario.sendCalls.filter(c => c.input === 'hello');
+    assert.ok(
+      bodySends.length >= 2,
+      '本文が一度も画面にエコーされないまま出力だけ進んだ場合、Enter だけでなく本文ごと再送されるべき' +
+      `（実際の本文送信回数: ${bodySends.length}）`
+    );
+    // 本文再送を使い切ってもエコーを確認できなかったので、呼び出し側が取りこぼしに
+    // 気づけるよう bodyConfirmed=false を返す（#4 の握りつぶし防止）。
+    assert.equal(result.bodyConfirmed, false,
+      '再送を使い切ってもエコー未確認なら bodyConfirmed=false を返す');
+  });
+
+  it('(f) 本文が飲み込まれても 1 回の再送でエコーが確認できれば、それ以上は再送しない', async () => {
+    // beforeBody/afterBody: バナー表示中で本文は飲み込まれる（エコーなし）。
+    // afterBodyRetry: 本文を再送した結果、今度はプロンプトに 'hello' がエコーされる。
+    // afterEnter: Enter 確定でさらに出力が進む。
+    scenario.statesByPhase = {
+      beforeBody:     { lastOutputTime: 100,   lastLines: 'Fable 5 is back and better than ever!' },
+      afterBody:      { lastOutputTime: 100,   lastLines: 'Fable 5 is back and better than ever!' },
+      afterBodyRetry: { lastOutputTime: 500,   lastLines: 'prompt:hello' },
+      afterEnter:     { lastOutputTime: 2_000, lastLines: 'after-enter' },
+    };
+
+    const result = await submitToClaude(PORT, TERMID, 'hello', 10, FAST_OPTIONS);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.bodyConfirmed, true, '再送でエコーを確認できたので bodyConfirmed=true');
+    const bodySends = scenario.sendCalls.filter(c => c.input === 'hello');
+    assert.equal(bodySends.length, 2, '飲み込まれた本文は 1 回だけ再送され、エコー確認後は再送を止める');
+    // 本文(2回) + Enter(1回) の計 3 回のみ。Enter 側は afterEnter で AND 判定 progressed=true のため再送なし。
+    assert.equal(scenario.sendCalls.length, 3, 'エコー確認後は Enter も 1 回で成功し、余計な再送が起きない');
+  });
+
+  it('(g) 全トークンが4文字未満の本文 → エコー確認をスキップし本文再送しない（bodyConfirmed=true）', async () => {
+    // 'ok a b' はすべて 4 文字未満 → pickEchoFragment は null を返し、
+    // confirmBodyEchoed は「判定不能」としてフォールスルーで true。
+    // バナー表示中で本文がエコーされていなくても、短トークンの偶然一致による
+    // 誤判定を避けるため本文再送は起こさない。
+    scenario.statesByPhase = {
+      beforeBody: { lastOutputTime: 100,   lastLines: 'Fable 5 is back and better than ever!' },
+      afterBody:  { lastOutputTime: 100,   lastLines: 'Fable 5 is back and better than ever!' },
+      afterEnter: { lastOutputTime: 2_000, lastLines: 'after-enter' },
+    };
+
+    const result = await submitToClaude(PORT, TERMID, 'ok a b', 10, FAST_OPTIONS);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.bodyConfirmed, true, 'エコー確認をスキップしたので bodyConfirmed=true');
+    const bodySends = scenario.sendCalls.filter(c => c.input === 'ok a b');
+    assert.equal(bodySends.length, 1, '4 文字以上のトークンが無い本文は再送しない');
+    // 本文(1回) + Enter(1回) の計 2 回。
+    assert.equal(scenario.sendCalls.length, 2, 'エコー確認スキップ時は本文再送が発火しない');
   });
 
   it('AND 判定: lastOutputTime だけ進んで lastLines が同じ場合は progressed と見なさない', async () => {
