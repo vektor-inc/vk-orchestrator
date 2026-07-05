@@ -96,7 +96,8 @@ function gh(argv) {
   const env = SETUP_TOKEN
     ? { ...process.env, GH_TOKEN: SETUP_TOKEN }
     : process.env;
-  return execFileSync('gh', argv, { encoding: 'utf8', stdio: 'pipe', env });
+  // maxBuffer 既定（1MB）だと org 全リポの --paginate 結果で ENOBUFS になるため拡張。
+  return execFileSync('gh', argv, { encoding: 'utf8', stdio: 'pipe', env, maxBuffer: 64 * 1024 * 1024 });
 }
 function ghJSON(argv) {
   const out = gh(argv);
@@ -114,7 +115,10 @@ const statusMode = args.includes('--status');
 const targetRepos = args.filter(a => !a.startsWith('--'));
 
 function fetchOrgRepos() {
-  const repos = ghJSON(['api', `/orgs/${OWNER}/repos?type=all&per_page=100`]);
+  // --paginate を付けないと 1 ページ目（最大 per_page 件）しか取得できず、
+  // リポジトリ数が per_page を超える org では残りが黙って漏れる。
+  // gh は配列レスポンスを --paginate 時に単一の JSON 配列へマージして返す。
+  const repos = ghJSON(['api', '--paginate', `/orgs/${OWNER}/repos?type=all&per_page=100`]);
   return repos.filter(r => !r.fork && r.name !== TASK_REPO);
 }
 
