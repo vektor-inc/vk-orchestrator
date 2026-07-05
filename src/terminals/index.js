@@ -371,12 +371,18 @@ export async function waitForClaudeReady(port, termId, options = {}) {
  * バナーやプロンプト記号）ではなく「自分が送った本文そのもの」の一部が
  * `lastLines` に現れたかどうかで判定する（バージョン非依存）。
  *
- * 空白区切りのトークンのうち、末尾側から見て 4 文字以上のものを優先して拾う。
- * 短い助詞・記号だけのトークンは他の画面表示と偶然一致しやすく誤検知の元になる
- * ため避ける。該当が無ければ最後のトークン（無ければ本文全体）を使う。
+ * 空白区切りのトークンのうち、末尾側から見て 4 文字以上のものを拾う。
+ * 短い助詞・記号だけのトークンは端末出力（バナーやプロンプト記号など）に偶然
+ * 一致しやすく、confirmBodyEchoed が誤って「エコーされた」と判定する原因になる
+ * ため照合対象にしない。4 文字以上のトークンが 1 つも無い場合は null を返し、
+ * エコー確認自体をスキップさせる（confirmBodyEchoed がフォールスルーで true を
+ * 返す＝「判定不能なら誤検知でブロックしない」既存方針に合わせる）。実運用の
+ * `/vk-kore <url> wp-env-port=NNNN` 等では十分長いトークンが必ず含まれるため
+ * 実害は限定的。
  *
  * @param {string} body 送信した本文（改行除去済み）
- * @returns {string|null} 照合に使うトークン。本文が空文字なら null（エコー確認自体をスキップする）
+ * @returns {string|null} 照合に使うトークン。本文が空、または 4 文字以上の
+ *   トークンが無い場合は null（エコー確認自体をスキップする）
  */
 function pickEchoFragment(body) {
   const trimmed = String(body).trim();
@@ -385,7 +391,7 @@ function pickEchoFragment(body) {
   for (let i = tokens.length - 1; i >= 0; i--) {
     if (tokens[i].length >= 4) return tokens[i];
   }
-  return tokens[tokens.length - 1] ?? trimmed;
+  return null;
 }
 
 /**
@@ -448,6 +454,16 @@ function confirmBodyEchoed(baseline, echoFragment) {
  * @param {number}  [options.maxRetries=2]           本文再送・Enter 再送それぞれの最大回数
  *                                                   （最初の送信と合わせて最大 maxRetries+1 回まで送信する。
  *                                                   デフォルトの 2 なら本文・Enter それぞれ計 3 回まで送る）
+ * @returns {Promise<object>} `/api/send`（Enter 送信）のレスポンスに `bodyConfirmed` を
+ *   加えたオブジェクト（例: `{ ok: true, bodyConfirmed: true }`）。`bodyConfirmed` は
+ *   本文が入力欄にエコーされたことを確認できたか:
+ *     - `true`  … エコーを確認できた、またはエコー確認をスキップした
+ *                 （本文が空 / 4 文字以上のトークンなし / baseline 取得が API エラー）。
+ *                 「取りこぼしを検知しなかった」の意。
+ *     - `false` … 本文再送を規定回数使い切ってもエコーを確認できなかった＝本文が
+ *                 入力欄に届いていない可能性がある。呼び出し側で警告する材料にする。
+ *     - `null`  … `confirm:false` のため確認自体を行っていない（true/false と区別する）。
+ *   既存の呼び出し側は `result.ok` を見るだけなので、この追加フィールドは後方互換。
  */
 export async function submitToClaude(port, termId, prompt, delayMs = 500, options = {}) {
   // 数値オプションを有限な非負整数に正規化するヘルパー（NaN/Infinity/負数はフォールバック）
@@ -475,8 +491,9 @@ export async function submitToClaude(port, termId, prompt, delayMs = 500, option
   await new Promise(r => setTimeout(r, delayMs));
 
   if (!confirm) {
-    // 従来通り、確認せず即 Enter して return
-    return sendToTerminal(port, termId, '\r');
+    // 従来通り、確認せず即 Enter して return（bodyConfirmed は「未確認」を表す null）
+    const enterResult = await sendToTerminal(port, termId, '\r');
+    return { ...enterResult, bodyConfirmed: null };
   }
 
   // 2) 本文が実際に入力欄へ入った（エコーされた）かを確認する。
@@ -514,7 +531,7 @@ export async function submitToClaude(port, termId, prompt, delayMs = 500, option
     const progressed = await confirmOutputProgressed(
       port, termId, baseline, safeConfirmTimeoutMs, safePollIntervalMs
     );
-    if (progressed) return result;
+    if (progressed) return { ...result, bodyConfirmed };
 
     if (attempt < safeMaxRetries) {
       console.warn(
@@ -531,7 +548,7 @@ export async function submitToClaude(port, termId, prompt, delayMs = 500, option
   console.warn(
     `  [submitToClaude] Enter 再送${safeMaxRetries}回後も出力変化を確認できませんでした (termId=${termId})`
   );
-  return result;
+  return { ...result, bodyConfirmed };
 }
 
 /**

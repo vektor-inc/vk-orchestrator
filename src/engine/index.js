@@ -259,7 +259,15 @@ async function startTask(issue) {
   }
 
   console.log(`  → terminal #${termId} に送信`);
-  await submitToClaude(VK_PORT, termId, prompt);
+  const sent = await submitToClaude(VK_PORT, termId, prompt);
+  if (sent?.bodyConfirmed === false) {
+    // 本文再送を規定回数使い切ってもエコーを確認できなかった＝本文が入力欄に
+    // 届いていない可能性がある。プロセスは落とさず（graceful degradation）、
+    // 取りこぼしに気づけるよう明確な警告だけ出す（#4 の握りつぶし防止）。
+    console.warn(
+      `  [submit] 本文が入力欄に届いていない可能性があります (issue #${number}, termId=${termId})`
+    );
+  }
   return true;
 }
 
@@ -558,11 +566,19 @@ async function scanWaitingInputIssues() {
       continue;
     }
 
+    let forwardResult;
     try {
-      await submitToClaude(VK_PORT, saved.termId, reply.body);
+      forwardResult = await submitToClaude(VK_PORT, saved.termId, reply.body);
     } catch (err) {
       console.warn(`  [scan-waiting-input] issue #${issue.number}: 返信転送失敗（次ループ再試行）: ${err.message}`);
       continue;
+    }
+    if (forwardResult?.bodyConfirmed === false) {
+      // 返信本文が入力欄に届いていない可能性がある。転送自体は成功扱いで先へ進む
+      // （握りつぶさないよう警告だけ残す）。
+      console.warn(
+        `  [scan-waiting-input] issue #${issue.number}: 返信本文が入力欄に届いていない可能性があります (termId=${saved.termId})`
+      );
     }
     // 転送成功直後にカーソルを記録（setStatus 失敗時でも二重転送を防ぐ）。
     try {

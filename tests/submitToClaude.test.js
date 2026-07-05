@@ -128,6 +128,7 @@ describe('submitToClaude', () => {
     const result = await submitToClaude(PORT, TERMID, 'hello', 10, FAST_OPTIONS);
 
     assert.equal(result.ok, true, '送信結果が ok で返る');
+    assert.equal(result.bodyConfirmed, true, 'エコーを確認できたので bodyConfirmed=true');
 
     // /api/send は 本文 + Enter の計 2 回
     assert.equal(scenario.sendCalls.length, 2, '再送なしで Enter は 1 回だけ送られる');
@@ -184,6 +185,7 @@ describe('submitToClaude', () => {
     });
 
     assert.equal(result.ok, true);
+    assert.equal(result.bodyConfirmed, null, 'confirm:false では確認しないので bodyConfirmed=null');
     assert.equal(scenario.statesCalls, 0, 'confirm:false では /api/states が呼ばれない');
     assert.equal(scenario.sendCalls.length, 2, '本文 + Enter の 2 回のみ');
   });
@@ -201,7 +203,7 @@ describe('submitToClaude', () => {
       afterEnter: { lastOutputTime: 900, lastLines: '> ' },
     };
 
-    await submitToClaude(PORT, TERMID, 'hello', 10, FAST_OPTIONS);
+    const result = await submitToClaude(PORT, TERMID, 'hello', 10, FAST_OPTIONS);
 
     const bodySends = scenario.sendCalls.filter(c => c.input === 'hello');
     assert.ok(
@@ -209,6 +211,10 @@ describe('submitToClaude', () => {
       '本文が一度も画面にエコーされないまま出力だけ進んだ場合、Enter だけでなく本文ごと再送されるべき' +
       `（実際の本文送信回数: ${bodySends.length}）`
     );
+    // 本文再送を使い切ってもエコーを確認できなかったので、呼び出し側が取りこぼしに
+    // 気づけるよう bodyConfirmed=false を返す（#4 の握りつぶし防止）。
+    assert.equal(result.bodyConfirmed, false,
+      '再送を使い切ってもエコー未確認なら bodyConfirmed=false を返す');
   });
 
   it('(f) 本文が飲み込まれても 1 回の再送でエコーが確認できれば、それ以上は再送しない', async () => {
@@ -225,10 +231,32 @@ describe('submitToClaude', () => {
     const result = await submitToClaude(PORT, TERMID, 'hello', 10, FAST_OPTIONS);
 
     assert.equal(result.ok, true);
+    assert.equal(result.bodyConfirmed, true, '再送でエコーを確認できたので bodyConfirmed=true');
     const bodySends = scenario.sendCalls.filter(c => c.input === 'hello');
     assert.equal(bodySends.length, 2, '飲み込まれた本文は 1 回だけ再送され、エコー確認後は再送を止める');
     // 本文(2回) + Enter(1回) の計 3 回のみ。Enter 側は afterEnter で AND 判定 progressed=true のため再送なし。
     assert.equal(scenario.sendCalls.length, 3, 'エコー確認後は Enter も 1 回で成功し、余計な再送が起きない');
+  });
+
+  it('(g) 全トークンが4文字未満の本文 → エコー確認をスキップし本文再送しない（bodyConfirmed=true）', async () => {
+    // 'ok a b' はすべて 4 文字未満 → pickEchoFragment は null を返し、
+    // confirmBodyEchoed は「判定不能」としてフォールスルーで true。
+    // バナー表示中で本文がエコーされていなくても、短トークンの偶然一致による
+    // 誤判定を避けるため本文再送は起こさない。
+    scenario.statesByPhase = {
+      beforeBody: { lastOutputTime: 100,   lastLines: 'Fable 5 is back and better than ever!' },
+      afterBody:  { lastOutputTime: 100,   lastLines: 'Fable 5 is back and better than ever!' },
+      afterEnter: { lastOutputTime: 2_000, lastLines: 'after-enter' },
+    };
+
+    const result = await submitToClaude(PORT, TERMID, 'ok a b', 10, FAST_OPTIONS);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.bodyConfirmed, true, 'エコー確認をスキップしたので bodyConfirmed=true');
+    const bodySends = scenario.sendCalls.filter(c => c.input === 'ok a b');
+    assert.equal(bodySends.length, 1, '4 文字以上のトークンが無い本文は再送しない');
+    // 本文(1回) + Enter(1回) の計 2 回。
+    assert.equal(scenario.sendCalls.length, 2, 'エコー確認スキップ時は本文再送が発火しない');
   });
 
   it('AND 判定: lastOutputTime だけ進んで lastLines が同じ場合は progressed と見なさない', async () => {
