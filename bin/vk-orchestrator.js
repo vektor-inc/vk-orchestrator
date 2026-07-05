@@ -66,6 +66,64 @@ async function warnIfShadowedByHomeConfig() {
   }
 }
 
+// package.json で固定した vk-terminals のタグと、node_modules に実際に入っている
+// version を照合し、ズレていれば（または未導入なら）再インストールで追従させる。
+//
+// vk-terminals は optionalDependencies かつ git 依存のため、素の `npm install` では
+// タグ更新に追従しないことがある（bump:terminals は manifest/lock を書き換えるだけで
+// 再インストールしない）。その結果 `npm start`(up) が古い版の GUI を起動してしまうのを、
+// 起動直前にここで検知して防ぐ。--include=optional を付けないと git 依存が追従しない点に注意。
+async function reconcileVkTerminalsVersion() {
+  const { readFileSync } = await import('fs');
+  const repoRoot = resolve(__dirname, '..');
+
+  // 固定タグを spec("git+…#<タグ>") から取り出す。
+  let pinnedTag = null;
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8'));
+    const spec =
+      pkg.optionalDependencies?.['vk-terminals'] ?? pkg.dependencies?.['vk-terminals'] ?? '';
+    pinnedTag = spec.match(/#(.+)$/)?.[1] ?? null;
+  } catch {
+    return; // package.json が読めない状況では照合しない
+  }
+
+  // 実際に入っている version（未導入なら null）。
+  let installed = null;
+  try {
+    const { resolveVkTerminalsDir } = await import('../src/config.js');
+    installed = JSON.parse(
+      readFileSync(resolve(resolveVkTerminalsDir(), 'package.json'), 'utf8')
+    ).version;
+  } catch {
+    // 未導入 → 下でインストールする
+  }
+
+  // 照合できるのはタグが semver（"1.5.1" / "v1.5.1"）で、version と一致比較できる場合のみ。
+  const normTag = pinnedTag?.replace(/^v/, '');
+  const isSemverTag = normTag != null && /^\d+\.\d+\.\d+$/.test(normTag);
+
+  if (installed && !isSemverTag) return; // SHA 固定等は照合不能なのでスキップ
+  if (installed && isSemverTag && installed === normTag) return; // 一致 → 何もしない
+
+  const { spawnSync } = await import('child_process');
+  console.log(
+    installed
+      ? `vk-terminals のバージョンズレを検知しました（固定: ${pinnedTag} / 導入済み: ${installed}）。再インストールします...`
+      : 'vk-terminals が未導入です。インストールします...'
+  );
+  const r = spawnSync('npm', ['install', '--include=optional', '--foreground-scripts'], {
+    cwd: repoRoot,
+    stdio: 'inherit',
+  });
+  if (r.status !== 0) {
+    console.warn(
+      '[up] vk-terminals の再インストールに失敗しました。古い版のまま起動する可能性があります。\n' +
+      '  手動で `npm run setup:terminals` を実行してください。'
+    );
+  }
+}
+
 // 移設した engine 側スクリプトは import しただけで自走する（副作用実行）。
 // --once / --assignee 等のフラグは各スクリプトが process.argv を直接読むため、
 // ここではサブコマンド名の分岐だけを行い、対応スクリプトを動的 import する。
@@ -107,6 +165,9 @@ async function main() {
         await import('../src/config.js');
       const { waitForHealth, createNewPane, sendToTerminal } =
         await import('../src/terminals/index.js');
+
+      // GUI 起動前に、固定タグと実際に入っている版のズレを解消しておく。
+      await reconcileVkTerminalsVersion();
 
       const vkDir = await resolveVkDirOrExit();
       const target = writeVkTerminalsConfig(unifiedConfig, vkDir);
