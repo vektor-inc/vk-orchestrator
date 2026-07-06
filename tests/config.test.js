@@ -252,6 +252,12 @@ test('getTaskConfig: env が config.json より優先される', () => {
   }
 });
 
+test('getLabelsConfig: __proto__ ペイロードでグローバル汚染しない', () => {
+  const l = getLabelsConfig(JSON.parse('{"labels":{"__proto__":{"polluted":"x"}}}'));
+  assert.equal({}.polluted, undefined);
+  assert.equal(l.automerge, 'automerge'); // 既定は維持
+});
+
 test('buildSettingsDescriptor: groups に タスク/プロトコル/ラベル が含まれる', () => {
   const desc = buildSettingsDescriptor('/tmp/config.json');
   const labels = desc.groups.map((g) => g.label);

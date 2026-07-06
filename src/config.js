@@ -101,6 +101,8 @@ function deepMerge(base, override) {
   if (!isPlain(override)) return isPlain(base) ? { ...base } : base;
   const out = isPlain(base) ? { ...base } : {};
   for (const [key, val] of Object.entries(override)) {
+    // プロトタイプ汚染の多層防御: 危険キーは絶対にマージしない。
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
     if (isPlain(val) && isPlain(out[key])) {
       out[key] = deepMerge(out[key], val);
     } else {
