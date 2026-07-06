@@ -49,11 +49,10 @@ export const DEFAULT_TASK = {
 
 /**
  * protocol セクションの既定値。
- * エージェントの自動コメント識別行と Status 行のトークン（decision-record.js に対応）。
+ * decision-record の Status 行のトークン（decision-record.js に対応）。
+ * 判定は単独 `Status:` 行のみに依存し、識別行マーカーは撤去済み（#9）。
  */
 export const DEFAULT_PROTOCOL = {
-  // src/engine/decision-record.js の AGENT_MARKER に対応。
-  agentMarker: 'Comment by vk-agents',
   // src/engine/decision-record.js の STATUS_LINE_RE の `Status:` 接頭辞に対応。
   statusLinePrefix: 'Status:',
   statusTokens: {
@@ -294,7 +293,6 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       {
         label: 'プロトコル',
         fields: [
-          { key: 'protocol.agentMarker',     label: 'エージェント識別行', type: 'text', help: 'エージェントの自動コメント1行目に置く識別文字列（既定: Comment by vk-agents）' },
           { key: 'protocol.statusLinePrefix', label: 'Status 行の接頭辞', type: 'text', help: 'コメント中の状態行を判定する接頭辞（既定: Status:。例: Status: waiting-input）' },
           { key: 'protocol.statusTokens',    label: 'Status トークン (JSON)', type: 'json', help: '状態行で使うトークン名の対応表（JSON。既定: {"waitingInput":"waiting-input","noAction":"no-action","answered":"answered"}）' },
         ],
