@@ -16,40 +16,11 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
-import { execFileSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { fetchTags, toTuple, cmpTuple, latestSemverTag } from './vk-terminals-tags.mjs';
 
-const REPO_URL = 'https://github.com/vektor-inc/vk-terminals.git';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-
-function git(args) {
-  return execFileSync('git', args, { encoding: 'utf8' });
-}
-
-// リモートの全タグ → commit SHA のマップ。annotated タグは ^{} の
-// dereference 済み commit を優先する（lightweight タグはそのまま）。
-function fetchTags() {
-  const out = git(['ls-remote', '--tags', REPO_URL]);
-  const map = new Map();
-  for (const line of out.split('\n')) {
-    const m = line.match(/^([0-9a-f]{40})\s+refs\/tags\/(.+?)(\^\{\})?$/);
-    if (!m) continue;
-    const [, sha, tag, deref] = m;
-    if (deref || !map.has(tag)) map.set(tag, sha);
-  }
-  return map;
-}
-
-// "1.5.0" / "v1.1.0" → [1,5,0]。semver でなければ null。
-function toTuple(tag) {
-  const m = tag.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)$/);
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-function cmpTuple(a, b) {
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return 0;
-}
 
 const arg = process.argv[2];
 const tags = fetchTags();
@@ -57,11 +28,7 @@ const tags = fetchTags();
 // 更新先バージョンの決定
 let version;
 if (!arg || arg === 'latest') {
-  const semver = [...tags.keys()]
-    .map(t => ({ t, tup: toTuple(t) }))
-    .filter(x => x.tup)
-    .sort((a, b) => cmpTuple(a.tup, b.tup));
-  version = semver.at(-1)?.t;
+  version = latestSemverTag(tags);
   if (!version) {
     console.error('リモートから semver タグを解決できませんでした。');
     process.exit(1);

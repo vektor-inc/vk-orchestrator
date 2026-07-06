@@ -4,7 +4,7 @@
 - [ 機能追加 ] `up` 起動時に VK Terminals(GUI) のタイトルバー ⚙ ボタンから統合 `config.json` を編集・保存できる設定パネルを追加。`up` が設定ディスクリプタ（編集対象パス + 項目スキーマ）を書き出し、環境変数 `VK_TERMINALS_SETTINGS` で GUI に渡す。これにより GitHub トークン等を手編集せず GUI 上で設定できる（保存後、orchestrator の再起動で反映）
 - [ 仕様変更 ] assignee 設定時、source issue の取り込みを「自分にアサインされた issue のみ」に限定し、取り込んだ task-queue issue にも取り込んだユーザーを自動アサイン（誰が取り込み・処理するかを明確化。未設定時は従来どおり全件取り込み）
 - [ 仕様変更 ] vk-terminals 依存をタグ `1.5.2` に固定し、取得を SSH から https に変更（ブランチ HEAD 追従をやめ、SSH 鍵なしの環境でも導入できるように）
-- [ 不具合修正 ] `up`（`npm start`）起動時に package.json で固定した vk-terminals のタグと実際に導入済みの版を照合し、ズレていれば自動で再インストールしてから GUI を起動するように（bump 後の再インストール忘れ等で古い版が起動していた問題を修正）
+- [ 機能追加 ] `up`（`npm start`）起動時に vk-terminals のリモート最新タグを自動取得し、node_modules が古ければ入れ直してから GUI を起動するように（vk-terminals 側でタグを打つだけで各環境が最新に追従し、orchestrator の bump/push/pull が不要に。`VK_TERMINALS_TAG` で版固定、`VK_TERMINALS_NO_AUTO_UPDATE=1` で自動追従の無効化も可能）
 - [ 不具合修正 ] コールドスタート時に Claude Code の起動バナーがプロンプト本文を飲み込み、`/vk-kore` 等の指示が入力欄に届かないまま処理が進んでしまう不具合を修正
 - [ 不具合修正 ] org リポの一括ラベル登録が1ページ目（100件）しか処理せず、100件を超えるリポにラベルが登録されない不具合を修正
 - [ 開発環境 ] vk-terminals 依存の更新（タグ解決 → package.json / package-lock.json / CHANGELOG 書き換え → 検証）をまとめて行う `npm run bump:terminals <version>` を追加

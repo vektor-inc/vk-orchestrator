@@ -66,18 +66,26 @@ async function warnIfShadowedByHomeConfig() {
   }
 }
 
-// package.json で固定した vk-terminals のタグと、node_modules に実際に入っている
-// version を照合し、ズレていれば（または未導入なら）再インストールで追従させる。
+// up 起動時に vk-terminals を最新へ追従させる。
 //
-// vk-terminals は optionalDependencies かつ git 依存のため、素の `npm install` では
-// タグ更新に追従しないことがある（bump:terminals は manifest/lock を書き換えるだけで
-// 再インストールしない）。その結果 `npm start`(up) が古い版の GUI を起動してしまうのを、
-// 起動直前にここで検知して防ぐ。--include=optional を付けないと git 依存が追従しない点に注意。
+// 既定では GitHub のリモートタグを見て最新 semver を導入対象とし、node_modules に
+// 入っている version とズレていれば（または未導入なら）その版を入れ直す。これにより
+// vk-terminals 側がタグを打つだけで、各ユーザーは `up` するだけで最新 GUI に上がる
+// （orchestrator の package.json bump / push / pull が不要になる）。
+//
+// 追従対象の決め方（優先順）:
+//   1. env VK_TERMINALS_TAG="1.5.2" … 明示ピン／ロールバック。リモート照会せずこの版に固定。
+//   2. env VK_TERMINALS_NO_AUTO_UPDATE=1 … 自動追従を無効化し package.json 固定タグに照合（従来動作。オフライン向け）。
+//   3. 既定 … リモートの最新 semver タグ。照会失敗時は package.json 固定タグへフォールバック。
+//
+// インストールは `npm install vk-terminals@…#<タグ> --no-save` で行う。--no-save により
+// ユーザーの clone の package.json / lock を汚さず node_modules だけ差し替える。
+// --include=optional を付けないと git 依存の optional build が走らない点に注意。
 async function reconcileVkTerminalsVersion() {
   const { readFileSync } = await import('fs');
   const repoRoot = resolve(__dirname, '..');
 
-  // 固定タグを spec("git+…#<タグ>") から取り出す。
+  // package.json 固定タグ（フォールバック用）。spec "git+…#<タグ>" から取り出す。
   let pinnedTag = null;
   try {
     const pkg = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8'));
@@ -85,7 +93,7 @@ async function reconcileVkTerminalsVersion() {
       pkg.optionalDependencies?.['vk-terminals'] ?? pkg.dependencies?.['vk-terminals'] ?? '';
     pinnedTag = spec.match(/#(.+)$/)?.[1] ?? null;
   } catch {
-    return; // package.json が読めない状況では照合しない
+    return; // package.json が読めない状況では何もしない
   }
 
   // 実際に入っている version（未導入なら null）。
@@ -99,26 +107,48 @@ async function reconcileVkTerminalsVersion() {
     // 未導入 → 下でインストールする
   }
 
-  // 照合できるのはタグが semver（"1.5.1" / "v1.5.1"）で、version と一致比較できる場合のみ。
-  const normTag = pinnedTag?.replace(/^v/, '');
+  // 追従対象タグの決定。
+  let targetTag = null;
+  const envTag = process.env.VK_TERMINALS_TAG?.trim();
+  const autoUpdate = process.env.VK_TERMINALS_NO_AUTO_UPDATE !== '1';
+  if (envTag) {
+    targetTag = envTag; // 明示ピン
+  } else if (autoUpdate) {
+    try {
+      const { fetchTags, latestSemverTag } = await import('../scripts/vk-terminals-tags.mjs');
+      targetTag = latestSemverTag(fetchTags());
+      if (!targetTag) {
+        console.warn('[up] vk-terminals のリモート最新タグを解決できませんでした。固定タグにフォールバックします。');
+      }
+    } catch {
+      console.warn('[up] vk-terminals のリモート照会に失敗しました（オフライン等）。固定タグにフォールバックします。');
+    }
+  }
+  targetTag ??= pinnedTag; // 未解決なら package.json 固定タグ
+
+  // 照合できるのはタグが semver（"1.5.1" / "v1.5.1"）で version と比較できる場合のみ。
+  const normTag = targetTag?.replace(/^v/, '');
   const isSemverTag = normTag != null && /^\d+\.\d+\.\d+$/.test(normTag);
 
   if (installed && !isSemverTag) return; // SHA 固定等は照合不能なのでスキップ
-  if (installed && isSemverTag && installed === normTag) return; // 一致 → 何もしない
+  if (installed && isSemverTag && installed === normTag) return; // 既に対象版 → 何もしない
+  if (!targetTag) return; // 導入対象が決められない
 
+  const spec = `vk-terminals@git+https://github.com/vektor-inc/vk-terminals.git#${targetTag}`;
   const { spawnSync } = await import('child_process');
   console.log(
     installed
-      ? `vk-terminals のバージョンズレを検知しました（固定: ${pinnedTag} / 導入済み: ${installed}）。再インストールします...`
-      : 'vk-terminals が未導入です。インストールします...'
+      ? `vk-terminals を更新します（導入済み: ${installed} → 対象: ${targetTag}）...`
+      : `vk-terminals が未導入です。${targetTag} をインストールします...`
   );
-  const r = spawnSync('npm', ['install', '--include=optional', '--foreground-scripts'], {
-    cwd: repoRoot,
-    stdio: 'inherit',
-  });
+  const r = spawnSync(
+    'npm',
+    ['install', spec, '--no-save', '--include=optional', '--foreground-scripts'],
+    { cwd: repoRoot, stdio: 'inherit' }
+  );
   if (r.status !== 0) {
     console.warn(
-      '[up] vk-terminals の再インストールに失敗しました。古い版のまま起動する可能性があります。\n' +
+      '[up] vk-terminals のインストールに失敗しました。古い版のまま起動する可能性があります。\n' +
       '  手動で `npm run setup:terminals` を実行してください。'
     );
   }
