@@ -15,6 +15,10 @@ import {
   toVkTerminalsConfig,
   vkTerminalsConfigPath,
   writeVkTerminalsConfig,
+  getTaskConfig,
+  getProtocolConfig,
+  getLabelsConfig,
+  buildSettingsDescriptor,
 } from '../src/config.js';
 
 function withTmpConfig(obj, fn) {
@@ -155,4 +159,103 @@ test('toVkTerminalsConfig: トークンを VK Terminals 設定に絶対に含め
   });
   assert.equal(JSON.stringify(out).includes('ghp_secret'), false);
   assert.equal('token' in out, false);
+});
+
+// -------------------------------------------------------
+// task / protocol / labels セクション（汎用化の土台。既定値は現行ハードコード値）
+// -------------------------------------------------------
+
+const TASK_ENV_KEYS = ['TASK_COMMAND_TEMPLATE', 'TASK_WP_PORT_BASE', 'TASK_WP_PORT_STRIDE'];
+
+function withoutTaskEnv(fn) {
+  const saved = Object.fromEntries(TASK_ENV_KEYS.map((k) => [k, process.env[k]]));
+  for (const k of TASK_ENV_KEYS) delete process.env[k];
+  try {
+    return fn();
+  } finally {
+    for (const k of TASK_ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+}
+
+test('getTaskConfig: config 無しで既定値を返す', () => {
+  withoutTaskEnv(() => {
+    const t = getTaskConfig({});
+    assert.ok(t.commandTemplate.includes('/vk-kore'));
+    assert.ok(t.commandTemplate.includes('wp-env-port='));
+    assert.equal(t.portBase, 9100);
+    assert.equal(t.portStride, 2);
+  });
+});
+
+test('getProtocolConfig: 既定値を返す', () => {
+  const p = getProtocolConfig({});
+  assert.equal(p.agentMarker, 'Comment by vk-agents');
+  assert.equal(p.statusLinePrefix, 'Status:');
+  assert.equal(p.statusTokens.waitingInput, 'waiting-input');
+  assert.equal(p.statusTokens.noAction, 'no-action');
+  assert.equal(p.statusTokens.answered, 'answered');
+});
+
+test('getLabelsConfig: 既定値を返す', () => {
+  const l = getLabelsConfig({});
+  assert.equal(l.status.inProgress, 'status:in-progress');
+  assert.equal(l.status.awaitingApproval, 'status:awaiting-approval');
+  assert.equal(l.priority.high, 'priority:high');
+  assert.equal(l.automerge, 'automerge');
+  assert.equal(l.sequential, 'sequential');
+  assert.equal(l.parallel, 'parallel');
+  assert.equal(l.workingInProgress, '作業中');
+  assert.equal(l.e2ePassed, 'e2e-passed');
+  assert.equal(l.e2ePassedShaPrefix, 'e2e-passed-sha:');
+});
+
+test('getLabelsConfig: config.json の部分上書きが効き、未指定キーは既定にフォールバック', () => {
+  const l = getLabelsConfig({ labels: { status: { done: 'x' } } });
+  assert.equal(l.status.done, 'x');            // 上書きされる
+  assert.equal(l.status.inProgress, 'status:in-progress'); // 未指定は既定のまま
+  assert.equal(l.automerge, 'automerge');      // 他セクションも既定のまま
+});
+
+test('getProtocolConfig: statusTokens の部分上書き（ディープマージ）', () => {
+  const p = getProtocolConfig({ protocol: { statusTokens: { answered: 'done' } } });
+  assert.equal(p.statusTokens.answered, 'done');
+  assert.equal(p.statusTokens.waitingInput, 'waiting-input'); // 未指定は既定
+  assert.equal(p.agentMarker, 'Comment by vk-agents');
+});
+
+test('getTaskConfig: config.json が既定を上書きする', () => {
+  withoutTaskEnv(() => {
+    const t = getTaskConfig({ task: { portBase: 9200 } });
+    assert.equal(t.portBase, 9200);
+    assert.equal(t.portStride, 2); // 未指定は既定
+  });
+});
+
+test('getTaskConfig: env が config.json より優先される', () => {
+  const saved = Object.fromEntries(TASK_ENV_KEYS.map((k) => [k, process.env[k]]));
+  process.env.TASK_WP_PORT_BASE = '9500';
+  process.env.TASK_WP_PORT_STRIDE = '4';
+  process.env.TASK_COMMAND_TEMPLATE = '/custom {issueUrl}';
+  try {
+    const t = getTaskConfig({ task: { portBase: 9200, portStride: 3, commandTemplate: '/cfg' } });
+    assert.equal(t.portBase, 9500);
+    assert.equal(t.portStride, 4);
+    assert.equal(t.commandTemplate, '/custom {issueUrl}');
+  } finally {
+    for (const k of TASK_ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+});
+
+test('buildSettingsDescriptor: groups に タスク/プロトコル/ラベル が含まれる', () => {
+  const desc = buildSettingsDescriptor('/tmp/config.json');
+  const labels = desc.groups.map((g) => g.label);
+  assert.ok(labels.includes('タスク'));
+  assert.ok(labels.includes('プロトコル'));
+  assert.ok(labels.includes('ラベル'));
 });
