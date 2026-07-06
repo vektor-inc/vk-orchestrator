@@ -40,6 +40,11 @@ export const DEFAULT_TASK = {
   // src/engine/index.js の assignWpEnvPort: 9100 + (termId-1)*2 に対応。
   portBase: 9100,
   portStride: 2,
+  // wp-env 連携の ON/OFF。既定は true（現行どおりポート割り当て・{wpPort} 展開・
+  // マージ後クリーンアップを行う）。false にすると wp-env 関連（ポート割り当て・
+  // state.json への wpPort 保存・クリーンアップ）を一切行わず、{wpPort} を含まない
+  // テンプレートに差し替えることで vk-kore 以外の任意スキル／素のプロンプトを起動できる。
+  wpEnv: { enabled: true },
 };
 
 /**
@@ -283,6 +288,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
           { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'タスク着手時に各ペインへ投入するコマンド。{issueUrl} と {wpPort} は自動で置換（既定: /vk-kore {issueUrl} wp-env-port={wpPort}）' },
           { key: 'task.portBase',   label: 'wp-env ポート基準値', type: 'number', help: 'ターミナルに割り当てる wp-env ポートの基準値。terminal 1 に割り当てる番号（既定: 9100）' },
           { key: 'task.portStride', label: 'wp-env ポート間隔', type: 'number', help: 'ターミナルごとにポート番号をずらす幅。ポート = 基準値 + (termId-1) × この値（既定: 2）' },
+          { key: 'task.wpEnv.enabled', label: 'wp-env 連携を有効化', type: 'boolean', help: 'ON でタスク着手時に wp-env ポート割り当て・{wpPort} 展開・マージ後クリーンアップを行う（既定）。OFF にすると wp-env 関連を一切行わず、{wpPort} を含まないテンプレートに差し替えて vk-kore 以外のスキルや素のプロンプトを起動できる' },
         ],
       },
       {
@@ -338,6 +344,12 @@ export function getTaskConfig(cfg = loadUnifiedConfig()) {
   if (env.TASK_COMMAND_TEMPLATE) merged.commandTemplate = env.TASK_COMMAND_TEMPLATE;
   if (env.TASK_WP_PORT_BASE)     merged.portBase = Number(env.TASK_WP_PORT_BASE);
   if (env.TASK_WP_PORT_STRIDE)   merged.portStride = Number(env.TASK_WP_PORT_STRIDE);
+  // wpEnv.enabled の env 上書き。空文字・未定義は無視（他の env 上書きと同じ扱い）。
+  // 'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす（ネスト構造を保つ）。
+  if (env.TASK_WP_ENV_ENABLED) {
+    const v = env.TASK_WP_ENV_ENABLED.trim().toLowerCase();
+    merged.wpEnv = { ...merged.wpEnv, enabled: !(v === 'false' || v === '0') };
+  }
   return merged;
 }
 

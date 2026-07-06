@@ -22,6 +22,10 @@ import { cleanupForIssue, formatCleanupSummary, inspectWorktreeByPort } from './
 import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
+// コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
+// build-command.js に分離してある（テストから安全に import するため）。ここでは
+// 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
+import { buildCommand, extractGitHubIssueUrl } from './build-command.js';
 
 // --- 設定 ---
 const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
@@ -88,26 +92,6 @@ function getTargetRepoKey(issue) {
 }
 
 // -------------------------------------------------------
-// ターミナルID → wp-env ポート割り当て（8888/8889 は禁止）
-// terminal 1 → 9100、terminal 2 → 9102 …（testsPort は vk-kore 側で +1 する）
-// -------------------------------------------------------
-function assignWpEnvPort(termId) {
-  return 9100 + (Number(termId) - 1) * 2;
-}
-
-// -------------------------------------------------------
-// GitHub issue URL の抽出
-// -------------------------------------------------------
-function extractGitHubIssueUrl(text) {
-  if (!text) return null;
-  const match = text.match(
-    /https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/issues\/(\d+)/
-  );
-  if (!match) return null;
-  return { url: match[0], owner: match[1], repo: match[2], number: Number(match[3]) };
-}
-
-// -------------------------------------------------------
 // done 遷移ゲート（薄いラッパー）
 // -------------------------------------------------------
 // 実体は `done-gate.js`。`extractGitHubIssueUrl` と `github.getIssueState` を
@@ -132,30 +116,11 @@ function canTransitionToDone(issue, logTag = '[done-gate]') {
 }
 
 // -------------------------------------------------------
-// Claudeへの送信コマンドを組み立てる
+// build-command.js の純粋関数を index.js からも参照できるよう再 export する
+// （テストは副作用の無い build-command.js から直接 import するが、
+//   index.js 経由の import 互換も保つ）。
 // -------------------------------------------------------
-function buildCommand(title, body, termId) {
-  const fullText = [title, body].filter(Boolean).join('\n\n');
-  const targetIssue = extractGitHubIssueUrl(fullText);
-
-  if (targetIssue) {
-    const wpPort = assignWpEnvPort(termId);
-    console.log(`  → GitHub issue URLを検出: ${targetIssue.url} → /vk-kore を使用`);
-    console.log(`  → wp-env ポート割り当て: ${wpPort} (testsPort=${wpPort + 1})`);
-
-    // vk-kore スキルが wp-env-port=NNNN 引数を受け取り、
-    // 和田への依頼に .wp-env.override.json の作成指示を含める。
-    return {
-      prompt: `/vk-kore ${targetIssue.url} wp-env-port=${wpPort}`,
-      targetIssue,
-    };
-  }
-
-  // 汎用タスク
-  let prompt = title;
-  if (body && body.trim()) prompt += `\n\n${body.trim()}`;
-  return { prompt, targetIssue: null };
-}
+export { buildCommand, assignWpEnvPort, expandTemplate, extractGitHubIssueUrl } from './build-command.js';
 
 // -------------------------------------------------------
 // PR 検出時に PR 側 / VK Terminals 側へ反映する共通フック。
@@ -231,16 +196,19 @@ async function startTask(issue) {
     }
   }
 
-  const { prompt, targetIssue } = buildCommand(title, body, termId);
+  const { prompt, targetIssue, wpPort } = buildCommand(title, body, termId);
 
   // state を記録する。termId は scanWaitingInputIssues が返信を pane に転送する際の
   // 引き当てに使うため、汎用タスク（targetIssue なし）でも必ず残す。
   // wpPort / repo は wp-env クリーンアップ用なので対象 issue ありのときだけ意味を持つ。
+  // wpPort は buildCommand が算出済みの値を再利用する（二重計算・二重 config 読み込みを回避）。
+  // wp-env 無効時は wpPort が null になり state に保存されないため、既存のクリーンアップ経路
+  // （!saved.wpPort で早期 return）が自然にスキップされる。
   try {
     await recordTaskStart({
       issueNumber: number,
       termId,
-      wpPort: targetIssue ? assignWpEnvPort(termId) : null,
+      wpPort,
       repo:   targetIssue ? `${targetIssue.owner}/${targetIssue.repo}` : null,
     });
   } catch (err) {
