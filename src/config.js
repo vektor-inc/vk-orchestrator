@@ -20,6 +20,98 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
 
+// -------------------------------------------------------
+// 汎用化に向けた設定セクションの既定値。
+//
+// これらは現時点で engine / github が「ハードコードしている値」をそのまま複製した
+// ものであり、config.json に何も書かなければ getter は必ずこの既定値を返す
+// （＝単体では挙動不変）。実際にこの既定値を engine / github の呼び出し箇所へ
+// 反映するのは後続 sub-issue (#1〜#5) の仕事で、この issue では「枠」だけを用意する。
+// -------------------------------------------------------
+
+/**
+ * task セクションの既定値。
+ * vk-kore へ渡すコマンドテンプレートと wp-env ポート割り当ての基準値。
+ */
+export const DEFAULT_TASK = {
+  // src/engine/index.js の `/vk-kore ${targetIssue.url} wp-env-port=${wpPort}` に対応。
+  // {issueUrl} / {wpPort} は消費側で置換するプレースホルダ。
+  commandTemplate: '/vk-kore {issueUrl} wp-env-port={wpPort}',
+  // src/engine/index.js の assignWpEnvPort: 9100 + (termId-1)*2 に対応。
+  portBase: 9100,
+  portStride: 2,
+};
+
+/**
+ * protocol セクションの既定値。
+ * エージェントの自動コメント識別行と Status 行のトークン（decision-record.js に対応）。
+ */
+export const DEFAULT_PROTOCOL = {
+  // src/engine/decision-record.js の AGENT_MARKER に対応。
+  agentMarker: 'Comment by vk-agents',
+  // src/engine/decision-record.js の STATUS_LINE_RE の `Status:` 接頭辞に対応。
+  statusLinePrefix: 'Status:',
+  statusTokens: {
+    waitingInput: 'waiting-input',
+    noAction: 'no-action',
+    answered: 'answered',
+  },
+};
+
+/**
+ * labels セクションの既定値。
+ * task-queue のステータス/優先度ラベルと、対象リポ側の作業中/ e2e 完了マーカー。
+ */
+export const DEFAULT_LABELS = {
+  status: {
+    awaitingApproval: 'status:awaiting-approval',
+    ready: 'status:ready',
+    inProgress: 'status:in-progress',
+    waitingInput: 'status:waiting-input',
+    waitingMerge: 'status:waiting-merge',
+    done: 'status:done',
+    failed: 'status:failed',
+  },
+  priority: {
+    high: 'priority:high',
+    medium: 'priority:medium',
+    low: 'priority:low',
+  },
+  automerge: 'automerge',
+  sequential: 'sequential',
+  parallel: 'parallel',
+  // 対象リポ側に付ける作業中ラベル（src/github/index.js）。
+  workingInProgress: '作業中',
+  // e2e 完了マーカー（src/github/index.js）。
+  e2ePassed: 'e2e-passed',
+  e2ePassedShaPrefix: 'e2e-passed-sha:',
+};
+
+/**
+ * プレーンオブジェクトどうしを再帰的にディープマージする内部ヘルパ。
+ * override 側のプレーンオブジェクトのみ再帰し、配列・スカラ・null は置換する。
+ * base は破壊せず新しいオブジェクトを返す。
+ * @param {object} base 既定値
+ * @param {object} override 上書き値（config.json 由来）
+ * @returns {object}
+ */
+function deepMerge(base, override) {
+  const isPlain = (v) =>
+    v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isPlain(override)) return isPlain(base) ? { ...base } : base;
+  const out = isPlain(base) ? { ...base } : {};
+  for (const [key, val] of Object.entries(override)) {
+    // プロトタイプ汚染の多層防御: 危険キーは絶対にマージしない。
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    if (isPlain(val) && isPlain(out[key])) {
+      out[key] = deepMerge(out[key], val);
+    } else {
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
 /**
  * config.json の探索順:
  *   1. 環境変数 VK_ORCHESTRATOR_CONFIG（明示指定）
@@ -185,6 +277,35 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
           { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
         ],
       },
+      {
+        label: 'タスク',
+        fields: [
+          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'タスク着手時に各ペインへ投入するコマンド。{issueUrl} と {wpPort} は自動で置換（既定: /vk-kore {issueUrl} wp-env-port={wpPort}）' },
+          { key: 'task.portBase',   label: 'wp-env ポート基準値', type: 'number', help: 'ターミナルに割り当てる wp-env ポートの基準値。terminal 1 に割り当てる番号（既定: 9100）' },
+          { key: 'task.portStride', label: 'wp-env ポート間隔', type: 'number', help: 'ターミナルごとにポート番号をずらす幅。ポート = 基準値 + (termId-1) × この値（既定: 2）' },
+        ],
+      },
+      {
+        label: 'プロトコル',
+        fields: [
+          { key: 'protocol.agentMarker',     label: 'エージェント識別行', type: 'text', help: 'エージェントの自動コメント1行目に置く識別文字列（既定: Comment by vk-agents）' },
+          { key: 'protocol.statusLinePrefix', label: 'Status 行の接頭辞', type: 'text', help: 'コメント中の状態行を判定する接頭辞（既定: Status:。例: Status: waiting-input）' },
+          { key: 'protocol.statusTokens',    label: 'Status トークン (JSON)', type: 'json', help: '状態行で使うトークン名の対応表（JSON。既定: {"waitingInput":"waiting-input","noAction":"no-action","answered":"answered"}）' },
+        ],
+      },
+      {
+        label: 'ラベル',
+        fields: [
+          { key: 'labels.status',   label: 'ステータスラベル (JSON)', type: 'json', help: 'キューの状態を表すラベル名の対応表（JSON。例: {"ready":"status:ready","inProgress":"status:in-progress", ...}）' },
+          { key: 'labels.priority', label: '優先度ラベル (JSON)', type: 'json', help: '優先度を表すラベル名の対応表（JSON。例: {"high":"priority:high","medium":"priority:medium","low":"priority:low"}）' },
+          { key: 'labels.automerge',  label: 'automerge ラベル', type: 'text', help: '自動マージ対象を示すラベル名（既定: automerge）' },
+          { key: 'labels.sequential', label: 'sequential ラベル', type: 'text', help: '同一リポの逐次実行を示すラベル名（既定: sequential）' },
+          { key: 'labels.parallel',   label: 'parallel ラベル', type: 'text', help: '並列実行可を示すラベル名（既定: parallel）' },
+          { key: 'labels.workingInProgress', label: '作業中ラベル', type: 'text', help: '作業対象リポ側の issue に付ける作業中ラベル名（既定: 作業中）' },
+          { key: 'labels.e2ePassed',        label: 'e2e 完了ラベル', type: 'text', help: 'e2e テスト完了を示すマーカーラベル名（既定: e2e-passed）' },
+          { key: 'labels.e2ePassedShaPrefix', label: 'e2e 完了 SHA 接頭辞', type: 'text', help: 'e2e 完了コメントで検証済み head SHA を示す接頭辞（既定: e2e-passed-sha:）' },
+        ],
+      },
     ],
   };
 }
@@ -200,6 +321,46 @@ export function writeSettingsDescriptor(vkDir = resolveVkTerminalsDir(), targetP
   const descPath = join(vkDir, 'settings-descriptor.json');
   writeFileSync(descPath, JSON.stringify(buildSettingsDescriptor(targetPath), null, 2) + '\n');
   return descPath;
+}
+
+/**
+ * task セクションの解決済み設定を返す。
+ * 優先順位: 環境変数 > config.json(cfg.task) > DEFAULT_TASK。
+ * config.json は既定値へ再帰的にディープマージし、未指定キーは既定にフォールバックする。
+ * env はスカラ値のみを上書きする（この repo の idiom に合わせ env 名を明示）。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @returns {typeof DEFAULT_TASK}
+ */
+export function getTaskConfig(cfg = loadUnifiedConfig()) {
+  const merged = deepMerge(DEFAULT_TASK, cfg?.task ?? {});
+  // 環境変数レイヤー（env > config.json）。空文字・未定義は無視（applyConfigToEnv の set と同じ扱い）。
+  const env = process.env;
+  if (env.TASK_COMMAND_TEMPLATE) merged.commandTemplate = env.TASK_COMMAND_TEMPLATE;
+  if (env.TASK_WP_PORT_BASE)     merged.portBase = Number(env.TASK_WP_PORT_BASE);
+  if (env.TASK_WP_PORT_STRIDE)   merged.portStride = Number(env.TASK_WP_PORT_STRIDE);
+  return merged;
+}
+
+/**
+ * protocol セクションの解決済み設定を返す。
+ * 優先順位: config.json(cfg.protocol) > DEFAULT_PROTOCOL（現時点では env レイヤー無し）。
+ * 個別フィールドの env 上書きは、実際に消費する後続 sub-issue で必要になった時に追加する。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @returns {typeof DEFAULT_PROTOCOL}
+ */
+export function getProtocolConfig(cfg = loadUnifiedConfig()) {
+  return deepMerge(DEFAULT_PROTOCOL, cfg?.protocol ?? {});
+}
+
+/**
+ * labels セクションの解決済み設定を返す。
+ * 優先順位: config.json(cfg.labels) > DEFAULT_LABELS（現時点では env レイヤー無し）。
+ * 個別フィールドの env 上書きは、実際に消費する後続 sub-issue で必要になった時に追加する。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @returns {typeof DEFAULT_LABELS}
+ */
+export function getLabelsConfig(cfg = loadUnifiedConfig()) {
+  return deepMerge(DEFAULT_LABELS, cfg?.labels ?? {});
 }
 
 /**
