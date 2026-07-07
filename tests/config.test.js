@@ -274,6 +274,44 @@ test('getTaskConfig: 空文字の TASK_REQUIRE_E2E_GATE は無視され config.j
   });
 });
 
+// -------------------------------------------------------
+// GUI 設定パネル由来の空値汚染（"" / null / [] / {}）が既定を潰さないこと
+// （設定パネルは全項目を書き戻すため、未入力項目が空で保存されうる）
+// -------------------------------------------------------
+
+test('getTaskConfig: 空文字/null の config 値は既定にフォールバックする（GUI 汚染耐性）', () => {
+  withoutTaskEnv(() => {
+    const t = getTaskConfig({ task: { commandTemplate: '', portBase: null, portStride: null } });
+    assert.ok(t.commandTemplate.includes('/vk-kore')); // 既定に戻る
+    assert.equal(t.portBase, 9100);
+    assert.equal(t.portStride, 2);
+  });
+});
+
+test('getLabelsConfig: 空配列/空文字の config 値は既定にフォールバックする（GUI 汚染耐性）', () => {
+  const l = getLabelsConfig({ labels: { status: [], priority: [], automerge: '', sequential: '', parallel: '' } });
+  assert.equal(l.status.ready, 'status:ready');       // 空配列 [] で潰れない
+  assert.equal(l.status.inProgress, 'status:in-progress');
+  assert.equal(l.priority.high, 'priority:high');
+  assert.equal(l.automerge, 'automerge');             // 空文字 "" で潰れない
+  assert.equal(l.sequential, 'sequential');
+  assert.equal(l.parallel, 'parallel');
+});
+
+test('getProtocolConfig: 空文字/空配列の config 値は既定にフォールバックする（GUI 汚染耐性）', () => {
+  const p = getProtocolConfig({ protocol: { statusLinePrefix: '', statusTokens: [] } });
+  assert.equal(p.statusLinePrefix, 'Status:');
+  assert.equal(p.statusTokens.waitingInput, 'waiting-input');
+});
+
+test('pruneEmpty 経由でも false / 0 は有意値として残る', () => {
+  withoutTaskEnv(() => {
+    // wpEnv.enabled:false は空扱いにされず反映される
+    assert.equal(getTaskConfig({ task: { wpEnv: { enabled: false } } }).wpEnv.enabled, false);
+    assert.equal(getTaskConfig({ task: { requireE2eGate: false } }).requireE2eGate, false);
+  });
+});
+
 test('getProtocolConfig: 既定値を返す', () => {
   const p = getProtocolConfig({});
   assert.equal(p.statusLinePrefix, 'Status:');

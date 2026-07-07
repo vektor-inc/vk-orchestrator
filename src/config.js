@@ -120,6 +120,37 @@ function deepMerge(base, override) {
 }
 
 /**
+ * config.json 由来の override から「空とみなす値」を再帰的に除去する。
+ *
+ * VK Terminals(GUI) の設定パネルは汎用エディタで、保存時にディスクリプタ上の全項目を
+ * 書き戻す。ユーザーが未入力の項目は空文字 / 空配列 / null として保存され、そのまま
+ * deepMerge すると既定値（DEFAULT_TASK / DEFAULT_PROTOCOL / DEFAULT_LABELS）を空で
+ * 上書きしてしまう（例: `labels.status: []`, `task.commandTemplate: ""`）。
+ * これらを「未指定」とみなして取り除き、既定へフォールバックさせるための前処理。
+ * false / 0 は有意な値として残す（enabled:false 等を潰さない）。
+ * @param {*} v
+ * @returns {*} 空を除去した値（全体が空なら undefined）
+ */
+function pruneEmpty(v) {
+  if (v === null || v === undefined || v === '') return undefined;
+  if (Array.isArray(v)) {
+    const arr = v.map(pruneEmpty).filter((x) => x !== undefined);
+    return arr.length ? arr : undefined;
+  }
+  if (typeof v === 'object') {
+    const out = {};
+    for (const [k, val] of Object.entries(v)) {
+      // deepMerge と同様にプロトタイプ汚染キーは扱わない。
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      const pv = pruneEmpty(val);
+      if (pv !== undefined) out[k] = pv;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+  return v; // 非空の string / number(0 含む) / boolean(false 含む)
+}
+
+/**
  * config.json の探索順:
  *   1. 環境変数 VK_ORCHESTRATOR_CONFIG（明示指定）
  *   2. ~/.vk-orchestrator/config.json（ユーザー固有・推奨）
@@ -440,7 +471,8 @@ function parseEnvBool(raw) {
  * @returns {typeof DEFAULT_TASK}
  */
 export function getTaskConfig(cfg = loadUnifiedConfig()) {
-  const merged = deepMerge(DEFAULT_TASK, cfg?.task ?? {});
+  // 空値（GUI 保存由来の "" / null / [] 等）は除去してから既定へマージ（空で既定を潰さない）。
+  const merged = deepMerge(DEFAULT_TASK, pruneEmpty(cfg?.task) ?? {});
   // 環境変数レイヤー（env > config.json）。空文字・未定義は無視（applyConfigToEnv の set と同じ扱い）。
   const env = process.env;
   if (env.TASK_COMMAND_TEMPLATE) merged.commandTemplate = env.TASK_COMMAND_TEMPLATE;
@@ -467,7 +499,7 @@ export function getTaskConfig(cfg = loadUnifiedConfig()) {
  * @returns {typeof DEFAULT_PROTOCOL}
  */
 export function getProtocolConfig(cfg = loadUnifiedConfig()) {
-  return deepMerge(DEFAULT_PROTOCOL, cfg?.protocol ?? {});
+  return deepMerge(DEFAULT_PROTOCOL, pruneEmpty(cfg?.protocol) ?? {});
 }
 
 /**
@@ -478,7 +510,7 @@ export function getProtocolConfig(cfg = loadUnifiedConfig()) {
  * @returns {typeof DEFAULT_LABELS}
  */
 export function getLabelsConfig(cfg = loadUnifiedConfig()) {
-  return deepMerge(DEFAULT_LABELS, cfg?.labels ?? {});
+  return deepMerge(DEFAULT_LABELS, pruneEmpty(cfg?.labels) ?? {});
 }
 
 /**
