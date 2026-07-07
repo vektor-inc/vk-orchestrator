@@ -236,6 +236,15 @@ test('getTaskConfig: 空文字の TASK_WP_ENV_ENABLED は無視され config.jso
   });
 });
 
+test('getTaskConfig: 空白のみの TASK_WP_ENV_ENABLED は未指定扱い（true に倒さない）', () => {
+  withoutTaskEnv(() => {
+    process.env.TASK_WP_ENV_ENABLED = '   ';
+    // 空白のみは無視され、config.json の false がそのまま採用される
+    assert.equal(getTaskConfig({ task: { wpEnv: { enabled: false } } }).wpEnv.enabled, false);
+    assert.equal(getTaskConfig({}).wpEnv.enabled, true); // config も無ければ既定 true
+  });
+});
+
 test('getTaskConfig: requireE2eGate は既定で true', () => {
   withoutTaskEnv(() => {
     assert.equal(getTaskConfig({}).requireE2eGate, true);

@@ -415,8 +415,9 @@ export function writeSettingsDescriptor(vkDir = resolveVkTerminalsDir(), targetP
  * @returns {boolean|undefined}
  */
 function parseEnvBool(raw) {
-  if (!raw) return undefined;
-  const v = raw.trim().toLowerCase();
+  // trim 後に空なら「未指定」。空白のみの値も未指定として扱う（true に倒さない）。
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (v === '') return undefined;
   return !(v === 'false' || v === '0');
 }
 
