@@ -24,10 +24,11 @@ import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
 import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
+import { startKeepAwake } from '../power/keep-awake.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
-import { buildCommand, extractGitHubIssueUrl } from './build-command.js';
+import { buildCommand, buildPaneTitle, extractGitHubIssueUrl } from './build-command.js';
 
 // --- 設定 ---
 const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
@@ -128,7 +129,7 @@ function canTransitionToDone(issue, logTag = '[done-gate]') {
 // （テストは副作用の無い build-command.js から直接 import するが、
 //   index.js 経由の import 互換も保つ）。
 // -------------------------------------------------------
-export { buildCommand, assignWpEnvPort, expandTemplate, extractGitHubIssueUrl } from './build-command.js';
+export { buildCommand, buildPaneTitle, assignWpEnvPort, expandTemplate, extractGitHubIssueUrl } from './build-command.js';
 
 // -------------------------------------------------------
 // PR 検出時に PR 側 / VK Terminals 側へ反映する共通フック。
@@ -176,7 +177,7 @@ async function recordPRAcrossSurfaces({ termId, queueIssueHtmlUrl, prRef, prUrl,
 // GitHub の客観状態と decision-record コメントを見て駆動する。
 // -------------------------------------------------------
 async function startTask(issue) {
-  const { number, title, body, html_url: htmlUrl } = issue;
+  const { number, title, body } = issue;
   console.log(`\n[Task #${number}] "${title}" を起動`);
 
   let termId;
@@ -189,11 +190,32 @@ async function startTask(issue) {
   }
 
   // ペイン上部にタスクタイトルを表示（失敗しても続行）。
-  const titleText = `#${number} ${title}`;
+  // task-queue のメタ issue 本文に元の作業対象 issue の URL が含まれていれば、
+  // その元 issue のタイトル・リンクをヘッダーに出す（issue #23）。解決できない汎用タスクや
+  // 元 issue の取得失敗時は従来どおりメタ issue のタイトル・リンクにフォールバックする。
+  const resolved = resolveTarget(issue);
+  let resolvedTarget = null;
+  if (!resolved.isSelf) {
+    // ペインタイトルは付随処理（cosmetic）なので、取得に失敗してもメタ issue へ
+    // フォールバックできる。リトライ（最大13秒）でタスク起動をブロックしないよう
+    // retryDelays: [] を渡して単発試行にする。
+    try {
+      const original = await github.getIssueState(
+        resolved.owner,
+        resolved.repo,
+        resolved.number,
+        { retryDelays: [] }
+      );
+      resolvedTarget = { number: resolved.number, title: original.title, url: original.htmlUrl };
+    } catch (err) {
+      console.warn(`  [set-title] 元 issue 情報の取得失敗（メタ issue 表示にフォールバック）: ${err.message}`);
+    }
+  }
+  const { titleText, url: titleUrl } = buildPaneTitle(issue, resolvedTarget);
   try {
-    await setTerminalTitle(VK_PORT, termId, titleText, htmlUrl);
+    await setTerminalTitle(VK_PORT, termId, titleText, titleUrl);
   } catch (err) {
-    if (typeof htmlUrl === 'string') {
+    if (typeof titleUrl === 'string') {
       try {
         await setTerminalTitle(VK_PORT, termId, titleText);
       } catch (retryErr) {
@@ -1387,6 +1409,20 @@ async function main() {
     // スキャナが拾う）。
     await loop();
     return;
+  }
+
+  // watch 中は OS がアイドルスリープに入るとポーリングごと止まってしまうため、
+  // OS ごとの方法でシステムスリープを抑止する（run-once は短命なので不要）。
+  // macOS は caffeinate、Windows は SetThreadExecutionState。未対応 OS は警告のみ。
+  const keepAwake = startKeepAwake();
+  // graceful shutdown 時にスリープ抑止を即時解除する。プロセス連動でも自動解除されるが、
+  // Ctrl-C / kill 時に待たず解放する。SIGINT / SIGTERM は解除後に自前で終了する。
+  process.on('exit', () => keepAwake.stop());
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => {
+      keepAwake.stop();
+      process.exit(0);
+    });
   }
 
   // watch モード: 初回 loop を起動し、setInterval で定期実行する。
