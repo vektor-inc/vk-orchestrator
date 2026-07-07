@@ -5,6 +5,7 @@
 - [ 仕様変更 ] 作業対象リポ側の issue に付ける作業中ラベルの既定名を「作業中」から「working」に変更し、GUI 設定項目から撤去（config.json の `labels.workingInProgress` 直書きでのみ上書き可）
 - [ その他 ] 未使用だった `labels.e2ePassed` / `e2ePassedShaPrefix` の config・GUI 枠を撤去（マーカー名は `src/github/index.js` の固定定数に集約）
 - [ その他 ] 対応 PR の紐付けが PR 本文の `Closes #N` 等の GitHub クローズキーワードを前提とする旨を README の前提に明記
+- [ その他 ] エージェント振る舞いルール（automerge での停止禁止・e2e 完了マーカーの付与責務・メタ issue クローズの責務）を `docs/agent-rules.md` として task-queue から移設
 
 = 0.1.0 =
 - [ 機能追加 ] タスク着手コマンドを config テンプレート化（`task.commandTemplate` / `portBase` / `portStride`）。`task.wpEnv.enabled: false` で wp-env 連携（ポート割り当て・state 保存・クリーンアップ）を無効化し、vk-kore 以外のスキルや素のプロンプトも起動可能に（既定は現行と同一挙動）
