@@ -1,6 +1,7 @@
 # Changelog
 
 - [ 機能追加 ] automerge の e2e 完了ゲートを config でオプション化（`task.requireE2eGate`、既定 true）。false にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）
+- [ 仕様変更 ] 作業対象リポ側の issue に付ける作業中ラベルの既定名を「作業中」から「working」に変更し、GUI 設定項目から撤去（config.json の `labels.workingInProgress` 直書きでのみ上書き可）
 - [ その他 ] 未使用だった `labels.e2ePassed` / `e2ePassedShaPrefix` の config・GUI 枠を撤去（マーカー名は `src/github/index.js` の固定定数に集約）
 
 = 0.1.0 =
