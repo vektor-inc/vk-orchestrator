@@ -34,9 +34,9 @@ const require = createRequire(import.meta.url);
  * vk-kore へ渡すコマンドテンプレートと wp-env ポート割り当ての基準値。
  */
 export const DEFAULT_TASK = {
-  // src/engine/index.js の `/vk-kore ${targetIssue.url} wp-env-port=${wpPort}` に対応。
-  // {issueUrl} / {wpPort} は消費側で置換するプレースホルダ。
-  commandTemplate: '/vk-kore {issueUrl} wp-env-port={wpPort}',
+  // src/engine/index.js の `/vk-kore ${targetIssue.url} wp-env-port=${wpPort} headless=1` に対応。
+  // {issueUrl} / {wpPort} は消費側で置換し、headless=1 は無人モードの正式トリガーとして渡す。
+  commandTemplate: '/vk-kore {issueUrl} wp-env-port={wpPort} headless=1',
   // src/engine/index.js の assignWpEnvPort: 9100 + (termId-1)*2 に対応。
   portBase: 9100,
   portStride: 2,
@@ -289,10 +289,10 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       {
         label: 'タスク',
         fields: [
-          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'タスク着手時に各ペインへ投入するコマンド。{issueUrl} と {wpPort} は自動で置換（既定: /vk-kore {issueUrl} wp-env-port={wpPort}）' },
+          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'タスク着手時に各ペインへ投入するコマンド。{issueUrl} と {wpPort} は自動で置換（既定: /vk-kore {issueUrl} wp-env-port={wpPort} headless=1）' },
           { key: 'task.portBase',   label: 'wp-env ポート基準値', type: 'number', help: 'ターミナルに割り当てる wp-env ポートの基準値。terminal 1 に割り当てる番号（既定: 9100）' },
           { key: 'task.portStride', label: 'wp-env ポート間隔', type: 'number', help: 'ターミナルごとにポート番号をずらす幅。ポート = 基準値 + (termId-1) × この値（既定: 2）' },
-          { key: 'task.wpEnv.enabled', label: 'wp-env 連携を有効化', type: 'boolean', help: 'ON でタスク着手時に wp-env ポート割り当て・{wpPort} 展開・マージ後クリーンアップを行う（既定）。OFF にすると wp-env 関連を一切行わず、{wpPort} を含まないテンプレートに差し替えて vk-kore 以外のスキルや素のプロンプトを起動できる' },
+          { key: 'task.wpEnv.enabled', label: 'wp-env 連携を有効化', type: 'boolean', help: 'ON でタスク着手時に wp-env ポート割り当て・{wpPort} 展開・マージ後クリーンアップを行う（既定）。OFF にすると wp-env 関連を一切行わず、{wpPort} を含まないテンプレートに差し替えて vk-kore 以外のスキルや素のプロンプトを起動できる。無人実行を維持する場合はテンプレートに headless=1 を含める' },
           { key: 'task.requireE2eGate', label: 'automerge の e2e ゲートを必須化', type: 'boolean', help: 'ON で automerge 時に e2e 完了マーカーを必須にする（既定）。OFF にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）' },
         ],
       },

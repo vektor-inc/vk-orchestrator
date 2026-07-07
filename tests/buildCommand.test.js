@@ -12,7 +12,7 @@ import { buildCommand, assignWpEnvPort, expandTemplate } from '../src/engine/bui
 
 // #7 の既定値と同じフラット構造 + wpEnv フラグ（#8）。
 const DEFAULT_CFG = {
-  commandTemplate: '/vk-kore {issueUrl} wp-env-port={wpPort}',
+  commandTemplate: '/vk-kore {issueUrl} wp-env-port={wpPort} headless=1',
   portBase: 9100,
   portStride: 2,
   wpEnv: { enabled: true },
@@ -49,9 +49,9 @@ test('assignWpEnvPort: portBase/portStride を反映する', () => {
   assert.equal(assignWpEnvPort(3, { ...DEFAULT_CFG, portBase: 9200, portStride: 4 }), 9208);
 });
 
-test('buildCommand: 既定 config + issue URL → 現行と同一の /vk-kore <url> wp-env-port=<port>', () => {
+test('buildCommand: 既定 config + issue URL → /vk-kore <url> wp-env-port=<port> headless=1', () => {
   const { prompt, targetIssue, wpPort } = buildCommand('タイトル', ISSUE_URL, 1, DEFAULT_CFG);
-  assert.equal(prompt, `/vk-kore ${ISSUE_URL} wp-env-port=9100`);
+  assert.equal(prompt, `/vk-kore ${ISSUE_URL} wp-env-port=9100 headless=1`);
   assert.equal(wpPort, 9100);
   assert.equal(targetIssue.url, ISSUE_URL);
   assert.equal(targetIssue.owner, 'vektor-inc');
@@ -62,18 +62,18 @@ test('buildCommand: 既定 config + issue URL → 現行と同一の /vk-kore <u
 test('buildCommand: termId に応じてポートがずれる', () => {
   const { prompt, wpPort } = buildCommand('t', ISSUE_URL, 2, DEFAULT_CFG);
   assert.equal(wpPort, 9102);
-  assert.equal(prompt, `/vk-kore ${ISSUE_URL} wp-env-port=9102`);
+  assert.equal(prompt, `/vk-kore ${ISSUE_URL} wp-env-port=9102 headless=1`);
 });
 
 test('buildCommand: wpEnv.enabled=false + {wpPort} 無しテンプレートで port 未割り当て', () => {
   const cfg = {
     ...DEFAULT_CFG,
-    commandTemplate: '/vk-kore {issueUrl}',
+    commandTemplate: '/vk-kore {issueUrl} headless=1',
     wpEnv: { enabled: false },
   };
   const { prompt, wpPort, targetIssue } = buildCommand('t', ISSUE_URL, 1, cfg);
   assert.equal(wpPort, null); // ポート割り当てなし → state に保存されずクリーンアップもスキップ
-  assert.equal(prompt, `/vk-kore ${ISSUE_URL}`);
+  assert.equal(prompt, `/vk-kore ${ISSUE_URL} headless=1`);
   assert.ok(targetIssue); // issue URL 自体は検出されている
 });
 

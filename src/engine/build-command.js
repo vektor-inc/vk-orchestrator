@@ -118,8 +118,8 @@ export function buildCommand(title, body, termId, taskConfig = getTaskConfig()) 
       console.log(`  → wp-env 無効（task.wpEnv.enabled=false）: ポート割り当てをスキップ`);
     }
 
-    // コマンドテンプレートを展開する。既定テンプレート
-    // `/vk-kore {issueUrl} wp-env-port={wpPort}` では現行と完全に同一の文字列になる。
+    // コマンドテンプレートを展開する。既定テンプレートは
+    // `/vk-kore {issueUrl} wp-env-port={wpPort} headless=1` になる。
     // wpPort が null（wp-env 無効）でも、{wpPort} を含まないテンプレートなら壊れない。
     const prompt = expandTemplate(taskConfig.commandTemplate, {
       issueUrl: targetIssue.url,

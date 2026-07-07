@@ -186,6 +186,7 @@ test('getTaskConfig: config 無しで既定値を返す', () => {
     const t = getTaskConfig({});
     assert.ok(t.commandTemplate.includes('/vk-kore'));
     assert.ok(t.commandTemplate.includes('wp-env-port='));
+    assert.ok(t.commandTemplate.includes('headless=1'));
     assert.equal(t.portBase, 9100);
     assert.equal(t.portStride, 2);
   });
