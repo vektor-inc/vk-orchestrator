@@ -35,11 +35,19 @@ export const DEFAULT_RESUME_MAX = 3;
  * フォールバックする（fail-closed）。0 は「自動再開を無効化して常に failed」
  * という有効な設定値として許容する。
  *
+ * null / undefined / 空白のみの文字列は「未設定」とみなし、数値変換の前に
+ * 既定値へショートサーキットする。`Number('') === 0` のため、これを通すと
+ * `PANE_RESUME_MAX=`（空文字の env 指定）が「自動再開無効化（0）」として
+ * 意図せず発動してしまう。数値の 0 と文字列 '0' は明示指定なので引き続き有効。
+ *
  * @param {*} value 環境変数・config・options 経由の生値
- * @param {number} [fallback=DEFAULT_RESUME_MAX] 不正値時のフォールバック
+ * @param {number} [fallback=DEFAULT_RESUME_MAX] 未設定・不正値時のフォールバック
  * @returns {number} 0 以上の整数
  */
 export function normalizeResumeMax(value, fallback = DEFAULT_RESUME_MAX) {
+  if (value == null || (typeof value === 'string' && value.trim() === '')) {
+    return fallback;
+  }
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }

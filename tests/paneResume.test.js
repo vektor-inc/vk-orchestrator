@@ -292,4 +292,18 @@ describe('normalizeResumeMax', () => {
     // フォールバック値の上書き
     assert.equal(normalizeResumeMax('abc', 5), 5);
   });
+
+  it('空文字・空白のみ・null は「未設定」として既定 3 に倒す（0 扱いにしない）', () => {
+    // Number('') === 0 のため、素通しすると PANE_RESUME_MAX=（空文字の env 指定）が
+    // 「自動再開無効化（0）」として意図せず発動する。未設定系は既定 3 へ。
+    assert.equal(normalizeResumeMax(''), 3);
+    assert.equal(normalizeResumeMax('  '), 3);
+    assert.equal(normalizeResumeMax(null), 3);
+    assert.equal(normalizeResumeMax(undefined), 3);
+    // 明示指定の 0（数値・文字列）は引き続き有効値（自動再開無効化）
+    assert.equal(normalizeResumeMax(0), 0);
+    assert.equal(normalizeResumeMax('0'), 0);
+    // フォールバック値の上書きも未設定系に効く
+    assert.equal(normalizeResumeMax('', 5), 5);
+  });
 });
