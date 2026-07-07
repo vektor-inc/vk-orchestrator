@@ -9,6 +9,7 @@
 - [ 機能追加 ] `up`（`npm start`）起動時に vk-terminals のリモート最新タグを自動取得し、node_modules が古ければ入れ直してから GUI を起動するように（vk-terminals 側でタグを打つだけで各環境が最新に追従し、orchestrator の bump/push/pull が不要に。`VK_TERMINALS_TAG` で版固定、`VK_TERMINALS_NO_AUTO_UPDATE=1` で自動追従の無効化も可能）
 - [ 不具合修正 ] コールドスタート時に Claude Code の起動バナーがプロンプト本文を飲み込み、`/vk-kore` 等の指示が入力欄に届かないまま処理が進んでしまう不具合を修正
 - [ 不具合修正 ] org リポの一括ラベル登録が1ページ目（100件）しか処理せず、100件を超えるリポにラベルが登録されない不具合を修正
+- [ 不具合修正 ] 非 macOS（WSLg 等）で `up` 実行時に Chromium の GPU 初期化が失敗し、GUI 起動時に `Exiting GPU process` / `kTransientFailure` 等のエラーログが大量に出る不具合を修正（GPU を無効化して抑制。ターミナル用途で描画への影響なし）
 - [ 開発環境 ] vk-terminals 依存の更新（タグ解決 → package.json / package-lock.json / CHANGELOG 書き換え → 検証）をまとめて行う `npm run bump:terminals <version>` を追加
 - [ 仕様変更 ] ドキュメント・UI 表示・ログ・コメントの製品名表記を VK Orchestrator / VK Terminals に統一（コマンド・パス・パッケージ名などのコード上の識別子は従来どおり小文字）
 - [ その他 ] README のセットアップ手順に、初回設定で必須なのは `github.token` / `owner` / `repo` の 3 項目のみで、`vkTerminals.port` / `host` は既定値のままでよい旨を明記

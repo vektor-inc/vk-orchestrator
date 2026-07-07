@@ -212,8 +212,19 @@ async function main() {
 
       const startOrchestrator = !process.argv.includes('--no-orchestrator');
 
+      // GUI 起動引数。macOS 以外（WSLg 等の Linux）では Chromium の HW-GPU 初期化が
+      // 失敗し、起動時に `Exiting GPU process` / `kTransientFailure` などのエラーが
+      // 大量に出る（利用可能な Vulkan ICD が無く SwiftShader へフォールバックするため）。
+      // ターミナル用途では GPU アクセラは不要なので、非 macOS では GPU を無効化して
+      // このノイズを抑制する（描画への実害なし）。`npm start -- <flags>` で `electron .`
+      // 側へフラグが渡る。
+      const guiArgs = ['start'];
+      if (process.platform !== 'darwin') {
+        guiArgs.push('--', '--disable-gpu', '--disable-software-rasterizer');
+      }
+
       console.log(`VK Terminals(GUI) を起動します（${vkDir}）...`);
-      const gui = spawn('npm', ['start'], {
+      const gui = spawn('npm', guiArgs, {
         cwd: vkDir,
         stdio: 'inherit',
         env: { ...process.env, VK_TERMINALS_SETTINGS: descriptorPath },
