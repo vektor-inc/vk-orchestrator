@@ -24,6 +24,7 @@ import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
 import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
+import { startKeepAwake } from '../power/keep-awake.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -1408,6 +1409,20 @@ async function main() {
     // スキャナが拾う）。
     await loop();
     return;
+  }
+
+  // watch 中は OS がアイドルスリープに入るとポーリングごと止まってしまうため、
+  // OS ごとの方法でシステムスリープを抑止する（run-once は短命なので不要）。
+  // macOS は caffeinate、Windows は SetThreadExecutionState。未対応 OS は警告のみ。
+  const keepAwake = startKeepAwake();
+  // graceful shutdown 時にスリープ抑止を即時解除する。プロセス連動でも自動解除されるが、
+  // Ctrl-C / kill 時に待たず解放する。SIGINT / SIGTERM は解除後に自前で終了する。
+  process.on('exit', () => keepAwake.stop());
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => {
+      keepAwake.stop();
+      process.exit(0);
+    });
   }
 
   // watch モード: 初回 loop を起動し、setInterval で定期実行する。

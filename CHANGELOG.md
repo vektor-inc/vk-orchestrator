@@ -1,5 +1,6 @@
 # Changelog
 
+- [ 機能追加 ] watch モード常駐中の OS スリープを防止（macOS は caffeinate、Windows は SetThreadExecutionState。orchestrator 終了で自動解除。`VK_ORCHESTRATOR_NO_KEEP_AWAKE=1` で無効化可）
 - [ 仕様変更 ] 手動マージ時のメタ issue クローズ手順に前提チェック（closed / status:done ならスキップ・各ステップの冪等化）を追記し、オーケストレーターの自動クローズとのレースによる重複を防止
 - [ 仕様変更 ] vk-kore 起動プロンプトの既定テンプレートに headless=1 を追加し、{wpPort} の有無に関わらず無人モードで起動する正式トリガーへ移行（wp-env-port 依存の過渡措置を解消）
 - [ 仕様変更 ] 設定 UI からプロトコル（Status 行接頭辞・トークン）/ラベル（status・priority・automerge 等）/wp-env ポート（portBase・portStride）を撤去し、決めうち定数＋config.json 上書きに集約
