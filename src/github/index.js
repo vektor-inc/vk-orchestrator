@@ -577,7 +577,7 @@ export class GitHubClient {
   }
 
   // issue の現在の state を取得する（PR検出失敗時のフォールバック検証用）
-  // 指数バックオフ（1s, 3s, 9s）で最大3回リトライし、全て失敗した場合のみ throw する。
+  // 既定では指数バックオフ（1s, 3s, 9s）で最大3回リトライし、全て失敗した場合のみ throw する。
   // 瞬間的なネットワーク/API ブリップで即失敗するのを避けるため。
   //
   // ただし 4xx クライアントエラー（404 Not Found / 403 Forbidden など）は
@@ -587,9 +587,16 @@ export class GitHubClient {
   // 戻り値には state / closedAt に加え、title / htmlUrl も含める。
   // ペインヘッダーに元の作業対象 issue のタイトル・リンクを表示する用途で使う
   // （既存呼び出し側は .state / .closedAt しか参照していないため後方互換）。
+  //
+  // retryDelays でリトライ間隔（ミリ秒の配列）を上書きできる。既定は [1000, 3000, 9000]。
+  // 空配列 `[]` を渡すと単発試行（リトライなし）になる。ペインタイトル取得のような
+  // 付随処理（失敗してもフォールバックできる）で、リトライがタスク起動をブロックしないよう使う。
+  //
+  // @param {object} [opts]
+  // @param {number[]} [opts.retryDelays=[1000,3000,9000]]  リトライ間隔（空配列でリトライなし）
   // @returns {Promise<{state:string, closedAt:string|null, title:string, htmlUrl:string}>}
-  async getIssueState(owner, repo, issueNumber) {
-    const delays = [1000, 3000, 9000];
+  async getIssueState(owner, repo, issueNumber, { retryDelays = [1000, 3000, 9000] } = {}) {
+    const delays = retryDelays;
     let lastErr;
     for (let attempt = 0; attempt <= delays.length; attempt++) {
       try {

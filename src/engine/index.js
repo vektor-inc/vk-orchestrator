@@ -195,9 +195,17 @@ async function startTask(issue) {
   const resolved = resolveTarget(issue);
   let resolvedTarget = null;
   if (!resolved.isSelf) {
+    // ペインタイトルは付随処理（cosmetic）なので、取得に失敗してもメタ issue へ
+    // フォールバックできる。リトライ（最大13秒）でタスク起動をブロックしないよう
+    // retryDelays: [] を渡して単発試行にする。
     try {
-      const meta = await github.getIssueState(resolved.owner, resolved.repo, resolved.number);
-      resolvedTarget = { number: resolved.number, title: meta.title, url: meta.htmlUrl };
+      const original = await github.getIssueState(
+        resolved.owner,
+        resolved.repo,
+        resolved.number,
+        { retryDelays: [] }
+      );
+      resolvedTarget = { number: resolved.number, title: original.title, url: original.htmlUrl };
     } catch (err) {
       console.warn(`  [set-title] 元 issue 情報の取得失敗（メタ issue 表示にフォールバック）: ${err.message}`);
     }
