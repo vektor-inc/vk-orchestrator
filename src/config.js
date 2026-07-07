@@ -220,10 +220,14 @@ export function defaultGpuMode(platform = process.platform) {
   return platform === 'darwin' ? 'default' : 'off';
 }
 
+// 未知の GPU モードを警告済みか（プロセス内で一度だけ通知するためのフラグ）。
+let warnedUnknownGpuMode = false;
+
 /**
  * GUI 起動時の GPU モードを解決する。
  * 優先順位: 環境変数 VK_TERMINALS_GPU > config.json(vkTerminals.gpu) > プラットフォーム既定。
- * 空文字・未知の値はプラットフォーム既定にフォールバックする。
+ * 空文字・未知の値はプラットフォーム既定にフォールバックする。撤去した 'hardware' など
+ * 非空の未知値が来た場合は、挙動変更に気づけるよう一度だけ警告する（起動は止めない）。
  * @param {object} [cfg] loadUnifiedConfig() の戻り値
  * @param {string} [platform] process.platform 互換の値
  * @returns {'off'|'default'}
@@ -232,7 +236,17 @@ export function getVkTerminalsGpuMode(cfg = loadUnifiedConfig(), platform = proc
   const raw = String(process.env.VK_TERMINALS_GPU ?? cfg?.vkTerminals?.gpu ?? '')
     .trim()
     .toLowerCase();
-  return GPU_MODES.includes(raw) ? raw : defaultGpuMode(platform);
+  if (GPU_MODES.includes(raw)) return raw;
+  // 空（＝自動）は正常。非空の未知値（例: 旧 'hardware'）だけ一度警告してフォールバック。
+  const fallback = defaultGpuMode(platform);
+  if (raw !== '' && !warnedUnknownGpuMode) {
+    warnedUnknownGpuMode = true;
+    console.warn(
+      `[Config] 未知の GPU モード "${raw}" は無視し、既定 "${fallback}" を使用します` +
+      `（有効値: ${GPU_MODES.join(' / ')}、空=自動）。`
+    );
+  }
+  return fallback;
 }
 
 /**
