@@ -206,7 +206,7 @@ export function toVkTerminalsConfig(cfg = {}) {
 // -------------------------------------------------------
 
 /** GPU 起動モードの取りうる値。 */
-export const GPU_MODES = ['off', 'hardware', 'default'];
+export const GPU_MODES = ['off', 'default'];
 
 /**
  * GPU 起動モードのプラットフォーム既定値を返す。
@@ -226,7 +226,7 @@ export function defaultGpuMode(platform = process.platform) {
  * 空文字・未知の値はプラットフォーム既定にフォールバックする。
  * @param {object} [cfg] loadUnifiedConfig() の戻り値
  * @param {string} [platform] process.platform 互換の値
- * @returns {'off'|'hardware'|'default'}
+ * @returns {'off'|'default'}
  */
 export function getVkTerminalsGpuMode(cfg = loadUnifiedConfig(), platform = process.platform) {
   const raw = String(process.env.VK_TERMINALS_GPU ?? cfg?.vkTerminals?.gpu ?? '')
@@ -239,23 +239,18 @@ export function getVkTerminalsGpuMode(cfg = loadUnifiedConfig(), platform = proc
  * GPU モードから、Electron(GUI) 起動時に渡すフラグと追加環境変数を組み立てる。
  *  - 'off'      : GPU を無効化してエラーログを抑制する（描画はソフトウェア。
  *                 ターミナル用途では実害なし）。
- *  - 'hardware' : ANGLE(GL) 経由で HW OpenGL を使う。WSLg では Mesa の d3d12 ドライバ
- *                 （GALLIUM_DRIVER=d3d12）経由で Windows 側 GPU に届く。/dev/dxg への
- *                 アクセスのため GPU サンドボックスを外す。Vulkan は HW ICD が無いため
- *                 対象外（OpenGL 経路のみ）。
  *  - 'default'  : フラグ・env を足さず Chromium 任せ（macOS 既定 / 明示的に素の挙動）。
- * @param {string} mode 'off'|'hardware'|'default'
+ *
+ * ※ WSLg での HW アクセラは対応しない。Vulkan は HW ICD（dzn 等）が提供されず、
+ *    OpenGL もターミナル用途では体感差が無く、WSLg では Mesa/Dawn 由来の警告も出る
+ *    ため。GPU を使いたい場合は 'default'（Chromium 任せ）を選ぶ。
+ * @param {string} mode 'off'|'default'
  * @returns {{ args: string[], env: Record<string,string> }}
  */
 export function gpuLaunchOptions(mode) {
   switch (mode) {
     case 'off':
       return { args: ['--disable-gpu', '--disable-software-rasterizer'], env: {} };
-    case 'hardware':
-      return {
-        args: ['--use-gl=angle', '--use-angle=gl', '--ignore-gpu-blocklist', '--disable-gpu-sandbox'],
-        env: { GALLIUM_DRIVER: 'd3d12' },
-      };
     case 'default':
     default:
       return { args: [], env: {} };
@@ -352,10 +347,9 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
             options: [
               { value: '',         label: '自動（推奨・macOS は通常起動 / その他は off）' },
               { value: 'off',      label: 'off（GPU 無効・エラーログ抑制）' },
-              { value: 'hardware', label: 'hardware（HW OpenGL・⚠ GPU 保護が下がる）' },
               { value: 'default',  label: 'default（Chromium 任せ）' },
             ],
-            help: 'GUI(Electron) の GPU 利用モード（次回 up で反映）。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、hardware=HW OpenGL（WSLg の d3d12 経由。⚠ Chromium の GPU サンドボックスを無効化し GPU ブロックリストを無視するため保護が下がる）、default=Chromium 任せ' },
+            help: 'GUI(Electron) の GPU 利用モード（次回 up で反映）。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、default=Chromium 任せ' },
           { key: 'vkTerminals.initialCommand',  label: '初期コマンド',        type: 'text', help: '各ペイン起動時に自動実行するコマンド（次回 up/apply で反映）' },
           { key: 'vkTerminals.agentroom',       label: 'エージェントルーム表示', type: 'boolean', help: 'エージェントルームのペインを表示するか（次回 up/apply で反映）' },
           { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
