@@ -191,6 +191,75 @@ export function toVkTerminalsConfig(cfg = {}) {
   return out;
 }
 
+// -------------------------------------------------------
+// GUI(Electron) の GPU 起動モード。
+//
+// VK Terminals(GUI) は Electron アプリで、Chromium が起動時に GPU を初期化する。
+// macOS では HW アクセラがそのまま効くが、WSLg 等の Linux では GPU 初期化に失敗し
+// `Exiting GPU process` / `kTransientFailure` などのエラーが多発する（利用可能な
+// Vulkan ICD がソフトウェア実装のみで SwiftShader へフォールバックするため）。
+// ここでは起動モードを config(vkTerminals.gpu) / env(VK_TERMINALS_GPU) で選べるようにし、
+// bin 側の spawn 引数と追加環境変数へ写像する。GPU モードは VK Terminals 側の config.json
+// には書き出さない（orchestrator が GUI を spawn する時点の起動オプションのため）。
+// -------------------------------------------------------
+
+/** GPU 起動モードの取りうる値。 */
+export const GPU_MODES = ['off', 'hardware', 'default'];
+
+/**
+ * GPU 起動モードのプラットフォーム既定値を返す。
+ * macOS は HW アクセラがそのまま効くためフラグ不要（'default'）。
+ * それ以外（WSLg 等の Linux）は Chromium の GPU 初期化失敗によるエラーを抑制するため
+ * 既定で GPU を無効化する（'off'）。
+ * @param {string} [platform] process.platform 互換の値
+ * @returns {'off'|'default'}
+ */
+export function defaultGpuMode(platform = process.platform) {
+  return platform === 'darwin' ? 'default' : 'off';
+}
+
+/**
+ * GUI 起動時の GPU モードを解決する。
+ * 優先順位: 環境変数 VK_TERMINALS_GPU > config.json(vkTerminals.gpu) > プラットフォーム既定。
+ * 空文字・未知の値はプラットフォーム既定にフォールバックする。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @param {string} [platform] process.platform 互換の値
+ * @returns {'off'|'hardware'|'default'}
+ */
+export function getVkTerminalsGpuMode(cfg = loadUnifiedConfig(), platform = process.platform) {
+  const raw = String(process.env.VK_TERMINALS_GPU ?? cfg?.vkTerminals?.gpu ?? '')
+    .trim()
+    .toLowerCase();
+  return GPU_MODES.includes(raw) ? raw : defaultGpuMode(platform);
+}
+
+/**
+ * GPU モードから、Electron(GUI) 起動時に渡すフラグと追加環境変数を組み立てる。
+ *  - 'off'      : GPU を無効化してエラーログを抑制する（描画はソフトウェア。
+ *                 ターミナル用途では実害なし）。
+ *  - 'hardware' : ANGLE(GL) 経由で HW OpenGL を使う。WSLg では Mesa の d3d12 ドライバ
+ *                 （GALLIUM_DRIVER=d3d12）経由で Windows 側 GPU に届く。/dev/dxg への
+ *                 アクセスのため GPU サンドボックスを外す。Vulkan は HW ICD が無いため
+ *                 対象外（OpenGL 経路のみ）。
+ *  - 'default'  : フラグ・env を足さず Chromium 任せ（macOS 既定 / 明示的に素の挙動）。
+ * @param {string} mode 'off'|'hardware'|'default'
+ * @returns {{ args: string[], env: Record<string,string> }}
+ */
+export function gpuLaunchOptions(mode) {
+  switch (mode) {
+    case 'off':
+      return { args: ['--disable-gpu', '--disable-software-rasterizer'], env: {} };
+    case 'hardware':
+      return {
+        args: ['--use-gl=angle', '--use-angle=gl', '--ignore-gpu-blocklist', '--disable-gpu-sandbox'],
+        env: { GALLIUM_DRIVER: 'd3d12' },
+      };
+    case 'default':
+    default:
+      return { args: [], env: {} };
+  }
+}
+
 /**
  * 同梱している VK Terminals のインストールディレクトリを解決する。
  * (optionalDependencies として導入される package の実体パス)
@@ -277,6 +346,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         fields: [
           { key: 'vkTerminals.port',            label: 'API ポート',          type: 'number', help: 'VK Terminals の API サーバーが待ち受けるポート番号（既定: 13847）' },
           { key: 'vkTerminals.host',            label: 'API ホスト',          type: 'text', help: 'VK Terminals の API サーバーのホスト（既定: 127.0.0.1）' },
+          { key: 'vkTerminals.gpu',             label: 'GPU モード',          type: 'text', help: 'GUI(Electron) の GPU 利用。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、hardware=HW OpenGL（WSLg の d3d12 経由）、default=Chromium 任せ（次回 up で反映）' },
           { key: 'vkTerminals.initialCommand',  label: '初期コマンド',        type: 'text', help: '各ペイン起動時に自動実行するコマンド（次回 up/apply で反映）' },
           { key: 'vkTerminals.agentroom',       label: 'エージェントルーム表示', type: 'boolean', help: 'エージェントルームのペインを表示するか（次回 up/apply で反映）' },
           { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },

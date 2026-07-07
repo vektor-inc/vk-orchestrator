@@ -149,4 +149,14 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 | `orchestrator.watchdogIdleMs` | `WATCHDOG_IDLE_MS` | ウォッチドッグ閾値 | `10800000` |
 | `orchestrator.assigneeFilter` | `ASSIGNEE_FILTER` | 担当者フィルタ | なし |
 | `vkTerminals.port` / `vkTerminals.host` | `VK_TERMINALS_PORT` / `VK_TERMINALS_HOST` | VK Terminals API | `13847` / `127.0.0.1` |
+| `vkTerminals.gpu` | `VK_TERMINALS_GPU` | GUI の GPU 起動モード（下記） | 空=自動 |
 | `vkTerminals.initialCommand` / `agentroom` / `additionalPanes` | （`apply` で反映） | VK Terminals のペイン構成等 | — |
+
+> **`vkTerminals.gpu`（GUI の GPU 起動モード）** — VK Terminals(GUI) は Electron アプリで、macOS 以外（WSLg 等の Linux）では Chromium の GPU 初期化が失敗し `up` 起動時に `Exiting GPU process` / `kTransientFailure` 等のエラーログが大量に出ます。値で挙動を選べます。
+>
+> - **空（既定・自動）** — macOS は通常起動、それ以外は `off` 相当。通常はこのままで OK。
+> - **`off`** — GPU を無効化してエラーログを抑制（描画はソフトウェア。ターミナル用途で実害なし）。
+> - **`hardware`** — HW OpenGL を使う（WSLg では Mesa の d3d12 ドライバ経由で Windows 側 GPU に届く。`GALLIUM_DRIVER=d3d12` を付与し、`/dev/dxg` アクセスのため GPU サンドボックスを外す）。Vulkan は HW ICD が無いため対象外（OpenGL 経路のみ）。
+> - **`default`** — フラグを足さず Chromium 任せ（元の挙動）。
+>
+> 反映は次回 `up` 時。ターミナル用途では体感差はほぼ無いため、エラーが気になる場合は既定（`off` 相当）で十分です。

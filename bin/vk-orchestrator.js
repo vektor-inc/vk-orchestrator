@@ -191,7 +191,8 @@ async function main() {
       // API が listen してからでないとペイン作成もできないため、waitForHealth で疎通を待つ。
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
-      const { writeVkTerminalsConfig, writeSettingsDescriptor, resolveConfigPath } =
+      const { writeVkTerminalsConfig, writeSettingsDescriptor, resolveConfigPath,
+        getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
       const { waitForHealth, createNewPane, sendToTerminal } =
         await import('../src/terminals/index.js');
@@ -212,22 +213,21 @@ async function main() {
 
       const startOrchestrator = !process.argv.includes('--no-orchestrator');
 
-      // GUI 起動引数。macOS 以外（WSLg 等の Linux）では Chromium の HW-GPU 初期化が
-      // 失敗し、起動時に `Exiting GPU process` / `kTransientFailure` などのエラーが
-      // 大量に出る（利用可能な Vulkan ICD が無く SwiftShader へフォールバックするため）。
-      // ターミナル用途では GPU アクセラは不要なので、非 macOS では GPU を無効化して
-      // このノイズを抑制する（描画への実害なし）。`npm start -- <flags>` で `electron .`
-      // 側へフラグが渡る。
-      const guiArgs = ['start'];
-      if (process.platform !== 'darwin') {
-        guiArgs.push('--', '--disable-gpu', '--disable-software-rasterizer');
-      }
+      // GUI(Electron) の GPU 起動モードを解決し、電子へ渡すフラグと追加 env を組み立てる。
+      // 既定は非 macOS で 'off'（Chromium の GPU 初期化失敗による `Exiting GPU process`
+      // 等のエラーログを抑制。描画はソフトウェアだがターミナル用途で実害なし）。
+      // config `vkTerminals.gpu` / env `VK_TERMINALS_GPU` で 'hardware'（WSLg の d3d12
+      // 経由 HW OpenGL）/ 'default'（Chromium 任せ）へ切り替え可能。
+      // フラグは `npm start -- <flags>` で `electron .` 側へ渡す。
+      const gpuMode = getVkTerminalsGpuMode(unifiedConfig);
+      const { args: gpuArgs, env: gpuEnv } = gpuLaunchOptions(gpuMode);
+      const guiArgs = gpuArgs.length ? ['start', '--', ...gpuArgs] : ['start'];
 
-      console.log(`VK Terminals(GUI) を起動します（${vkDir}）...`);
+      console.log(`VK Terminals(GUI) を起動します（${vkDir}, gpu=${gpuMode}）...`);
       const gui = spawn('npm', guiArgs, {
         cwd: vkDir,
         stdio: 'inherit',
-        env: { ...process.env, VK_TERMINALS_SETTINGS: descriptorPath },
+        env: { ...process.env, ...gpuEnv, VK_TERMINALS_SETTINGS: descriptorPath },
       });
       gui.on('exit', (code) => process.exit(code ?? 0));
 
