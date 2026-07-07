@@ -1,5 +1,11 @@
 import { Octokit } from '@octokit/rest';
 
+// e2e 完了マーカーのラベル名 / SHA コメント接頭辞。
+// 汎用化 issue #10 の方針により、ゲートの ON/OFF は config 化する一方、
+// マーカー名自体は固定定数のまま運用する（config.js の DEFAULT_LABELS からは撤去済み）。
+const E2E_PASSED_LABEL = 'e2e-passed';
+const E2E_PASSED_SHA_PREFIX = 'e2e-passed-sha:';
+
 // source 側 issue 本文から最初の GitHub issue URL を抽出する。
 // 取り込み時 createTaskQueueIssueFromSource が body 先頭に source URL を入れているため、
 // 最初にマッチしたものが source とみなせる（後から追記される PR URL は /pull/ なのでマッチしない）。
@@ -736,22 +742,24 @@ export class GitHubClient {
   // vk-kore（司）が member の gh トークンで投稿する運用のため、bot ログイン固定ではなく
   // author_association で判定する（vk-agents[bot] 固定だと現行運用に合わずゲートが壊れる）。
   async hasE2ePassedMarker(owner, repo, prNumber, headSha) {
-    // 1. 'e2e-passed' ラベルの有無を pulls.get の labels から判定する。
+    // 1. E2E_PASSED_LABEL ラベルの有無を pulls.get の labels から判定する。
     const { data: pr } = await this.octokit.pulls.get({
       owner, repo, pull_number: prNumber,
     });
     const hasLabel = (pr.labels ?? []).some(
-      l => (typeof l === 'string' ? l : l.name) === 'e2e-passed'
+      l => (typeof l === 'string' ? l : l.name) === E2E_PASSED_LABEL
     );
     if (!hasLabel) return false;
 
-    // 2. コメントを全件取得し、「e2e-passed-sha: <sha>」が現 head SHA と前方一致するものを探す。
+    // 2. コメントを全件取得し、「<E2E_PASSED_SHA_PREFIX> <sha>」が現 head SHA と前方一致するものを探す。
     //    短縮 SHA（7 桁以上）も許容するため headSha.startsWith(sha) で判定する。
+    //    正規表現メタ文字（`:` 等）を含む可能性があるため、定数から組み立てる際は escape してから使う。
     const comments = await this.octokit.paginate(this.octokit.issues.listComments, {
       owner, repo, issue_number: prNumber, per_page: 100,
     });
     const TRUSTED_ASSOC = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-    const shaRe = /e2e-passed-sha:\s*([0-9a-f]{7,40})/i;
+    const escapedPrefix = E2E_PASSED_SHA_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const shaRe = new RegExp(`${escapedPrefix}\\s*([0-9a-f]{7,40})`, 'i');
     for (const c of comments) {
       // 信頼境界外（CONTRIBUTOR / NONE 等）の投稿者によるマーカーは無視する。
       if (!TRUSTED_ASSOC.has(c.author_association)) continue;

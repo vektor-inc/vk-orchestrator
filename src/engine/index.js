@@ -7,6 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '..', '..', '.env') });
 
 import { GitHubClient } from '../github/index.js';
+import { getTaskConfig } from '../config.js';
 import {
   checkHealth,
   createNewPane,
@@ -812,16 +813,24 @@ async function tryAutoMerge(issue, prRef, prState, prUrl) {
   // ゲート未充足は「保留（次ループで再判定）」であり失敗ではない。マーカーが付けば次ループでマージされる。
   // マーカー確認の API 失敗も checkPRCompletion と対称に「次ループ再試行（return）」へ丸める。
   // fail-closed: 確認できない間はマージへ進まず保留する（過去の PR 監視 tick クラッシュ対策とも整合）。
-  let e2ePassed;
-  try {
-    e2ePassed = await github.hasE2ePassedMarker(prRef.owner, prRef.repo, prRef.number, completion.headSha);
-  } catch (err) {
-    console.warn(`  ${tag}: e2e-passed マーカー確認に失敗（次ループで再試行）: ${err.message}`);
-    return;
-  }
-  if (!e2ePassed) {
-    console.log(`  ${tag}: PR #${prRef.number} は e2e-passed マーカー（現 head SHA 一致）が無いため自動マージ保留`);
-    return;
+  //
+  // task.requireE2eGate（既定 true）が false のプロジェクトは e2e を回さない前提のため、
+  // マーカー確認そのものをスキップして先へ進む（CI/CodeRabbit ゲートは checkPRCompletion で維持済み）。
+  const taskCfg = getTaskConfig();
+  if (taskCfg.requireE2eGate === false) {
+    console.log(`  ${tag}: requireE2eGate=false のため e2e 完了マーカーゲートをスキップ`);
+  } else {
+    let e2ePassed;
+    try {
+      e2ePassed = await github.hasE2ePassedMarker(prRef.owner, prRef.repo, prRef.number, completion.headSha);
+    } catch (err) {
+      console.warn(`  ${tag}: e2e-passed マーカー確認に失敗（次ループで再試行）: ${err.message}`);
+      return;
+    }
+    if (!e2ePassed) {
+      console.log(`  ${tag}: PR #${prRef.number} は e2e-passed マーカー（現 head SHA 一致）が無いため自動マージ保留`);
+      return;
+    }
   }
 
   try {

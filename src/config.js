@@ -45,6 +45,9 @@ export const DEFAULT_TASK = {
   // state.json への wpPort 保存・クリーンアップ）を一切行わず、{wpPort} を含まない
   // テンプレートに差し替えることで vk-kore 以外の任意スキル／素のプロンプトを起動できる。
   wpEnv: { enabled: true },
+  // automerge の e2e 完了ゲートを使うか。既定 true=現行どおりマーカー必須。
+  // false でマーカー無しでも automerge が進む（CI/CodeRabbit ゲートは維持）。
+  requireE2eGate: true,
 };
 
 /**
@@ -64,7 +67,9 @@ export const DEFAULT_PROTOCOL = {
 
 /**
  * labels セクションの既定値。
- * task-queue のステータス/優先度ラベルと、対象リポ側の作業中/ e2e 完了マーカー。
+ * task-queue のステータス/優先度ラベルと、対象リポ側の作業中ラベル。
+ * e2e 完了マーカー（ラベル名・SHA 接頭辞）は config 化せず、src/github/index.js の
+ * 固定定数（E2E_PASSED_LABEL / E2E_PASSED_SHA_PREFIX）のまま運用する。
  */
 export const DEFAULT_LABELS = {
   status: {
@@ -86,9 +91,6 @@ export const DEFAULT_LABELS = {
   parallel: 'parallel',
   // 対象リポ側に付ける作業中ラベル（src/github/index.js）。
   workingInProgress: '作業中',
-  // e2e 完了マーカー（src/github/index.js）。
-  e2ePassed: 'e2e-passed',
-  e2ePassedShaPrefix: 'e2e-passed-sha:',
 };
 
 /**
@@ -288,6 +290,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
           { key: 'task.portBase',   label: 'wp-env ポート基準値', type: 'number', help: 'ターミナルに割り当てる wp-env ポートの基準値。terminal 1 に割り当てる番号（既定: 9100）' },
           { key: 'task.portStride', label: 'wp-env ポート間隔', type: 'number', help: 'ターミナルごとにポート番号をずらす幅。ポート = 基準値 + (termId-1) × この値（既定: 2）' },
           { key: 'task.wpEnv.enabled', label: 'wp-env 連携を有効化', type: 'boolean', help: 'ON でタスク着手時に wp-env ポート割り当て・{wpPort} 展開・マージ後クリーンアップを行う（既定）。OFF にすると wp-env 関連を一切行わず、{wpPort} を含まないテンプレートに差し替えて vk-kore 以外のスキルや素のプロンプトを起動できる' },
+          { key: 'task.requireE2eGate', label: 'automerge の e2e ゲートを必須化', type: 'boolean', help: 'ON で automerge 時に e2e 完了マーカーを必須にする（既定）。OFF にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）' },
         ],
       },
       {
@@ -306,8 +309,6 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
           { key: 'labels.sequential', label: 'sequential ラベル', type: 'text', help: '同一リポの逐次実行を示すラベル名（既定: sequential）' },
           { key: 'labels.parallel',   label: 'parallel ラベル', type: 'text', help: '並列実行可を示すラベル名（既定: parallel）' },
           { key: 'labels.workingInProgress', label: '作業中ラベル', type: 'text', help: '作業対象リポ側の issue に付ける作業中ラベル名（既定: 作業中）' },
-          { key: 'labels.e2ePassed',        label: 'e2e 完了ラベル', type: 'text', help: 'e2e テスト完了を示すマーカーラベル名（既定: e2e-passed）' },
-          { key: 'labels.e2ePassedShaPrefix', label: 'e2e 完了 SHA 接頭辞', type: 'text', help: 'e2e 完了コメントで検証済み head SHA を示す接頭辞（既定: e2e-passed-sha:）' },
         ],
       },
     ],
@@ -347,6 +348,12 @@ export function getTaskConfig(cfg = loadUnifiedConfig()) {
   if (env.TASK_WP_ENV_ENABLED) {
     const v = env.TASK_WP_ENV_ENABLED.trim().toLowerCase();
     merged.wpEnv = { ...merged.wpEnv, enabled: !(v === 'false' || v === '0') };
+  }
+  // requireE2eGate の env 上書き。空文字・未定義は無視（TASK_WP_ENV_ENABLED と同じ扱い）。
+  // 'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす。
+  if (env.TASK_REQUIRE_E2E_GATE) {
+    const v = env.TASK_REQUIRE_E2E_GATE.trim().toLowerCase();
+    merged.requireE2eGate = !(v === 'false' || v === '0');
   }
   return merged;
 }
