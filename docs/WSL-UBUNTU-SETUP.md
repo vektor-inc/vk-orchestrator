@@ -6,7 +6,7 @@ Windows の WSL2（WSLg）上の Ubuntu で VK Orchestrator + VK Terminals(GUI) 
 > **要点（先に結論）**
 > - GUI(Electron) を表示するには **WSLg**（Windows 11、または WSLg 対応済みの Windows 10）が必要。
 > - `vk-terminals` は **node-pty / Electron のネイティブビルド**を伴うため、**build-essential / python3** と **Electron 実行用の共有ライブラリ**が要る。
-> - WSLg では GPU アクセラは使えないので **`vkTerminals.gpu` は `off`（非 macOS の既定）**のままにする（HW OpenGL / Vulkan は非対応。詳細は README の GPU モード節）。
+> - GPU: WSLg では **HW OpenGL は d3d12 ドライバ経由で一応使える**が、**Electron 経由では不安定（Mesa/Dawn 由来の警告）**で、**Vulkan は HW ドライバ（dzn 等）が無く使えない**。ターミナル用途で体感差も無いため **`vkTerminals.gpu` は `off`（非 macOS の既定）**のままにする（詳細は末尾「補足」および README の GPU モード節）。
 
 ---
 
@@ -30,6 +30,22 @@ Windows の WSL2（WSLg）上の Ubuntu で VK Orchestrator + VK Terminals(GUI) 
 ## 1. システム依存パッケージ
 
 Ubuntu 側で、ビルドツールと Electron 実行に必要な共有ライブラリを入れます。
+Ubuntu 24.04 (noble) では一部の共有ライブラリが `t64` サフィックスに改名されているため、
+バージョンに合わせて**どちらか片方**を実行してください。
+
+**Ubuntu 24.04 (noble)** — そのままコピペで実行できます:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential python3 git curl ca-certificates \
+  libnss3 libnspr4 libgbm1 libdrm2 libxkbcommon0 \
+  libgtk-3-0t64 libasound2t64 libcups2t64 libatspi2.0-0t64 \
+  libatk1.0-0t64 libatk-bridge2.0-0t64 \
+  libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
+```
+
+**Ubuntu 22.04 など（t64 改名前）**:
 
 ```bash
 sudo apt update
@@ -41,14 +57,9 @@ sudo apt install -y \
   libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
 ```
 
-> **Ubuntu 24.04 (noble) の注意** — 一部パッケージは `t64` サフィックスに改名されています
-> （例: `libasound2` → `libasound2t64`, `libgtk-3-0` → `libgtk-3-0t64`,
-> `libatk1.0-0` → `libatk1.0-0t64`, `libcups2` → `libcups2t64`）。
-> `apt` が候補を提示するので、エラーが出たら提示された `*t64` 名に読み替えてください。
->
 > **不足ライブラリの特定方法** — `up` が
 > `electron: error while loading shared libraries: libXXX.so.N` で落ちる場合、
-> 次で不足を洗い出して該当パッケージを入れます:
+> 次で不足を洗い出して該当パッケージを入れます（24.04 で見つからなければ `*t64` を試す）:
 >
 > ```bash
 > ldd node_modules/electron/dist/electron | grep 'not found'
@@ -193,7 +204,7 @@ GUI だけ起動したいときは `npm run up -- --no-orchestrator`。
 | `VK Terminals が見つかりません` | ネイティブビルド失敗で optional 依存が除外。`npm run setup:terminals` でビルドログを確認し、不足ライブラリ（手順1）を導入 |
 | `electron: error while loading shared libraries: libXXX.so` | 共有ライブラリ不足。`ldd node_modules/electron/dist/electron \| grep 'not found'` で特定して apt 導入 |
 | GUI ウィンドウが出ない | WSLg 未対応/未更新。Windows 側で `wsl --update` → `wsl --shutdown`。`echo $WAYLAND_DISPLAY` を確認 |
-| 起動時に `Exiting GPU process` / `kTransientFailure` 等の GPU 警告 | WSLg では GPU アクセラ非対応のため。`vkTerminals.gpu` を空（自動）または `off` に（既定で抑制済み）。無害 |
+| 起動時に `Exiting GPU process` / `kTransientFailure` 等の GPU 警告 | WSLg では Electron の GPU 初期化が失敗するため（Vulkan の HW ドライバ無し等）。`vkTerminals.gpu` を空（自動）または `off` に（既定で抑制済み）。無害 |
 | GUI が即クラッシュ（`Cannot read properties of undefined (reading 'whenReady')`） | 環境変数 `ELECTRON_RUN_AS_NODE=1` が設定されていると Electron が Node として動き落ちる。`unset ELECTRON_RUN_AS_NODE` してから起動 |
 | orchestrator が起動するがタスクを拾わない／起動しない | `config.json` の `task` / `protocol` / `labels` に空値（`""` / `[]` / `null`）が入っていないか確認。空値は既定にフォールバックされるが、GUI 設定パネルで意図せず保存した場合は該当セクションを削除すると確実 |
 | API (`127.0.0.1:13847`) に疎通できない | GUI が起動しているか、`vkTerminals.host` / `port` の設定を確認 |
