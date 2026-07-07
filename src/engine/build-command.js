@@ -13,6 +13,25 @@
 import { getTaskConfig } from '../config.js';
 
 // -------------------------------------------------------
+// 表示不能な制御文字の除去（多層防御用の純粋ヘルパー）。
+//
+// 除去対象は C0(\x00-\x1f)・DEL(\x7f)・C1(\x80-\x9f)。これらがタイトル文字列に
+// 混じると、OSC 0 でペインタイトルを送る際にシーケンスを途中で壊したり、8bit C1 を
+// OSC/ST として解釈する端末でブレイクアウトを許してしまう。外部由来（GitHub issue
+// タイトル等）の文字列を扱うため、送信前に一段落として正規化する。
+//
+// terminals/index.js の buildPaneTitleSequence と同一の正規表現を共有し、除去ロジックを
+// 2 箇所に複製しないための単一の出所とする（DRY）。
+//
+// @param {string} str 正規化したい文字列（文字列以外は String() 化する）
+// @returns {string} 制御文字を除去した文字列
+// -------------------------------------------------------
+export function stripControlChars(str) {
+  // eslint-disable-next-line no-control-regex
+  return String(str).replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+}
+
+// -------------------------------------------------------
 // GitHub issue URL の抽出
 // -------------------------------------------------------
 export function extractGitHubIssueUrl(text) {
@@ -36,14 +55,16 @@ export function extractGitHubIssueUrl(text) {
 // @returns {{ titleText: string, url: string }}
 // -------------------------------------------------------
 export function buildPaneTitle(metaIssue, resolvedTarget) {
+  // titleText は外部由来（issue タイトル）を含むため制御文字を除去して正規化する
+  // （多層防御。URL 側は github.com 由来でスキーム検証済みのため触らない）。
   if (resolvedTarget) {
     return {
-      titleText: `#${resolvedTarget.number} ${resolvedTarget.title}`,
+      titleText: stripControlChars(`#${resolvedTarget.number} ${resolvedTarget.title}`),
       url: resolvedTarget.url,
     };
   }
   return {
-    titleText: `#${metaIssue.number} ${metaIssue.title}`,
+    titleText: stripControlChars(`#${metaIssue.number} ${metaIssue.title}`),
     url: metaIssue.html_url,
   };
 }
