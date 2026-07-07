@@ -2,6 +2,7 @@
 
 - [ 機能追加 ] `up` の GUI(Electron) 起動に GPU モード設定（config `vkTerminals.gpu` / env `VK_TERMINALS_GPU`）を追加。`off`（既定・非 macOS）でエラー抑制、`hardware` で WSLg の d3d12 経由 HW OpenGL、`default` で Chromium 任せを選択可能
 - [ 機能追加 ] automerge の e2e 完了ゲートを config でオプション化（`task.requireE2eGate`、既定 true）。false にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）
+- [ 仕様変更 ] 作業対象リポ側の issue に付ける作業中ラベルの既定名を「作業中」から「working」に変更し、GUI 設定項目から撤去（config.json の `labels.workingInProgress` 直書きでのみ上書き可）
 - [ 不具合修正 ] 非 macOS（WSLg 等）で `up` 実行時に Chromium の GPU 初期化が失敗し、GUI 起動時に `Exiting GPU process` / `kTransientFailure` 等のエラーログが大量に出る不具合を修正（GPU を無効化して抑制。ターミナル用途で描画への影響なし）
 - [ その他 ] 未使用だった `labels.e2ePassed` / `e2ePassedShaPrefix` の config・GUI 枠を撤去（マーカー名は `src/github/index.js` の固定定数に集約）
 

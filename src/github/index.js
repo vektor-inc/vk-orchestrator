@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/rest';
+import { getLabelsConfig } from '../config.js';
 
 // e2e 完了マーカーのラベル名 / SHA コメント接頭辞。
 // 汎用化 issue #10 の方針により、ゲートの ON/OFF は config 化する一方、
@@ -940,7 +941,7 @@ export class GitHubClient {
     });
   }
 
-  // source repo の issue に「作業中」ラベルを付ける。
+  // source repo の issue に作業中ラベル（既定: working。labels.workingInProgress で変更可）を付ける。
   // 取り込み時点（task-queue ラベルを外すタイミング）で呼び出すことで、
   // vk-kore の実行開始を待たずに source 側の一覧でも対応が始まったことを示す。
   // vk-kore が実行開始時に付けるラベルと同名・同色（付与済みでも addLabels は冪等）。
@@ -948,8 +949,9 @@ export class GitHubClient {
   // 先に vk-kore と同じ色（FBCA04）で作成を試みる。422（作成済み）は無視する。
   async addSourceWorkingLabel(sourceIssue) {
     const { owner, repo } = this.parseSourceRepo(sourceIssue);
+    const workingLabel = getLabelsConfig().workingInProgress;
     try {
-      await this.octokit.issues.createLabel({ owner, repo, name: '作業中', color: 'FBCA04' });
+      await this.octokit.issues.createLabel({ owner, repo, name: workingLabel, color: 'FBCA04' });
     } catch (err) {
       if (err.status !== 422) throw err;
     }
@@ -957,7 +959,7 @@ export class GitHubClient {
       owner,
       repo,
       issue_number: sourceIssue.number,
-      labels: ['作業中'],
+      labels: [workingLabel],
     });
   }
 }

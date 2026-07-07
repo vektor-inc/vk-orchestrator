@@ -89,8 +89,9 @@ export const DEFAULT_LABELS = {
   automerge: 'automerge',
   sequential: 'sequential',
   parallel: 'parallel',
-  // 対象リポ側に付ける作業中ラベル（src/github/index.js）。
-  workingInProgress: '作業中',
+  // 対象リポ側に付ける作業中ラベル（src/github/index.js）。既定は英語の 'working'。
+  // config.json の labels.workingInProgress で任意名に上書き可能（GUI には出さない隠しオプション）。
+  workingInProgress: 'working',
 };
 
 /**
@@ -385,7 +386,8 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
           { key: 'labels.automerge',  label: 'automerge ラベル', type: 'text', help: '自動マージ対象を示すラベル名（既定: automerge）' },
           { key: 'labels.sequential', label: 'sequential ラベル', type: 'text', help: '同一リポの逐次実行を示すラベル名（既定: sequential）' },
           { key: 'labels.parallel',   label: 'parallel ラベル', type: 'text', help: '並列実行可を示すラベル名（既定: parallel）' },
-          { key: 'labels.workingInProgress', label: '作業中ラベル', type: 'text', help: '作業対象リポ側の issue に付ける作業中ラベル名（既定: 作業中）' },
+          // labels.workingInProgress は隠しオプション（config.json 直書きでのみ上書き可）のため
+          // GUI ディスクリプタには載せない（issue #11）。
         ],
       },
     ],
