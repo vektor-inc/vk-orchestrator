@@ -45,11 +45,16 @@ function updateState(mutator) {
 
 export function recordTaskStart({ issueNumber, termId, wpPort, repo }) {
   return updateState(state => {
-    state.issues[String(issueNumber)] = {
+    const key = String(issueNumber);
+    // pane 消失による自動再開の回数（resumeCount）は再ディスパッチをまたいで
+    // 引き継ぐ（無限リトライ防止の上限判定に使うため、起動で 0 に戻してはいけない）。
+    const prevResumeCount = state.issues[key]?.resumeCount;
+    state.issues[key] = {
       termId,
       wpPort,
       repo,                       // "owner/repo" 形式（task-queue が把握できる範囲）
       startedAt: new Date().toISOString(),
+      ...(prevResumeCount != null ? { resumeCount: prevResumeCount } : {}),
     };
   });
 }

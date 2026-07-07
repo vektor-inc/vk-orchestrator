@@ -21,6 +21,7 @@ import {
 import { recordTaskStart, updateTask, removeTask, getTask } from './state.js';
 import { cleanupForIssue, formatCleanupSummary, inspectWorktreeByPort } from './cleanup.js';
 import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
+import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
@@ -45,6 +46,12 @@ const WATCHDOG_IDLE      = Number(process.env.WATCHDOG_IDLE_MS     ?? 3 * 60 * 6
 // pane 消失を failed と判断するまでの連続観測回数（VK Terminals 再起動等の一時的欠落で
 // 早とちりしないため、2 tick 連続で消えていたら確定とする）。
 const PANE_MISSING_TICKS = 2;
+// pane 消失時（PR 未生成に限る）の自動再開（status:ready への再キュー）の上限回数。
+// 超えたら従来どおり status:failed＋手動確認に倒す（無限リトライ防止）。
+// env の不正値（NaN・負数・非整数）は normalizeResumeMax が既定 3 にフォールバック
+// させる。素の Number() のままだと "abc" → NaN で上限判定が常に false になり、
+// 無限リトライ防止が沈黙のうちに無効化されるため必ず健全化を通す。
+const PANE_RESUME_MAX    = normalizeResumeMax(process.env.PANE_RESUME_MAX ?? 3);
 const RUN_ONCE           = process.argv.includes('--once');
 
 // `--flag=value` / `--flag value` の両形式から値を取り出す簡易パーサ。
@@ -567,8 +574,11 @@ async function scanWaitingInputIssues() {
 //
 // 新方針では秒数で通常遷移しないが、「vk-kore が無言で死んだ／ハングした」ケースは
 // シグナルも返信も来ず永久に in-progress のまま詰まる。これを異常として拾うのが目的。
-//   - pane 消失（VK Terminals states に termId が居ない）が PANE_MISSING_TICKS 連続 → failed
+//   - pane 消失（VK Terminals states に termId が居ない）が PANE_MISSING_TICKS 連続
+//     → PR 未生成なら上限（PANE_RESUME_MAX）まで自動再開（status:ready へ再キュー）、
+//       上限超過は従来どおり failed（pane-resume.js の handlePaneMissing）
 //   - pane が WATCHDOG_IDLE 以上 無反応（lastOutputTime が古い） → failed
+//     （pane は生きているので自動再開はしない。勝手に殺すと作業中の Claude を潰すため）
 // いずれも「PR が無い」場合に限る。PR があれば scanInProgress / merge-watch が駆動するので触らない。
 // VK Terminals が落ちている時は pane の生死を判定できないため、loop() の checkHealth() 後ろで呼ぶ。
 // -------------------------------------------------------
@@ -610,8 +620,24 @@ async function scanWatchdog() {
         console.log(`  [watchdog] issue #${issue.number}: pane(termId:${saved.termId}) 消失観測 ${missing}/${PANE_MISSING_TICKS}`);
         continue;
       }
-      // pane が消失（クラッシュ等）→ 残った wp-env コンテナ・worktree を掃除のうえ failed。
-      await failIfNoPR(issue, `作業ペイン（termId:${saved.termId}）が消失しました`, { cleanupWpPort: saved.wpPort });
+      // pane が消失（クラッシュ等）が確定。PR 未生成なら残った wp-env コンテナ・
+      // worktree を掃除のうえ上限回数まで自動再開（status:ready へ再キュー）し、
+      // 上限超過・PR ありは従来ルート（failed／通常遷移）に倒す。
+      await handlePaneMissing(
+        issue,
+        saved,
+        {
+          findPRForIssue: github.findPRForIssue.bind(github),
+          resolveTarget,
+          cleanupForIssue,
+          formatCleanupSummary,
+          updateTask,
+          setStatus: (issueNumber, label) => github.setStatus(issueNumber, label),
+          addComment: (issueNumber, body) => github.addComment(issueNumber, body),
+          failTask: (reason) => markTaskFailed(issue, reason, { cleanupWpPort: saved.wpPort }),
+        },
+        { resumeMax: PANE_RESUME_MAX }
+      );
       continue;
     }
 
@@ -642,6 +668,13 @@ async function failIfNoPR(issue, reason, { cleanupWpPort = null } = {}) {
   }
   if (pr) return; // PR あり → 通常ルートに任せる
 
+  await markTaskFailed(issue, reason, { cleanupWpPort });
+}
+
+// failed 化の本体（PR チェック済みの経路用）。cleanup → status:failed ＋手動確認コメント
+// → removeTask を行う。failIfNoPR（idle タイムアウト等）と、pane 消失時の自動再開
+// 上限超過（handlePaneMissing の failTask）の両方から呼ばれる共通処理。
+async function markTaskFailed(issue, reason, { cleanupWpPort = null } = {}) {
   // クラッシュで残った wp-env リソースを掃除する（失敗しても failed 化は続行）。
   let cleanupReport = null;
   if (cleanupWpPort != null) {
@@ -1338,6 +1371,7 @@ async function main() {
   console.log(`  terminal     : http://127.0.0.1:${VK_PORT}`);
   console.log(`  interval     : ${POLL_INTERVAL / 1000}s`);
   console.log(`  watchdog idle: ${WATCHDOG_IDLE / 60000}min`);
+  console.log(`  pane resume  : 最大 ${PANE_RESUME_MAX} 回（pane 消失・PR 未生成時の自動再開）`);
   console.log(`  mode         : ${RUN_ONCE ? 'run-once' : 'watch'}`);
   console.log('');
 
