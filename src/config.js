@@ -408,6 +408,19 @@ export function writeSettingsDescriptor(vkDir = resolveVkTerminalsDir(), targetP
 }
 
 /**
+ * 環境変数のブール値を解釈する。
+ * `'false'` / `'0'`（大文字小文字・前後空白は無視）を false、それ以外の非空値を true とみなす。
+ * 未定義・空文字は「未指定」として undefined を返す（呼び出し側で上書きをスキップする）。
+ * @param {string|undefined} raw 環境変数の生値
+ * @returns {boolean|undefined}
+ */
+function parseEnvBool(raw) {
+  if (!raw) return undefined;
+  const v = raw.trim().toLowerCase();
+  return !(v === 'false' || v === '0');
+}
+
+/**
  * task セクションの解決済み設定を返す。
  * 優先順位: 環境変数 > config.json(cfg.task) > DEFAULT_TASK。
  * config.json は既定値へ再帰的にディープマージし、未指定キーは既定にフォールバックする。
@@ -422,17 +435,15 @@ export function getTaskConfig(cfg = loadUnifiedConfig()) {
   if (env.TASK_COMMAND_TEMPLATE) merged.commandTemplate = env.TASK_COMMAND_TEMPLATE;
   if (env.TASK_WP_PORT_BASE)     merged.portBase = Number(env.TASK_WP_PORT_BASE);
   if (env.TASK_WP_PORT_STRIDE)   merged.portStride = Number(env.TASK_WP_PORT_STRIDE);
-  // wpEnv.enabled の env 上書き。空文字・未定義は無視（他の env 上書きと同じ扱い）。
-  // 'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす（ネスト構造を保つ）。
-  if (env.TASK_WP_ENV_ENABLED) {
-    const v = env.TASK_WP_ENV_ENABLED.trim().toLowerCase();
-    merged.wpEnv = { ...merged.wpEnv, enabled: !(v === 'false' || v === '0') };
+  // wpEnv.enabled / requireE2eGate の env 上書き。空文字・未定義は無視（parseEnvBool が
+  // undefined を返す）。'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす。
+  const wpEnvEnabled = parseEnvBool(env.TASK_WP_ENV_ENABLED);
+  if (wpEnvEnabled !== undefined) {
+    merged.wpEnv = { ...merged.wpEnv, enabled: wpEnvEnabled }; // ネスト構造を保つ
   }
-  // requireE2eGate の env 上書き。空文字・未定義は無視（TASK_WP_ENV_ENABLED と同じ扱い）。
-  // 'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす。
-  if (env.TASK_REQUIRE_E2E_GATE) {
-    const v = env.TASK_REQUIRE_E2E_GATE.trim().toLowerCase();
-    merged.requireE2eGate = !(v === 'false' || v === '0');
+  const requireE2eGate = parseEnvBool(env.TASK_REQUIRE_E2E_GATE);
+  if (requireE2eGate !== undefined) {
+    merged.requireE2eGate = requireE2eGate;
   }
   return merged;
 }
