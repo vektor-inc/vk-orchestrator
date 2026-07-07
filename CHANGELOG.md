@@ -8,6 +8,7 @@
 - [ 不具合修正 ] GUI 設定パネル保存時に未入力項目が空値（空文字 / 空配列 / null）で書き戻され、`task` / `protocol` / `labels` の既定値を潰してタスク検出・起動が動かなくなる不具合を修正（getter 側で空値を未指定とみなし既定へフォールバック）
 - [ その他 ] 未使用だった `labels.e2ePassed` / `e2ePassedShaPrefix` の config・GUI 枠を撤去（マーカー名は `src/github/index.js` の固定定数に集約）
 - [ その他 ] 対応 PR の紐付けが PR 本文の `Closes #N` 等の GitHub クローズキーワードを前提とする旨を README の前提に明記
+- [ その他 ] まっさらな WSL2(WSLg) Ubuntu で動かすためのセットアップ手順（`docs/WSL-UBUNTU-SETUP.md`）を追加し、README 前提に WSL 対応を明記
 
 = 0.1.0 =
 - [ 機能追加 ] タスク着手コマンドを config テンプレート化（`task.commandTemplate` / `portBase` / `portStride`）。`task.wpEnv.enabled: false` で wp-env 連携（ポート割り当て・state 保存・クリーンアップ）を無効化し、vk-kore 以外のスキルや素のプロンプトも起動可能に（既定は現行と同一挙動）

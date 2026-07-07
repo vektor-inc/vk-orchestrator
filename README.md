@@ -20,13 +20,15 @@ VK Terminals                     … 実際に Claude を動かす実行面
 
 このツールを動かすには次が必要です。
 
-- **macOS**（VK Terminals が node-pty のネイティブビルドを伴う Electron アプリのため）
+- **macOS**、または **Windows の WSL2（WSLg）上の Ubuntu**（VK Terminals が node-pty のネイティブビルドを伴う Electron アプリのため。GUI 表示に WSLg が必要）
 - **Node.js 20 以上**
 - **キュー用の GitHub リポジトリ**と、そこに設定されたステータスラベル群（`status:ready` ほか。`config.example.json` の owner/repo で指定）
 - **GitHub Personal Access Token**（`repo` スコープ）
 - 各ペインで動作する **Claude Code**
 
 VK Terminals は `npm install` 時に依存として自動導入されます（`optionalDependencies`）。
+
+> **WSL Ubuntu で動かす場合** — システム依存ライブラリの導入・GPU 設定・トラブルシューティングを含む、まっさらな環境からの手順を [`docs/WSL-UBUNTU-SETUP.md`](docs/WSL-UBUNTU-SETUP.md) にまとめています。
 
 ### 対応 PR の紐付け規約（必須）
 
