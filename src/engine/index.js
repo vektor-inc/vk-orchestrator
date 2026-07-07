@@ -21,7 +21,7 @@ import {
 import { recordTaskStart, updateTask, removeTask, getTask } from './state.js';
 import { cleanupForIssue, formatCleanupSummary, inspectWorktreeByPort } from './cleanup.js';
 import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
-import { handlePaneMissing } from './pane-resume.js';
+import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
@@ -48,7 +48,10 @@ const WATCHDOG_IDLE      = Number(process.env.WATCHDOG_IDLE_MS     ?? 3 * 60 * 6
 const PANE_MISSING_TICKS = 2;
 // pane 消失時（PR 未生成に限る）の自動再開（status:ready への再キュー）の上限回数。
 // 超えたら従来どおり status:failed＋手動確認に倒す（無限リトライ防止）。
-const PANE_RESUME_MAX    = Number(process.env.PANE_RESUME_MAX      ?? 3);
+// env の不正値（NaN・負数・非整数）は normalizeResumeMax が既定 3 にフォールバック
+// させる。素の Number() のままだと "abc" → NaN で上限判定が常に false になり、
+// 無限リトライ防止が沈黙のうちに無効化されるため必ず健全化を通す。
+const PANE_RESUME_MAX    = normalizeResumeMax(process.env.PANE_RESUME_MAX ?? 3);
 const RUN_ONCE           = process.argv.includes('--once');
 
 // `--flag=value` / `--flag value` の両形式から値を取り出す簡易パーサ。

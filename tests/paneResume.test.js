@@ -12,7 +12,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { handlePaneMissing } from '../src/engine/pane-resume.js';
+import { handlePaneMissing, normalizeResumeMax } from '../src/engine/pane-resume.js';
 
 // console.log / warn を黙らせるためのスタブ
 const silentLogger = { log: () => {}, warn: () => {} };
@@ -226,5 +226,70 @@ describe('handlePaneMissing', () => {
 
     assert.deepEqual(result, { action: 'failed' });
     assert.match(calls.failTask[0], /上限 1 回/);
+  });
+
+  it('resumeMax が NaN でも上限判定が無効化されず既定 3 回で failed に倒れる', async () => {
+    // NaN のまま `resumeCount > resumeMax` を評価すると常に false になり、
+    // 無限リトライ防止（唯一の安全装置）が沈黙のうちに外れる回帰を防ぐ。
+    const { deps, calls } = makeDeps();
+    const saved = { termId: 22, resumeCount: 3 };
+
+    const result = await handlePaneMissing(issue, saved, deps, {
+      resumeMax: Number('abc'), // NaN
+      logger: silentLogger,
+    });
+
+    assert.deepEqual(result, { action: 'failed' });
+    assert.equal(calls.failTask.length, 1);
+    assert.match(calls.failTask[0], /上限 3 回/);
+    assert.equal(calls.setStatus.length, 0);
+  });
+
+  it('resumeMax が負数なら既定 3 回にフォールバックする（常に即 failed にならない）', async () => {
+    const { deps, calls } = makeDeps();
+    const saved = { termId: 22, wpPort: 8888 }; // 初回消失（resumeCount 未記録）
+
+    const result = await handlePaneMissing(issue, saved, deps, {
+      resumeMax: -5,
+      logger: silentLogger,
+    });
+
+    // 負数のまま採用されると 1 > -5 で即 failed になるが、既定 3 に戻るので再開される
+    assert.deepEqual(result, { action: 'resumed', resumeCount: 1 });
+    assert.equal(calls.failTask.length, 0);
+    assert.match(calls.addComment[0][1], /（1\/3回目）/);
+  });
+
+  it('resumeMax が 0 なら自動再開せず常に failed（有効な「無効化」設定）', async () => {
+    const { deps, calls } = makeDeps();
+    const saved = { termId: 22 };
+
+    const result = await handlePaneMissing(issue, saved, deps, {
+      resumeMax: 0,
+      logger: silentLogger,
+    });
+
+    assert.deepEqual(result, { action: 'failed' });
+    assert.match(calls.failTask[0], /上限 0 回/);
+    assert.equal(calls.setStatus.length, 0);
+  });
+});
+
+describe('normalizeResumeMax', () => {
+  it('有効値はそのまま・小数は切り捨て・不正値は既定 3 にフォールバックする', () => {
+    // 有効値（数値・数値文字列・0）
+    assert.equal(normalizeResumeMax(5), 5);
+    assert.equal(normalizeResumeMax('2'), 2);
+    assert.equal(normalizeResumeMax(0), 0);
+    // 非整数は切り捨て
+    assert.equal(normalizeResumeMax(2.9), 2);
+    // 不正値（NaN・非数値文字列・負数・Infinity・undefined）は既定 3
+    assert.equal(normalizeResumeMax(NaN), 3);
+    assert.equal(normalizeResumeMax('abc'), 3);
+    assert.equal(normalizeResumeMax(-1), 3);
+    assert.equal(normalizeResumeMax(Infinity), 3);
+    assert.equal(normalizeResumeMax(undefined), 3);
+    // フォールバック値の上書き
+    assert.equal(normalizeResumeMax('abc', 5), 5);
   });
 });

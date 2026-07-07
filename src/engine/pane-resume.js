@@ -22,6 +22,28 @@
 // `done-gate.js` と同様、GitHub / state / cleanup への副作用は全て依存注入で
 // 受け取る（ユニットテストでは fake を渡してテストする）。
 
+// 自動再開上限の既定値。
+export const DEFAULT_RESUME_MAX = 3;
+
+/**
+ * 自動再開の上限回数を健全化する。
+ *
+ * 上限判定 `resumeCount > resumeMax` は resumeMax が NaN だと常に false になり、
+ * 無限リトライ防止（本機能の唯一の安全装置）が沈黙のうちに外れる。逆に負数だと
+ * 常に即 failed になる。そのため env / config / 依存注入のどこから来た値でも、
+ * 有限数かつ 0 以上のときだけ採用（小数は切り捨て）し、それ以外は既定値に
+ * フォールバックする（fail-closed）。0 は「自動再開を無効化して常に failed」
+ * という有効な設定値として許容する。
+ *
+ * @param {*} value 環境変数・config・options 経由の生値
+ * @param {number} [fallback=DEFAULT_RESUME_MAX] 不正値時のフォールバック
+ * @returns {number} 0 以上の整数
+ */
+export function normalizeResumeMax(value, fallback = DEFAULT_RESUME_MAX) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
 /**
  * pane 消失が確定したタスクを、条件を満たせば自動再開（再キュー）する。
  *
@@ -37,7 +59,7 @@
  * @param {function} deps.addComment            (issueNumber, body) => Promise<void>
  * @param {function} deps.failTask              (reason) => Promise<void> 従来の failed 化処理
  * @param {object}   [options]
- * @param {number}   [options.resumeMax=3]      自動再開の上限回数
+ * @param {number}   [options.resumeMax=3]      自動再開の上限回数（NaN・負数等の不正値は既定 3 にフォールバック）
  * @param {string}   [options.logTag='[watchdog]']  呼び出し元のログタグ
  * @param {object}   [options.logger=console]   console 互換オブジェクト
  * @returns {Promise<{action: 'skipped'|'has-pr'|'failed'|'retry'|'resumed', resumeCount?: number}>}
@@ -58,7 +80,9 @@ export async function handlePaneMissing(issue, saved, deps, options = {}) {
     addComment,
     failTask,
   } = deps;
-  const { resumeMax = 3, logTag = '[watchdog]', logger = console } = options;
+  const { logTag = '[watchdog]', logger = console } = options;
+  // 依存注入経由で不正値（NaN・負数・非数値）が来ても上限判定が壊れないよう健全化する。
+  const resumeMax = normalizeResumeMax(options.resumeMax ?? DEFAULT_RESUME_MAX);
 
   const termId = saved?.termId ?? null;
 
