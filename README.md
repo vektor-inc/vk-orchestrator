@@ -28,6 +28,10 @@ VK Terminals                     … 実際に Claude を動かす実行面
 
 VK Terminals は `npm install` 時に依存として自動導入されます（`optionalDependencies`）。
 
+### 対応 PR の紐付け規約（必須）
+
+orchestrator は「issue に対応する PR」を、**PR 本文に含まれる GitHub 標準のクローズキーワード＋issue 番号（`Closes #N` / `Fixes #N` / `Resolves #N` など）、または対象 issue の URL** で特定します。対応 PR を作成する際は **PR 本文に必ず `Closes #N` を記載してください**。記載のない PR は対応 PR として認識されず、完了判定（CodeRabbit / CI 監視）や automerge が進みません。ラベルやブランチ名規約による紐付けには対応していません（既定の vk-kore スキル経由で作成される PR はこの規約を満たします）。
+
 ## セットアップ
 
 ```bash
