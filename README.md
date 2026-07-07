@@ -156,7 +156,7 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 >
 > - **空（既定・自動）** — macOS は通常起動、それ以外は `off` 相当。通常はこのままで OK。
 > - **`off`** — GPU を無効化してエラーログを抑制（描画はソフトウェア。ターミナル用途で実害なし）。
-> - **`hardware`** — HW OpenGL を使う（WSLg では Mesa の d3d12 ドライバ経由で Windows 側 GPU に届く。`GALLIUM_DRIVER=d3d12` を付与）。⚠ `/dev/dxg` アクセスのため **Chromium の GPU サンドボックスを無効化**（`--disable-gpu-sandbox`）し、**GPU ブロックリストを無視**（`--ignore-gpu-blocklist`）するため、その分だけ保護が下がる点に注意。Vulkan は HW ICD が無いため対象外（OpenGL 経路のみ）。あわせて未対応の Vulkan / WebGPU 探索を無効化（`--disable-features=Vulkan,WebGPU`）し、WSLg で出る asahi ICD / Dawn robustness の警告を抑制。
+> - **`hardware`** — HW OpenGL を使う（WSLg では Mesa の d3d12 ドライバ経由で Windows 側 GPU に届く。`GALLIUM_DRIVER=d3d12` を付与）。⚠ `/dev/dxg` アクセスのため **Chromium の GPU サンドボックスを無効化**（`--disable-gpu-sandbox`）し、**GPU ブロックリストを無視**（`--ignore-gpu-blocklist`）するため、その分だけ保護が下がる点に注意。Vulkan は HW ICD が無いため対象外（OpenGL 経路のみ）。
 > - **`default`** — フラグを足さず Chromium 任せ（元の挙動）。
 >
 > 反映は次回 `up` 時。ターミナル用途では体感差はほぼ無いため、エラーが気になる場合は既定（`off` 相当）で十分です。
