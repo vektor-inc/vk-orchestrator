@@ -6,6 +6,17 @@ import { Octokit } from '@octokit/rest';
 const E2E_PASSED_LABEL = 'e2e-passed';
 const E2E_PASSED_SHA_PREFIX = 'e2e-passed-sha:';
 
+// e2e 完了マーカー判定で使う、呼び出し引数に依存しない固定値。
+// hasE2ePassedMarker が毎回組み立て直さないようモジュールスコープへホイストする。
+// SHA コメントの投稿者として信頼する author_association（write 権限相当）。
+const TRUSTED_ASSOC = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+// 「<E2E_PASSED_SHA_PREFIX> <sha>」を拾う正規表現。接頭辞は正規表現メタ文字（`:` 等）を
+// 含む可能性があるため escape してから組み立てる。短縮 SHA（7 桁以上）も許容する。
+const E2E_SHA_RE = new RegExp(
+  `${E2E_PASSED_SHA_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*([0-9a-f]{7,40})`,
+  'i'
+);
+
 // source 側 issue 本文から最初の GitHub issue URL を抽出する。
 // 取り込み時 createTaskQueueIssueFromSource が body 先頭に source URL を入れているため、
 // 最初にマッチしたものが source とみなせる（後から追記される PR URL は /pull/ なのでマッチしない）。
@@ -753,17 +764,14 @@ export class GitHubClient {
 
     // 2. コメントを全件取得し、「<E2E_PASSED_SHA_PREFIX> <sha>」が現 head SHA と前方一致するものを探す。
     //    短縮 SHA（7 桁以上）も許容するため headSha.startsWith(sha) で判定する。
-    //    正規表現メタ文字（`:` 等）を含む可能性があるため、定数から組み立てる際は escape してから使う。
+    //    TRUSTED_ASSOC / E2E_SHA_RE は呼び出し引数に依存しないためモジュールスコープに定義。
     const comments = await this.octokit.paginate(this.octokit.issues.listComments, {
       owner, repo, issue_number: prNumber, per_page: 100,
     });
-    const TRUSTED_ASSOC = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-    const escapedPrefix = E2E_PASSED_SHA_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const shaRe = new RegExp(`${escapedPrefix}\\s*([0-9a-f]{7,40})`, 'i');
     for (const c of comments) {
       // 信頼境界外（CONTRIBUTOR / NONE 等）の投稿者によるマーカーは無視する。
       if (!TRUSTED_ASSOC.has(c.author_association)) continue;
-      const m = (c.body ?? '').match(shaRe);
+      const m = (c.body ?? '').match(E2E_SHA_RE);
       if (m && headSha.startsWith(m[1].toLowerCase())) {
         return true;
       }
