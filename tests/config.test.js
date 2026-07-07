@@ -398,11 +398,19 @@ test('GPU_MODES: 取りうる値の一覧', () => {
   assert.deepEqual(GPU_MODES, ['off', 'hardware', 'default']);
 });
 
-test('buildSettingsDescriptor: VK Terminals グループに GPU モード項目がある', () => {
+test('buildSettingsDescriptor: VK Terminals グループに GPU モードの制約付きピッカーがある', () => {
   const desc = buildSettingsDescriptor('/tmp/config.json');
   const gpuField = desc.groups
     .flatMap((g) => g.fields ?? [])
     .find((f) => f.key === 'vkTerminals.gpu');
   assert.ok(gpuField);
-  assert.equal(gpuField.type, 'text');
+  // 自由入力ではなく選択式（enum ピッカー）であること。
+  assert.equal(gpuField.type, 'select');
+  const optionValues = (gpuField.options ?? []).map((o) => o.value);
+  // 空（自動）＋ getVkTerminalsGpuMode が受理する各モードが選択肢に含まれること。
+  assert.deepEqual(optionValues, ['', 'off', 'hardware', 'default']);
+  // 選択肢の値は空文字を除き GPU_MODES に一致する（silent な不正値を防ぐ）。
+  for (const v of optionValues) {
+    if (v !== '') assert.ok(GPU_MODES.includes(v), `未知のモード: ${v}`);
+  }
 });
