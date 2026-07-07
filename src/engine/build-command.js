@@ -25,6 +25,30 @@ export function extractGitHubIssueUrl(text) {
 }
 
 // -------------------------------------------------------
+// ペインヘッダーに表示するタイトル・リンクの組み立て。
+//
+// task-queue に複製したメタ issue ではなく、元の作業対象リポジトリの issue の
+// タイトル・リンクを表示するための純粋関数（issue #23）。
+// - metaIssue:      task-queue 側のメタ issue（`{ number, title, html_url }`）
+// - resolvedTarget: 元の作業対象 issue が解決できたときのみ `{ number, title, url }`。
+//                   解決できない汎用タスクや取得失敗時は null を渡す。
+// resolvedTarget があればそれを、無ければ従来どおりメタ issue を表示対象にする。
+// @returns {{ titleText: string, url: string }}
+// -------------------------------------------------------
+export function buildPaneTitle(metaIssue, resolvedTarget) {
+  if (resolvedTarget) {
+    return {
+      titleText: `#${resolvedTarget.number} ${resolvedTarget.title}`,
+      url: resolvedTarget.url,
+    };
+  }
+  return {
+    titleText: `#${metaIssue.number} ${metaIssue.title}`,
+    url: metaIssue.html_url,
+  };
+}
+
+// -------------------------------------------------------
 // ターミナルID → wp-env ポート割り当て（8888/8889 は禁止）
 // terminal 1 → portBase、terminal 2 → portBase+portStride …（testsPort は vk-kore 側で +1 する）
 // 基準値・間隔は task 設定（portBase / portStride）から取得する。config 未設定時は

@@ -583,6 +583,11 @@ export class GitHubClient {
   // ただし 4xx クライアントエラー（404 Not Found / 403 Forbidden など）は
   // リトライしても結果が変わらないため即時 throw する。
   // 429 Too Many Requests のみ 4xx でもリトライ対象として残す（レート制限の回復を待つため）。
+  //
+  // 戻り値には state / closedAt に加え、title / htmlUrl も含める。
+  // ペインヘッダーに元の作業対象 issue のタイトル・リンクを表示する用途で使う
+  // （既存呼び出し側は .state / .closedAt しか参照していないため後方互換）。
+  // @returns {Promise<{state:string, closedAt:string|null, title:string, htmlUrl:string}>}
   async getIssueState(owner, repo, issueNumber) {
     const delays = [1000, 3000, 9000];
     let lastErr;
@@ -591,7 +596,12 @@ export class GitHubClient {
         const { data } = await this.octokit.issues.get({
           owner, repo, issue_number: issueNumber,
         });
-        return { state: data.state, closedAt: data.closed_at };
+        return {
+          state: data.state,
+          closedAt: data.closed_at,
+          title: data.title,
+          htmlUrl: data.html_url,
+        };
       } catch (err) {
         lastErr = err;
         // 4xx（429 を除く）は即時 throw。リトライしても無駄なため。

@@ -27,7 +27,7 @@ import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from '.
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
-import { buildCommand, extractGitHubIssueUrl } from './build-command.js';
+import { buildCommand, buildPaneTitle, extractGitHubIssueUrl } from './build-command.js';
 
 // --- 設定 ---
 const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
@@ -128,7 +128,7 @@ function canTransitionToDone(issue, logTag = '[done-gate]') {
 // （テストは副作用の無い build-command.js から直接 import するが、
 //   index.js 経由の import 互換も保つ）。
 // -------------------------------------------------------
-export { buildCommand, assignWpEnvPort, expandTemplate, extractGitHubIssueUrl } from './build-command.js';
+export { buildCommand, buildPaneTitle, assignWpEnvPort, expandTemplate, extractGitHubIssueUrl } from './build-command.js';
 
 // -------------------------------------------------------
 // PR 検出時に PR 側 / VK Terminals 側へ反映する共通フック。
@@ -176,7 +176,7 @@ async function recordPRAcrossSurfaces({ termId, queueIssueHtmlUrl, prRef, prUrl,
 // GitHub の客観状態と decision-record コメントを見て駆動する。
 // -------------------------------------------------------
 async function startTask(issue) {
-  const { number, title, body, html_url: htmlUrl } = issue;
+  const { number, title, body } = issue;
   console.log(`\n[Task #${number}] "${title}" を起動`);
 
   let termId;
@@ -189,11 +189,24 @@ async function startTask(issue) {
   }
 
   // ペイン上部にタスクタイトルを表示（失敗しても続行）。
-  const titleText = `#${number} ${title}`;
+  // task-queue のメタ issue 本文に元の作業対象 issue の URL が含まれていれば、
+  // その元 issue のタイトル・リンクをヘッダーに出す（issue #23）。解決できない汎用タスクや
+  // 元 issue の取得失敗時は従来どおりメタ issue のタイトル・リンクにフォールバックする。
+  const resolved = resolveTarget(issue);
+  let resolvedTarget = null;
+  if (!resolved.isSelf) {
+    try {
+      const meta = await github.getIssueState(resolved.owner, resolved.repo, resolved.number);
+      resolvedTarget = { number: resolved.number, title: meta.title, url: meta.htmlUrl };
+    } catch (err) {
+      console.warn(`  [set-title] 元 issue 情報の取得失敗（メタ issue 表示にフォールバック）: ${err.message}`);
+    }
+  }
+  const { titleText, url: titleUrl } = buildPaneTitle(issue, resolvedTarget);
   try {
-    await setTerminalTitle(VK_PORT, termId, titleText, htmlUrl);
+    await setTerminalTitle(VK_PORT, termId, titleText, titleUrl);
   } catch (err) {
-    if (typeof htmlUrl === 'string') {
+    if (typeof titleUrl === 'string') {
       try {
         await setTerminalTitle(VK_PORT, termId, titleText);
       } catch (retryErr) {
