@@ -191,7 +191,8 @@ async function main() {
       // API が listen してからでないとペイン作成もできないため、waitForHealth で疎通を待つ。
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
-      const { writeVkTerminalsConfig, writeSettingsDescriptor, resolveConfigPath } =
+      const { writeVkTerminalsConfig, writeSettingsDescriptor, resolveConfigPath,
+        getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
       const { waitForHealth, createNewPane, sendToTerminal } =
         await import('../src/terminals/index.js');
@@ -212,11 +213,21 @@ async function main() {
 
       const startOrchestrator = !process.argv.includes('--no-orchestrator');
 
-      console.log(`VK Terminals(GUI) を起動します（${vkDir}）...`);
-      const gui = spawn('npm', ['start'], {
+      // GUI(Electron) の GPU 起動モードを解決し、電子へ渡すフラグと追加 env を組み立てる。
+      // 既定は非 macOS で 'off'（Chromium の GPU 初期化失敗による `Exiting GPU process`
+      // 等のエラーログを抑制。描画はソフトウェアだがターミナル用途で実害なし）。
+      // config `vkTerminals.gpu` / env `VK_TERMINALS_GPU` で 'hardware'（WSLg の d3d12
+      // 経由 HW OpenGL）/ 'default'（Chromium 任せ）へ切り替え可能。
+      // フラグは `npm start -- <flags>` で `electron .` 側へ渡す。
+      const gpuMode = getVkTerminalsGpuMode(unifiedConfig);
+      const { args: gpuArgs, env: gpuEnv } = gpuLaunchOptions(gpuMode);
+      const guiArgs = gpuArgs.length ? ['start', '--', ...gpuArgs] : ['start'];
+
+      console.log(`VK Terminals(GUI) を起動します（${vkDir}, gpu=${gpuMode}）...`);
+      const gui = spawn('npm', guiArgs, {
         cwd: vkDir,
         stdio: 'inherit',
-        env: { ...process.env, VK_TERMINALS_SETTINGS: descriptorPath },
+        env: { ...process.env, ...gpuEnv, VK_TERMINALS_SETTINGS: descriptorPath },
       });
       gui.on('exit', (code) => process.exit(code ?? 0));
 

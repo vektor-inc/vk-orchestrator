@@ -120,6 +120,37 @@ function deepMerge(base, override) {
 }
 
 /**
+ * config.json 由来の override から「空とみなす値」を再帰的に除去する。
+ *
+ * VK Terminals(GUI) の設定パネルは汎用エディタで、保存時にディスクリプタ上の全項目を
+ * 書き戻す。ユーザーが未入力の項目は空文字 / 空配列 / null として保存され、そのまま
+ * deepMerge すると既定値（DEFAULT_TASK / DEFAULT_PROTOCOL / DEFAULT_LABELS）を空で
+ * 上書きしてしまう（例: `labels.status: []`, `task.commandTemplate: ""`）。
+ * これらを「未指定」とみなして取り除き、既定へフォールバックさせるための前処理。
+ * false / 0 は有意な値として残す（enabled:false 等を潰さない）。
+ * @param {*} v
+ * @returns {*} 空を除去した値（全体が空なら undefined）
+ */
+function pruneEmpty(v) {
+  if (v === null || v === undefined || v === '') return undefined;
+  if (Array.isArray(v)) {
+    const arr = v.map(pruneEmpty).filter((x) => x !== undefined);
+    return arr.length ? arr : undefined;
+  }
+  if (typeof v === 'object') {
+    const out = {};
+    for (const [k, val] of Object.entries(v)) {
+      // deepMerge と同様にプロトタイプ汚染キーは扱わない。
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      const pv = pruneEmpty(val);
+      if (pv !== undefined) out[k] = pv;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+  return v; // 非空の string / number(0 含む) / boolean(false 含む)
+}
+
+/**
  * config.json の探索順:
  *   1. 環境変数 VK_ORCHESTRATOR_CONFIG（明示指定）
  *   2. ~/.vk-orchestrator/config.json（ユーザー固有・推奨）
@@ -192,6 +223,84 @@ export function toVkTerminalsConfig(cfg = {}) {
   if (vk.agentroom !== undefined)      out.agentroom = vk.agentroom;
   if (Array.isArray(vk.additionalPanes)) out.additionalPanes = vk.additionalPanes;
   return out;
+}
+
+// -------------------------------------------------------
+// GUI(Electron) の GPU 起動モード。
+//
+// VK Terminals(GUI) は Electron アプリで、Chromium が起動時に GPU を初期化する。
+// macOS では HW アクセラがそのまま効くが、WSLg 等の Linux では GPU 初期化に失敗し
+// `Exiting GPU process` / `kTransientFailure` などのエラーが多発する（利用可能な
+// Vulkan ICD がソフトウェア実装のみで SwiftShader へフォールバックするため）。
+// ここでは起動モードを config(vkTerminals.gpu) / env(VK_TERMINALS_GPU) で選べるようにし、
+// bin 側の spawn 引数と追加環境変数へ写像する。GPU モードは VK Terminals 側の config.json
+// には書き出さない（orchestrator が GUI を spawn する時点の起動オプションのため）。
+// -------------------------------------------------------
+
+/** GPU 起動モードの取りうる値。 */
+export const GPU_MODES = ['off', 'default'];
+
+/**
+ * GPU 起動モードのプラットフォーム既定値を返す。
+ * macOS は HW アクセラがそのまま効くためフラグ不要（'default'）。
+ * それ以外（WSLg 等の Linux）は Chromium の GPU 初期化失敗によるエラーを抑制するため
+ * 既定で GPU を無効化する（'off'）。
+ * @param {string} [platform] process.platform 互換の値
+ * @returns {'off'|'default'}
+ */
+export function defaultGpuMode(platform = process.platform) {
+  return platform === 'darwin' ? 'default' : 'off';
+}
+
+// 未知の GPU モードを警告済みか（プロセス内で一度だけ通知するためのフラグ）。
+let warnedUnknownGpuMode = false;
+
+/**
+ * GUI 起動時の GPU モードを解決する。
+ * 優先順位: 環境変数 VK_TERMINALS_GPU > config.json(vkTerminals.gpu) > プラットフォーム既定。
+ * 空文字・未知の値はプラットフォーム既定にフォールバックする。撤去した 'hardware' など
+ * 非空の未知値が来た場合は、挙動変更に気づけるよう一度だけ警告する（起動は止めない）。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @param {string} [platform] process.platform 互換の値
+ * @returns {'off'|'default'}
+ */
+export function getVkTerminalsGpuMode(cfg = loadUnifiedConfig(), platform = process.platform) {
+  const raw = String(process.env.VK_TERMINALS_GPU ?? cfg?.vkTerminals?.gpu ?? '')
+    .trim()
+    .toLowerCase();
+  if (GPU_MODES.includes(raw)) return raw;
+  // 空（＝自動）は正常。非空の未知値（例: 旧 'hardware'）だけ一度警告してフォールバック。
+  const fallback = defaultGpuMode(platform);
+  if (raw !== '' && !warnedUnknownGpuMode) {
+    warnedUnknownGpuMode = true;
+    console.warn(
+      `[Config] 未知の GPU モード "${raw}" は無視し、既定 "${fallback}" を使用します` +
+      `（有効値: ${GPU_MODES.join(' / ')}、空=自動）。`
+    );
+  }
+  return fallback;
+}
+
+/**
+ * GPU モードから、Electron(GUI) 起動時に渡すフラグと追加環境変数を組み立てる。
+ *  - 'off'      : GPU を無効化してエラーログを抑制する（描画はソフトウェア。
+ *                 ターミナル用途では実害なし）。
+ *  - 'default'  : フラグ・env を足さず Chromium 任せ（macOS 既定 / 明示的に素の挙動）。
+ *
+ * ※ WSLg での HW アクセラは対応しない。Vulkan は HW ICD（dzn 等）が提供されず、
+ *    OpenGL もターミナル用途では体感差が無く、WSLg では Mesa/Dawn 由来の警告も出る
+ *    ため。GPU を使いたい場合は 'default'（Chromium 任せ）を選ぶ。
+ * @param {string} mode 'off'|'default'
+ * @returns {{ args: string[], env: Record<string,string> }}
+ */
+export function gpuLaunchOptions(mode) {
+  switch (mode) {
+    case 'off':
+      return { args: ['--disable-gpu', '--disable-software-rasterizer'], env: {} };
+    case 'default':
+    default:
+      return { args: [], env: {} };
+  }
 }
 
 /**
@@ -281,6 +390,13 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         fields: [
           { key: 'vkTerminals.port',            label: 'API ポート',          type: 'number', help: 'VK Terminals の API サーバーが待ち受けるポート番号（既定: 13847）' },
           { key: 'vkTerminals.host',            label: 'API ホスト',          type: 'text', help: 'VK Terminals の API サーバーのホスト（既定: 127.0.0.1）' },
+          { key: 'vkTerminals.gpu',             label: 'GPU モード',          type: 'select',
+            options: [
+              { value: '',         label: '自動（推奨・macOS は通常起動 / その他は off）' },
+              { value: 'off',      label: 'off（GPU 無効・エラーログ抑制）' },
+              { value: 'default',  label: 'default（Chromium 任せ）' },
+            ],
+            help: 'GUI(Electron) の GPU 利用モード（次回 up で反映）。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、default=Chromium 任せ' },
           { key: 'vkTerminals.initialCommand',  label: '初期コマンド',        type: 'text', help: '各ペイン起動時に自動実行するコマンド（次回 up/apply で反映）' },
           { key: 'vkTerminals.agentroom',       label: 'エージェントルーム表示', type: 'boolean', help: 'エージェントルームのペインを表示するか（次回 up/apply で反映）' },
           { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
@@ -312,6 +428,20 @@ export function writeSettingsDescriptor(vkDir = resolveVkTerminalsDir(), targetP
 }
 
 /**
+ * 環境変数のブール値を解釈する。
+ * `'false'` / `'0'`（大文字小文字・前後空白は無視）を false、それ以外の非空値を true とみなす。
+ * 未定義・空文字は「未指定」として undefined を返す（呼び出し側で上書きをスキップする）。
+ * @param {string|undefined} raw 環境変数の生値
+ * @returns {boolean|undefined}
+ */
+function parseEnvBool(raw) {
+  // trim 後に空なら「未指定」。空白のみの値も未指定として扱う（true に倒さない）。
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (v === '') return undefined;
+  return !(v === 'false' || v === '0');
+}
+
+/**
  * task セクションの解決済み設定を返す。
  * 優先順位: 環境変数 > config.json(cfg.task) > DEFAULT_TASK。
  * config.json は既定値へ再帰的にディープマージし、未指定キーは既定にフォールバックする。
@@ -320,23 +450,22 @@ export function writeSettingsDescriptor(vkDir = resolveVkTerminalsDir(), targetP
  * @returns {typeof DEFAULT_TASK}
  */
 export function getTaskConfig(cfg = loadUnifiedConfig()) {
-  const merged = deepMerge(DEFAULT_TASK, cfg?.task ?? {});
+  // 空値（GUI 保存由来の "" / null / [] 等）は除去してから既定へマージ（空で既定を潰さない）。
+  const merged = deepMerge(DEFAULT_TASK, pruneEmpty(cfg?.task) ?? {});
   // 環境変数レイヤー（env > config.json）。空文字・未定義は無視（applyConfigToEnv の set と同じ扱い）。
   const env = process.env;
   if (env.TASK_COMMAND_TEMPLATE) merged.commandTemplate = env.TASK_COMMAND_TEMPLATE;
   if (env.TASK_WP_PORT_BASE)     merged.portBase = Number(env.TASK_WP_PORT_BASE);
   if (env.TASK_WP_PORT_STRIDE)   merged.portStride = Number(env.TASK_WP_PORT_STRIDE);
-  // wpEnv.enabled の env 上書き。空文字・未定義は無視（他の env 上書きと同じ扱い）。
-  // 'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす（ネスト構造を保つ）。
-  if (env.TASK_WP_ENV_ENABLED) {
-    const v = env.TASK_WP_ENV_ENABLED.trim().toLowerCase();
-    merged.wpEnv = { ...merged.wpEnv, enabled: !(v === 'false' || v === '0') };
+  // wpEnv.enabled / requireE2eGate の env 上書き。空文字・未定義は無視（parseEnvBool が
+  // undefined を返す）。'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす。
+  const wpEnvEnabled = parseEnvBool(env.TASK_WP_ENV_ENABLED);
+  if (wpEnvEnabled !== undefined) {
+    merged.wpEnv = { ...merged.wpEnv, enabled: wpEnvEnabled }; // ネスト構造を保つ
   }
-  // requireE2eGate の env 上書き。空文字・未定義は無視（TASK_WP_ENV_ENABLED と同じ扱い）。
-  // 'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす。
-  if (env.TASK_REQUIRE_E2E_GATE) {
-    const v = env.TASK_REQUIRE_E2E_GATE.trim().toLowerCase();
-    merged.requireE2eGate = !(v === 'false' || v === '0');
+  const requireE2eGate = parseEnvBool(env.TASK_REQUIRE_E2E_GATE);
+  if (requireE2eGate !== undefined) {
+    merged.requireE2eGate = requireE2eGate;
   }
   return merged;
 }
@@ -349,7 +478,7 @@ export function getTaskConfig(cfg = loadUnifiedConfig()) {
  * @returns {typeof DEFAULT_PROTOCOL}
  */
 export function getProtocolConfig(cfg = loadUnifiedConfig()) {
-  return deepMerge(DEFAULT_PROTOCOL, cfg?.protocol ?? {});
+  return deepMerge(DEFAULT_PROTOCOL, pruneEmpty(cfg?.protocol) ?? {});
 }
 
 /**
@@ -360,7 +489,7 @@ export function getProtocolConfig(cfg = loadUnifiedConfig()) {
  * @returns {typeof DEFAULT_LABELS}
  */
 export function getLabelsConfig(cfg = loadUnifiedConfig()) {
-  return deepMerge(DEFAULT_LABELS, cfg?.labels ?? {});
+  return deepMerge(DEFAULT_LABELS, pruneEmpty(cfg?.labels) ?? {});
 }
 
 /**

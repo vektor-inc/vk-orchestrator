@@ -19,6 +19,10 @@ import {
   getProtocolConfig,
   getLabelsConfig,
   buildSettingsDescriptor,
+  GPU_MODES,
+  defaultGpuMode,
+  getVkTerminalsGpuMode,
+  gpuLaunchOptions,
   DEFAULT_LABELS,
 } from '../src/config.js';
 
@@ -233,6 +237,15 @@ test('getTaskConfig: 空文字の TASK_WP_ENV_ENABLED は無視され config.jso
   });
 });
 
+test('getTaskConfig: 空白のみの TASK_WP_ENV_ENABLED は未指定扱い（true に倒さない）', () => {
+  withoutTaskEnv(() => {
+    process.env.TASK_WP_ENV_ENABLED = '   ';
+    // 空白のみは無視され、config.json の false がそのまま採用される
+    assert.equal(getTaskConfig({ task: { wpEnv: { enabled: false } } }).wpEnv.enabled, false);
+    assert.equal(getTaskConfig({}).wpEnv.enabled, true); // config も無ければ既定 true
+  });
+});
+
 test('getTaskConfig: requireE2eGate は既定で true', () => {
   withoutTaskEnv(() => {
     assert.equal(getTaskConfig({}).requireE2eGate, true);
@@ -258,6 +271,44 @@ test('getTaskConfig: 空文字の TASK_REQUIRE_E2E_GATE は無視され config.j
   withoutTaskEnv(() => {
     process.env.TASK_REQUIRE_E2E_GATE = '';
     assert.equal(getTaskConfig({}).requireE2eGate, true);
+    assert.equal(getTaskConfig({ task: { requireE2eGate: false } }).requireE2eGate, false);
+  });
+});
+
+// -------------------------------------------------------
+// GUI 設定パネル由来の空値汚染（"" / null / [] / {}）が既定を潰さないこと
+// （設定パネルは全項目を書き戻すため、未入力項目が空で保存されうる）
+// -------------------------------------------------------
+
+test('getTaskConfig: 空文字/null の config 値は既定にフォールバックする（GUI 汚染耐性）', () => {
+  withoutTaskEnv(() => {
+    const t = getTaskConfig({ task: { commandTemplate: '', portBase: null, portStride: null } });
+    assert.ok(t.commandTemplate.includes('/vk-kore')); // 既定に戻る
+    assert.equal(t.portBase, 9100);
+    assert.equal(t.portStride, 2);
+  });
+});
+
+test('getLabelsConfig: 空配列/空文字の config 値は既定にフォールバックする（GUI 汚染耐性）', () => {
+  const l = getLabelsConfig({ labels: { status: [], priority: [], automerge: '', sequential: '', parallel: '' } });
+  assert.equal(l.status.ready, 'status:ready');       // 空配列 [] で潰れない
+  assert.equal(l.status.inProgress, 'status:in-progress');
+  assert.equal(l.priority.high, 'priority:high');
+  assert.equal(l.automerge, 'automerge');             // 空文字 "" で潰れない
+  assert.equal(l.sequential, 'sequential');
+  assert.equal(l.parallel, 'parallel');
+});
+
+test('getProtocolConfig: 空文字/空配列の config 値は既定にフォールバックする（GUI 汚染耐性）', () => {
+  const p = getProtocolConfig({ protocol: { statusLinePrefix: '', statusTokens: [] } });
+  assert.equal(p.statusLinePrefix, 'Status:');
+  assert.equal(p.statusTokens.waitingInput, 'waiting-input');
+});
+
+test('pruneEmpty 経由でも false / 0 は有意値として残る', () => {
+  withoutTaskEnv(() => {
+    // wpEnv.enabled:false は空扱いにされず反映される
+    assert.equal(getTaskConfig({ task: { wpEnv: { enabled: false } } }).wpEnv.enabled, false);
     assert.equal(getTaskConfig({ task: { requireE2eGate: false } }).requireE2eGate, false);
   });
 });
@@ -375,4 +426,87 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
     .find((f) => f.key === 'task.requireE2eGate');
   assert.ok(requireE2eGateField);
   assert.equal(requireE2eGateField.type, 'boolean');
+});
+
+// -------------------------------------------------------
+// GPU 起動モード（GUI/Electron の HW-GPU 利用切り替え）
+// -------------------------------------------------------
+
+function withoutGpuEnv(fn) {
+  const saved = process.env.VK_TERMINALS_GPU;
+  delete process.env.VK_TERMINALS_GPU;
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete process.env.VK_TERMINALS_GPU;
+    else process.env.VK_TERMINALS_GPU = saved;
+  }
+}
+
+test('defaultGpuMode: macOS は default、それ以外は off', () => {
+  assert.equal(defaultGpuMode('darwin'), 'default');
+  assert.equal(defaultGpuMode('linux'), 'off');
+  assert.equal(defaultGpuMode('win32'), 'off');
+});
+
+test('getVkTerminalsGpuMode: 未設定はプラットフォーム既定にフォールバック', () => {
+  withoutGpuEnv(() => {
+    assert.equal(getVkTerminalsGpuMode({}, 'linux'), 'off');
+    assert.equal(getVkTerminalsGpuMode({}, 'darwin'), 'default');
+  });
+});
+
+test('getVkTerminalsGpuMode: config.json の値を採用する', () => {
+  withoutGpuEnv(() => {
+    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: 'off' } }, 'darwin'), 'off');
+    // 大文字・前後空白は正規化する
+    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: '  Default ' } }, 'linux'), 'default');
+  });
+});
+
+test('getVkTerminalsGpuMode: 未知の値は既定にフォールバックする', () => {
+  withoutGpuEnv(() => {
+    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: 'turbo' } }, 'linux'), 'off');
+    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: '' } }, 'darwin'), 'default');
+  });
+});
+
+test('getVkTerminalsGpuMode: env VK_TERMINALS_GPU が config.json より優先される', () => {
+  withoutGpuEnv(() => {
+    process.env.VK_TERMINALS_GPU = 'default';
+    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: 'off' } }, 'linux'), 'default');
+  });
+});
+
+test('gpuLaunchOptions: off は GPU 無効フラグを返し追加 env は無し', () => {
+  const { args, env } = gpuLaunchOptions('off');
+  assert.deepEqual(args, ['--disable-gpu', '--disable-software-rasterizer']);
+  assert.deepEqual(env, {});
+});
+
+test('gpuLaunchOptions: default はフラグ・env とも空（Chromium 任せ）', () => {
+  const { args, env } = gpuLaunchOptions('default');
+  assert.deepEqual(args, []);
+  assert.deepEqual(env, {});
+});
+
+test('GPU_MODES: 取りうる値の一覧（off / default の2択）', () => {
+  assert.deepEqual(GPU_MODES, ['off', 'default']);
+});
+
+test('buildSettingsDescriptor: VK Terminals グループに GPU モードの制約付きピッカーがある', () => {
+  const desc = buildSettingsDescriptor('/tmp/config.json');
+  const gpuField = desc.groups
+    .flatMap((g) => g.fields ?? [])
+    .find((f) => f.key === 'vkTerminals.gpu');
+  assert.ok(gpuField);
+  // 自由入力ではなく選択式（enum ピッカー）であること。
+  assert.equal(gpuField.type, 'select');
+  const optionValues = (gpuField.options ?? []).map((o) => o.value);
+  // 空（自動）＋ getVkTerminalsGpuMode が受理する各モードが選択肢に含まれること。
+  assert.deepEqual(optionValues, ['', 'off', 'default']);
+  // 選択肢の値は空文字を除き GPU_MODES に一致する（silent な不正値を防ぐ）。
+  for (const v of optionValues) {
+    if (v !== '') assert.ok(GPU_MODES.includes(v), `未知のモード: ${v}`);
+  }
 });

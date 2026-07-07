@@ -22,13 +22,15 @@ VK Terminals                     … 実際に Claude を動かす実行面
 
 このツールを動かすには次が必要です。
 
-- **macOS**（VK Terminals が node-pty のネイティブビルドを伴う Electron アプリのため）
+- **macOS**、または **Windows の WSL2（WSLg）上の Ubuntu**（VK Terminals が node-pty のネイティブビルドを伴う Electron アプリのため。GUI 表示に WSLg が必要）
 - **Node.js 20 以上**
 - **キュー用の GitHub リポジトリ**と、そこに設定されたステータスラベル群（`status:ready` ほか。`config.example.json` の owner/repo で指定）
 - **GitHub Personal Access Token**（`repo` スコープ）
 - 各ペインで動作する **Claude Code**
 
 VK Terminals は `npm install` 時に依存として自動導入されます（`optionalDependencies`）。
+
+> **WSL Ubuntu で動かす場合** — システム依存ライブラリの導入・GPU 設定・トラブルシューティングを含む、まっさらな環境からの手順を [`docs/WSL-UBUNTU-SETUP.md`](docs/WSL-UBUNTU-SETUP.md) にまとめています。
 
 ### 対応 PR の紐付け規約（必須）
 
@@ -156,4 +158,15 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 | `orchestrator.paneResumeMax` | `PANE_RESUME_MAX` | ペイン消失時（PR 未生成）の自動再開上限回数 | `3` |
 | `orchestrator.assigneeFilter` | `ASSIGNEE_FILTER` | 担当者フィルタ | なし |
 | `vkTerminals.port` / `vkTerminals.host` | `VK_TERMINALS_PORT` / `VK_TERMINALS_HOST` | VK Terminals API | `13847` / `127.0.0.1` |
+| `vkTerminals.gpu` | `VK_TERMINALS_GPU` | GUI の GPU 起動モード（下記） | 空=自動 |
 | `vkTerminals.initialCommand` / `agentroom` / `additionalPanes` | （`apply` で反映） | VK Terminals のペイン構成等 | — |
+
+> **`vkTerminals.gpu`（GUI の GPU 起動モード）** — VK Terminals(GUI) は Electron アプリで、macOS 以外（WSLg 等の Linux）では Chromium の GPU 初期化が失敗し `up` 起動時に `Exiting GPU process` / `kTransientFailure` 等のエラーログが大量に出ます。値で挙動を選べます。
+>
+> - **空（既定・自動）** — macOS は通常起動、それ以外は `off` 相当。通常はこのままで OK。
+> - **`off`** — GPU を無効化してエラーログを抑制（描画はソフトウェア。ターミナル用途で実害なし）。
+> - **`default`** — フラグを足さず Chromium 任せ（元の挙動。macOS 以外では GPU 初期化エラーが出る場合あり）。
+>
+> 反映は次回 `up` 時。ターミナル用途では GPU アクセラの体感差はほぼ無いため、既定（`off` 相当）で十分です。
+>
+> ※ WSLg での HW アクセラ（HW OpenGL / Vulkan）は対応しません。Vulkan は HW ICD（dzn 等）が WSLg に無く、OpenGL も体感差が無いうえ Mesa/Dawn 由来の警告が出るためです。
