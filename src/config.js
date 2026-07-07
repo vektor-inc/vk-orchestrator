@@ -290,29 +290,8 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         label: 'タスク',
         fields: [
           { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'タスク着手時に各ペインへ投入するコマンド。{issueUrl} と {wpPort} は自動で置換（既定: /vk-kore {issueUrl} wp-env-port={wpPort} headless=1）' },
-          { key: 'task.portBase',   label: 'wp-env ポート基準値', type: 'number', help: 'ターミナルに割り当てる wp-env ポートの基準値。terminal 1 に割り当てる番号（既定: 9100）' },
-          { key: 'task.portStride', label: 'wp-env ポート間隔', type: 'number', help: 'ターミナルごとにポート番号をずらす幅。ポート = 基準値 + (termId-1) × この値（既定: 2）' },
           { key: 'task.wpEnv.enabled', label: 'wp-env 連携を有効化', type: 'boolean', help: 'ON でタスク着手時に wp-env ポート割り当て・{wpPort} 展開・マージ後クリーンアップを行う（既定）。OFF にすると wp-env 関連を一切行わず、{wpPort} を含まないテンプレートに差し替えて vk-kore 以外のスキルや素のプロンプトを起動できる。無人実行を維持する場合はテンプレートに headless=1 を含める' },
           { key: 'task.requireE2eGate', label: 'automerge の e2e ゲートを必須化', type: 'boolean', help: 'ON で automerge 時に e2e 完了マーカーを必須にする（既定）。OFF にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）' },
-        ],
-      },
-      {
-        label: 'プロトコル',
-        fields: [
-          { key: 'protocol.statusLinePrefix', label: 'Status 行の接頭辞', type: 'text', help: 'コメント中の状態行を判定する接頭辞（既定: Status:。例: Status: waiting-input）' },
-          { key: 'protocol.statusTokens',    label: 'Status トークン (JSON)', type: 'json', help: '状態行で使うトークン名の対応表（JSON。既定: {"waitingInput":"waiting-input","noAction":"no-action","answered":"answered"}）' },
-        ],
-      },
-      {
-        label: 'ラベル',
-        fields: [
-          { key: 'labels.status',   label: 'ステータスラベル (JSON)', type: 'json', help: 'キューの状態を表すラベル名の対応表（JSON。例: {"ready":"status:ready","inProgress":"status:in-progress", ...}）' },
-          { key: 'labels.priority', label: '優先度ラベル (JSON)', type: 'json', help: '優先度を表すラベル名の対応表（JSON。例: {"high":"priority:high","medium":"priority:medium","low":"priority:low"}）' },
-          { key: 'labels.automerge',  label: 'automerge ラベル', type: 'text', help: '自動マージ対象を示すラベル名（既定: automerge）' },
-          { key: 'labels.sequential', label: 'sequential ラベル', type: 'text', help: '同一リポの逐次実行を示すラベル名（既定: sequential）' },
-          { key: 'labels.parallel',   label: 'parallel ラベル', type: 'text', help: '並列実行可を示すラベル名（既定: parallel）' },
-          // labels.workingInProgress は隠しオプション（config.json 直書きでのみ上書き可）のため
-          // GUI ディスクリプタには載せない（issue #11）。
         ],
       },
     ],
