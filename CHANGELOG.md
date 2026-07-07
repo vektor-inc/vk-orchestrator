@@ -2,6 +2,7 @@
 
 - [ 仕様変更 ] 手動マージ時のメタ issue クローズ手順に前提チェック（closed / status:done ならスキップ・各ステップの冪等化）を追記し、オーケストレーターの自動クローズとのレースによる重複を防止
 - [ 仕様変更 ] vk-kore 起動プロンプトの既定テンプレートに headless=1 を追加し、{wpPort} の有無に関わらず無人モードで起動する正式トリガーへ移行（wp-env-port 依存の過渡措置を解消）
+- [ 仕様変更 ] 設定 UI からプロトコル（Status 行接頭辞・トークン）/ラベル（status・priority・automerge 等）/wp-env ポート（portBase・portStride）を撤去し、決めうち定数＋config.json 上書きに集約
 - [ セキュリティ修正 ] ペインタイトル送信側（buildPaneTitle 出力）にも制御文字（C0/DEL/C1）除去を追加し、外部由来の issue タイトルを送信前に正規化（多層防御）
 
 = 0.2.0 =
