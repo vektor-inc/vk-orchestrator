@@ -126,6 +126,38 @@ cp config.example.json config.json
 > `vkTerminals.gpu` は空（自動）のままで WSLg では GPU 無効（`off` 相当）になり、
 > Chromium の GPU 初期化エラーが出ません。詳細は README の GPU モード節を参照。
 
+### アサインフィルター（複数人・複数マシンで1つのキューを共有する場合）
+
+1 つのキューリポを複数人（または複数の WSL マシン）で共有すると、既定では**全員が全 issue を
+取り合ってしまいます**。**自分にアサインされた issue だけ**を取り込み・実行するように絞るのが
+アサインフィルターです。
+
+- **挙動**: GitHub ログイン名を指定すると、取り込み対象の source issue を**その人の担当分のみ**に
+  限定し、取り込んだ task-queue issue にも**その人を自動でアサイン**します（誰が処理中かが明確に
+  なる）。未指定なら従来どおり**全件**が対象です。
+- **指定方法（優先順位: 高い順）**:
+  1. CLI 引数 `--assignee <login>`（`up` / `start` に付与。`up` は内部の orchestrator へ引き継ぎ）
+  2. 環境変数 `ASSIGNEE_FILTER=<login>`
+  3. `config.json` の `orchestrator.assigneeFilter`（GUI 設定パネルの「担当者フィルタ (login)」でも可）
+
+```jsonc
+// config.json に常設する場合
+{
+  "orchestrator": {
+    "assigneeFilter": "your-github-login"   // 空/未設定＝全件対象
+  }
+}
+```
+
+```bash
+# その場だけ担当を指定して起動する場合（config より優先）
+npm run up -- --assignee your-github-login
+# orchestrator 単体なら
+npx vk-orchestrator start --assignee your-github-login
+```
+
+> 起動時のヘッダーの `assignee :` 行で、現在のフィルタ（`(なし・全件)` かログイン名）を確認できます。
+
 ---
 
 ## 6. ラベルの登録（初回のみ）
