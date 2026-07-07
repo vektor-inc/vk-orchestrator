@@ -1,14 +1,14 @@
 # Changelog
 
 - [ 機能追加 ] `up` の GUI(Electron) 起動に GPU モード設定（config `vkTerminals.gpu` / env `VK_TERMINALS_GPU`）を追加。`off`（既定・非 macOS）でエラー抑制、`default` で Chromium 任せを選択可能
-- [ その他 ] まっさらな WSL2(WSLg) Ubuntu で動かすためのセットアップ手順（`docs/WSL-UBUNTU-SETUP.md`）を追加し、README 前提に WSL 対応を明記
-
-= 0.2.0 =
 - [ 機能追加 ] watch モード常駐中の OS スリープを防止（macOS は caffeinate、Windows は SetThreadExecutionState。orchestrator 終了で自動解除。`VK_ORCHESTRATOR_NO_KEEP_AWAKE=1` で無効化可）
 - [ 仕様変更 ] 手動マージ時のメタ issue クローズ手順に前提チェック（closed / status:done ならスキップ・各ステップの冪等化）を追記し、オーケストレーターの自動クローズとのレースによる重複を防止
 - [ 仕様変更 ] vk-kore 起動プロンプトの既定テンプレートに headless=1 を追加し、{wpPort} の有無に関わらず無人モードで起動する正式トリガーへ移行（wp-env-port 依存の過渡措置を解消）
 - [ 仕様変更 ] 設定 UI からプロトコル（Status 行接頭辞・トークン）/ラベル（status・priority・automerge 等）/wp-env ポート（portBase・portStride）を撤去し、決めうち定数＋config.json 上書きに集約
 - [ セキュリティ修正 ] ペインタイトル送信側（buildPaneTitle 出力）にも制御文字（C0/DEL/C1）除去を追加し、外部由来の issue タイトルを送信前に正規化（多層防御）
+- [ その他 ] まっさらな WSL2(WSLg) Ubuntu で動かすためのセットアップ手順（`docs/WSL-UBUNTU-SETUP.md`）を追加し、README 前提に WSL 対応を明記
+
+= 0.2.0 =
 - [ 機能追加 ] automerge の e2e 完了ゲートを config でオプション化（`task.requireE2eGate`、既定 true）。false にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）
 - [ 機能追加 ] 作業ペイン（termId）消失時、対象 issue に PR が未生成なら wp-env 掃除のうえ自動で再実行（`status:ready` へ再キュー）する機能を追加。上限回数（既定 3 回。`orchestrator.paneResumeMax` / `PANE_RESUME_MAX` で上書き可）を超えると従来どおり `status:failed`＋手動確認に
 - [ 仕様変更 ] 各ペインのヘッダーに表示する issue 名・リンクを、task-queue の複製 issue ではなく元の作業対象リポジトリの issue のものにするように
