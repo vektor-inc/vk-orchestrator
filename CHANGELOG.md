@@ -1,5 +1,7 @@
 # Changelog
 
+- [ 仕様変更 ] 手動マージ時のメタ issue クローズ手順に前提チェック（closed / status:done ならスキップ・各ステップの冪等化）を追記し、オーケストレーターの自動クローズとのレースによる重複を防止
+
 = 0.2.0 =
 - [ 機能追加 ] automerge の e2e 完了ゲートを config でオプション化（`task.requireE2eGate`、既定 true）。false にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）
 - [ 機能追加 ] 作業ペイン（termId）消失時、対象 issue に PR が未生成なら wp-env 掃除のうえ自動で再実行（`status:ready` へ再キュー）する機能を追加。上限回数（既定 3 回。`orchestrator.paneResumeMax` / `PANE_RESUME_MAX` で上書き可）を超えると従来どおり `status:failed`＋手動確認に
