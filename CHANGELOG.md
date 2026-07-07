@@ -1,6 +1,7 @@
 # Changelog
 
 - [ 仕様変更 ] 手動マージ時のメタ issue クローズ手順に前提チェック（closed / status:done ならスキップ・各ステップの冪等化）を追記し、オーケストレーターの自動クローズとのレースによる重複を防止
+- [ セキュリティ修正 ] ペインタイトル送信側（buildPaneTitle 出力）にも制御文字（C0/DEL/C1）除去を追加し、外部由来の issue タイトルを送信前に正規化（多層防御）
 
 = 0.2.0 =
 - [ 機能追加 ] automerge の e2e 完了ゲートを config でオプション化（`task.requireE2eGate`、既定 true）。false にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）

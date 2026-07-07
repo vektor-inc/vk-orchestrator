@@ -1,3 +1,5 @@
+import { stripControlChars } from '../engine/build-command.js';
+
 // VK Terminals API の接続先ホスト。既定は localhost。
 // VK Terminals が Tailscale IP 等の特定インターフェースだけにバインドしている場合は
 // .env の VK_TERMINALS_HOST で接続先を上書きできる。
@@ -26,8 +28,8 @@ const BASE_URL = (port) => `http://${apiHost()}:${port}`;
  * @returns {string} OSC 0 エスケープシーケンス
  */
 export function buildPaneTitleSequence(title) {
-  // eslint-disable-next-line no-control-regex
-  const safe = String(title).replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+  // 制御文字の除去は build-command.js の stripControlChars に集約している（DRY）。
+  const safe = stripControlChars(title);
   return `\x1b]0;${safe}\x07`;
 }
 
