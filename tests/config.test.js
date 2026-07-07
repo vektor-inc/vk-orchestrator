@@ -381,6 +381,7 @@ test('gpuLaunchOptions: hardware は ANGLE(GL) フラグと GALLIUM_DRIVER=d3d12
   const { args, env } = gpuLaunchOptions('hardware');
   assert.ok(args.includes('--use-gl=angle'));
   assert.ok(args.includes('--use-angle=gl'));
+  assert.ok(args.includes('--ignore-gpu-blocklist'));
   assert.ok(args.includes('--disable-gpu-sandbox'));
   assert.equal(env.GALLIUM_DRIVER, 'd3d12');
   // ベンダー中立: 特定 GPU のアダプタ名を決め打ちしない

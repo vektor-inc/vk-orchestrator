@@ -346,7 +346,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         fields: [
           { key: 'vkTerminals.port',            label: 'API ポート',          type: 'number', help: 'VK Terminals の API サーバーが待ち受けるポート番号（既定: 13847）' },
           { key: 'vkTerminals.host',            label: 'API ホスト',          type: 'text', help: 'VK Terminals の API サーバーのホスト（既定: 127.0.0.1）' },
-          { key: 'vkTerminals.gpu',             label: 'GPU モード',          type: 'text', help: 'GUI(Electron) の GPU 利用。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、hardware=HW OpenGL（WSLg の d3d12 経由）、default=Chromium 任せ（次回 up で反映）' },
+          { key: 'vkTerminals.gpu',             label: 'GPU モード',          type: 'text', help: 'GUI(Electron) の GPU 利用。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、hardware=HW OpenGL（WSLg の d3d12 経由。⚠ Chromium の GPU サンドボックスを無効化し GPU ブロックリストを無視するため保護が下がる）、default=Chromium 任せ（次回 up で反映）' },
           { key: 'vkTerminals.initialCommand',  label: '初期コマンド',        type: 'text', help: '各ペイン起動時に自動実行するコマンド（次回 up/apply で反映）' },
           { key: 'vkTerminals.agentroom',       label: 'エージェントルーム表示', type: 'boolean', help: 'エージェントルームのペインを表示するか（次回 up/apply で反映）' },
           { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
