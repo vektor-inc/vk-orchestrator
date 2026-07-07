@@ -446,6 +446,8 @@ test('gpuLaunchOptions: hardware は ANGLE(GL) フラグと GALLIUM_DRIVER=d3d12
   assert.ok(args.includes('--use-angle=gl'));
   assert.ok(args.includes('--ignore-gpu-blocklist'));
   assert.ok(args.includes('--disable-gpu-sandbox'));
+  // 未対応の Vulkan / WebGPU 探索を無効化し WSLg の警告を抑制する
+  assert.ok(args.includes('--disable-features=Vulkan,WebGPU'));
   assert.equal(env.GALLIUM_DRIVER, 'd3d12');
   // ベンダー中立: 特定 GPU のアダプタ名を決め打ちしない
   assert.equal('MESA_D3D12_DEFAULT_ADAPTER_NAME' in env, false);

@@ -242,7 +242,9 @@ export function getVkTerminalsGpuMode(cfg = loadUnifiedConfig(), platform = proc
  *  - 'hardware' : ANGLE(GL) 経由で HW OpenGL を使う。WSLg では Mesa の d3d12 ドライバ
  *                 （GALLIUM_DRIVER=d3d12）経由で Windows 側 GPU に届く。/dev/dxg への
  *                 アクセスのため GPU サンドボックスを外す。Vulkan は HW ICD が無いため
- *                 対象外（OpenGL 経路のみ）。
+ *                 対象外（OpenGL 経路のみ）。加えて未対応の Vulkan / WebGPU(Dawn) 探索を
+ *                 無効化し、WSLg で出る asahi ICD / Dawn robustness の警告を抑制する
+ *                 （OpenGL 描画には不要）。
  *  - 'default'  : フラグ・env を足さず Chromium 任せ（macOS 既定 / 明示的に素の挙動）。
  * @param {string} mode 'off'|'hardware'|'default'
  * @returns {{ args: string[], env: Record<string,string> }}
@@ -253,7 +255,13 @@ export function gpuLaunchOptions(mode) {
       return { args: ['--disable-gpu', '--disable-software-rasterizer'], env: {} };
     case 'hardware':
       return {
-        args: ['--use-gl=angle', '--use-angle=gl', '--ignore-gpu-blocklist', '--disable-gpu-sandbox'],
+        args: [
+          '--use-gl=angle',
+          '--use-angle=gl',
+          '--ignore-gpu-blocklist',
+          '--disable-gpu-sandbox',
+          '--disable-features=Vulkan,WebGPU',
+        ],
         env: { GALLIUM_DRIVER: 'd3d12' },
       };
     case 'default':
