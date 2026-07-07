@@ -1,5 +1,22 @@
 import { Octokit } from '@octokit/rest';
 
+// e2e 完了マーカーのラベル名 / SHA コメント接頭辞。
+// 汎用化 issue #10 の方針により、ゲートの ON/OFF は config 化する一方、
+// マーカー名自体は固定定数のまま運用する（config.js の DEFAULT_LABELS からは撤去済み）。
+const E2E_PASSED_LABEL = 'e2e-passed';
+const E2E_PASSED_SHA_PREFIX = 'e2e-passed-sha:';
+
+// e2e 完了マーカー判定で使う、呼び出し引数に依存しない固定値。
+// hasE2ePassedMarker が毎回組み立て直さないようモジュールスコープへホイストする。
+// SHA コメントの投稿者として信頼する author_association（write 権限相当）。
+const TRUSTED_ASSOC = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+// 「<E2E_PASSED_SHA_PREFIX> <sha>」を拾う正規表現。接頭辞は正規表現メタ文字（`:` 等）を
+// 含む可能性があるため escape してから組み立てる。短縮 SHA（7 桁以上）も許容する。
+const E2E_SHA_RE = new RegExp(
+  `${E2E_PASSED_SHA_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*([0-9a-f]{7,40})`,
+  'i'
+);
+
 // source 側 issue 本文から最初の GitHub issue URL を抽出する。
 // 取り込み時 createTaskQueueIssueFromSource が body 先頭に source URL を入れているため、
 // 最初にマッチしたものが source とみなせる（後から追記される PR URL は /pull/ なのでマッチしない）。
@@ -736,26 +753,25 @@ export class GitHubClient {
   // vk-kore（司）が member の gh トークンで投稿する運用のため、bot ログイン固定ではなく
   // author_association で判定する（vk-agents[bot] 固定だと現行運用に合わずゲートが壊れる）。
   async hasE2ePassedMarker(owner, repo, prNumber, headSha) {
-    // 1. 'e2e-passed' ラベルの有無を pulls.get の labels から判定する。
+    // 1. E2E_PASSED_LABEL ラベルの有無を pulls.get の labels から判定する。
     const { data: pr } = await this.octokit.pulls.get({
       owner, repo, pull_number: prNumber,
     });
     const hasLabel = (pr.labels ?? []).some(
-      l => (typeof l === 'string' ? l : l.name) === 'e2e-passed'
+      l => (typeof l === 'string' ? l : l.name) === E2E_PASSED_LABEL
     );
     if (!hasLabel) return false;
 
-    // 2. コメントを全件取得し、「e2e-passed-sha: <sha>」が現 head SHA と前方一致するものを探す。
+    // 2. コメントを全件取得し、「<E2E_PASSED_SHA_PREFIX> <sha>」が現 head SHA と前方一致するものを探す。
     //    短縮 SHA（7 桁以上）も許容するため headSha.startsWith(sha) で判定する。
+    //    TRUSTED_ASSOC / E2E_SHA_RE は呼び出し引数に依存しないためモジュールスコープに定義。
     const comments = await this.octokit.paginate(this.octokit.issues.listComments, {
       owner, repo, issue_number: prNumber, per_page: 100,
     });
-    const TRUSTED_ASSOC = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-    const shaRe = /e2e-passed-sha:\s*([0-9a-f]{7,40})/i;
     for (const c of comments) {
       // 信頼境界外（CONTRIBUTOR / NONE 等）の投稿者によるマーカーは無視する。
       if (!TRUSTED_ASSOC.has(c.author_association)) continue;
-      const m = (c.body ?? '').match(shaRe);
+      const m = (c.body ?? '').match(E2E_SHA_RE);
       if (m && headSha.startsWith(m[1].toLowerCase())) {
         return true;
       }
