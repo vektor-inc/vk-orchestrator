@@ -1,5 +1,6 @@
 # Changelog
 
+= 0.3.0 =
 - [ 機能追加 ] `up` の GUI(Electron) 起動に GPU モード設定（config `vkTerminals.gpu` / env `VK_TERMINALS_GPU`）を追加。`off`（既定・非 macOS）でエラー抑制、`default` で Chromium 任せを選択可能
 - [ 機能追加 ] watch モード常駐中の OS スリープを防止（macOS は caffeinate、Windows は SetThreadExecutionState。orchestrator 終了で自動解除。`VK_ORCHESTRATOR_NO_KEEP_AWAKE=1` で無効化可）
 - [ 仕様変更 ] 手動マージ時のメタ issue クローズ手順に前提チェック（closed / status:done ならスキップ・各ステップの冪等化）を追記し、オーケストレーターの自動クローズとのレースによる重複を防止
