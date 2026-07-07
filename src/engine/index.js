@@ -472,10 +472,10 @@ async function scanAnsweredRecovery() {
 }
 
 // -------------------------------------------------------
-// 指示待ちスキャン: 対象 issue/PR に付いたユーザー返信（= Comment by vk-agents で
-// 始まらない、直近 waiting-input より後のコメント）を pane に転送して in-progress に戻す。
+// 指示待ちスキャン: 対象 issue/PR に付いたユーザー返信（= 単独 Status: 行を
+// 持たない、直近 waiting-input より後のコメント）を pane に転送して in-progress に戻す。
 // bot 投稿（CodeRabbit 等）は返信扱いせず転送しない（#141）。返信内容の意味解釈はせず、
-// 識別行の有無と投稿者種別だけで機械的に判定する（中身は vk-kore が判断し、必要なら再度 waiting-input を出す）。
+// Status: 行の有無と投稿者種別だけで機械的に判定する（中身は vk-kore が判断し、必要なら再度 waiting-input を出す）。
 // （`Status: answered` による転送不要の復帰は scanAnsweredRecovery が健全性ゲート前で処理する。）
 // -------------------------------------------------------
 async function scanWaitingInputIssues() {

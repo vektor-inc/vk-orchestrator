@@ -1,9 +1,10 @@
 /**
  * decision-record コメント解析（orchestrator/decision-record.js）のユニットテスト。
  *
- * vk-agents の rules/decision-record.md 書式（1 行目 `Comment by vk-agents`、
- * 2 行目 `Status: waiting-input` / `no-action` / `answered`）の読み取りと、
- * ユーザー返信検出・最新の指示待ち検出・ペイン経由解決（answered）検出を検証する。
+ * 判定は単独行の `Status: waiting-input` / `no-action` / `answered` の有無のみで行い、
+ * 識別行マーカー（`Comment by vk-agents`）には依存しない（#9）。マーカーはあっても
+ * なくても無視される。Status 行の読み取りと、ユーザー返信検出・最新の指示待ち検出・
+ * ペイン経由解決（answered）検出を検証する。
  */
 
 import { describe, it } from 'node:test';
@@ -19,7 +20,6 @@ import {
   hasPendingWaitingInput,
   findReplyAfterWaitingInput,
   hasAgentAnsweredAfterWaitingInput,
-  AGENT_MARKER,
 } from '../src/engine/decision-record.js';
 
 const agentWaitingInput = [
@@ -63,16 +63,22 @@ describe('parseDecisionRecordComment', () => {
     assert.equal(r.status, 'answered');
   });
 
-  it('識別行が無いユーザー返信は isAgentComment=false / status=null', () => {
+  it('Status 行が無いユーザー返信は isAgentComment=false / status=null', () => {
     const r = parseDecisionRecordComment('A 案でお願いします。');
     assert.equal(r.isAgentComment, false);
     assert.equal(r.status, null);
   });
 
-  it('識別行はあるが Status 行が無い場合は status=null', () => {
+  it('Status 行が無ければマーカー行だけでは isAgentComment=false / status=null（マーカー非依存）', () => {
     const r = parseDecisionRecordComment('Comment by vk-agents\n\n進捗報告です。');
-    assert.equal(r.isAgentComment, true);
+    assert.equal(r.isAgentComment, false);
     assert.equal(r.status, null);
+  });
+
+  it('マーカー行が無くても単独 Status 行があれば isAgentComment=true', () => {
+    const r = parseDecisionRecordComment('Status: waiting-input\n\n確認お願いします。');
+    assert.equal(r.isAgentComment, true);
+    assert.equal(r.status, 'waiting-input');
   });
 
   it('CRLF 改行・先頭空行・行末空白を含んでも識別できる', () => {
@@ -108,18 +114,19 @@ describe('parseDecisionRecordComment', () => {
     }
   });
 
-  it('識別行に余計な文字が付くと識別行とみなさない', () => {
+  it('1 行目が別の文字列でも単独 Status 行があれば isAgentComment=true（マーカー内容は無視）', () => {
     const r = parseDecisionRecordComment('> Comment by vk-agents\nStatus: waiting-input');
-    assert.equal(r.isAgentComment, false);
+    assert.equal(r.isAgentComment, true);
+    assert.equal(r.status, 'waiting-input');
   });
 });
 
 describe('isWaitingInputByAgent', () => {
-  it('エージェント発 waiting-input のみ true', () => {
+  it('waiting-input の Status 行を持つコメントのみ true', () => {
     assert.equal(isWaitingInputByAgent(agentWaitingInput), true);
     assert.equal(isWaitingInputByAgent(agentNoAction), false);
-    // 識別行なしで Status だけ書かれていても（ユーザーの紛らわしい返信）true にしない
-    assert.equal(isWaitingInputByAgent('Status: waiting-input'), false);
+    // マーカー非依存: 単独 Status 行があればマーカー行が無くても true（#9）
+    assert.equal(isWaitingInputByAgent('Status: waiting-input'), true);
   });
 });
 
@@ -137,7 +144,7 @@ describe('isUserReply', () => {
   it('エージェント発でも bot 投稿でもないコメントだけ true', () => {
     assert.equal(isUserReply({ body: 'A 案で。', user: { type: 'User' } }), true);
     assert.equal(isUserReply({ body: 'A 案で。' }), true); // user 不明でも返信扱い
-    assert.equal(isUserReply({ body: agentWaitingInput }), false); // 識別行あり
+    assert.equal(isUserReply({ body: agentWaitingInput }), false); // Status 行あり（プロトコルコメント）
     assert.equal(
       isUserReply({ body: 'No actionable comments.', user: { type: 'Bot' } }),
       false,
@@ -399,8 +406,62 @@ describe('hasAgentAnsweredAfterWaitingInput', () => {
   });
 });
 
-describe('AGENT_MARKER', () => {
-  it('識別行の定数を公開している', () => {
-    assert.equal(AGENT_MARKER, 'Comment by vk-agents');
+describe('マーカー非依存（#9）: 1 行目が任意でも Status 行だけで従来と同一判定', () => {
+  // マーカー行を持たない（または別文字列の）プロトコルコメント。
+  const noMarkerWaitingInput = ['Status: waiting-input', '', '確認お願いします'].join('\n');
+  const otherMarkerWaitingInput = ['なにか別の 1 行目', 'Status: waiting-input', '', '確認お願いします'].join('\n');
+  const noMarkerNoAction = ['Status: no-action', '', '記録のみ'].join('\n');
+  const noMarkerAnswered = ['Status: answered', '', 'ペイン経由で解決済み'].join('\n');
+
+  it('マーカー無し waiting-input を agentWaitingInput と同じく指示待ちとして扱う', () => {
+    assert.equal(isWaitingInputByAgent(noMarkerWaitingInput), true);
+    assert.equal(isWaitingInputByAgent(otherMarkerWaitingInput), true);
+    assert.equal(hasPendingWaitingInput([{ body: noMarkerWaitingInput }]), true);
+    assert.equal(hasPendingWaitingInput([{ body: otherMarkerWaitingInput }]), true);
+  });
+
+  it('マーカー無し waiting-input の後のユーザー返信で pending 解除・転送対象を検出できる', () => {
+    const comments = [
+      { body: noMarkerWaitingInput },
+      { body: 'A 案で。', user: { type: 'User' } },
+    ];
+    assert.equal(hasPendingWaitingInput(comments), false);
+    assert.equal(findReplyAfterWaitingInput(comments)?.body, 'A 案で。');
+  });
+
+  it('マーカー無し answered をユーザー返信扱いせず、pending を解除する', () => {
+    // エージェント自身の answered を「返信」と誤認して誤解除しないこと（＝ isUserReply=false でも
+    // answered なので pending は解除される、という正しい解除経路であることを確認）。
+    assert.equal(isUserReply({ body: noMarkerAnswered, user: { type: 'User' } }), false);
+    const comments = [
+      { body: noMarkerWaitingInput },
+      { body: noMarkerAnswered },
+    ];
+    assert.equal(hasPendingWaitingInput(comments), false);
+    assert.equal(hasAgentAnsweredAfterWaitingInput(comments), true);
+    // answered は「ユーザー返信」ではないので転送対象にはならない。
+    assert.equal(findReplyAfterWaitingInput(comments), null);
+  });
+
+  it('マーカー無し no-action をユーザー返信扱いせず、pending を誤解除しない', () => {
+    // エージェント自身の no-action 報告を返信扱いすると pending が誤解除される。そうならないこと。
+    assert.equal(isUserReply({ body: noMarkerNoAction, user: { type: 'User' } }), false);
+    const comments = [
+      { body: noMarkerWaitingInput },
+      { body: noMarkerNoAction }, // no-action は pending を変えない
+    ];
+    assert.equal(hasPendingWaitingInput(comments), true);
+    assert.equal(findReplyAfterWaitingInput(comments), null);
+  });
+
+  it('マーカー有無が混在しても waiting-input → 返信 → 再確認のサイクルに追従する', () => {
+    const comments = [
+      { body: 'Comment by vk-agents\nStatus: waiting-input' }, // マーカー有り
+      { body: 'A 案で。', user: { type: 'User' } },              // 返信（解除）
+      { body: noMarkerNoAction },                                // 記録（不変）
+      { body: noMarkerWaitingInput },                            // マーカー無しの再確認（未応答）
+    ];
+    assert.equal(hasPendingWaitingInput(comments), true);
+    assert.equal(findLatestWaitingInput(comments)?.body, noMarkerWaitingInput);
   });
 });
