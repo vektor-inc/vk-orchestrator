@@ -1,5 +1,6 @@
 # Changelog
 
+= 0.2.0 =
 - [ 機能追加 ] automerge の e2e 完了ゲートを config でオプション化（`task.requireE2eGate`、既定 true）。false にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）
 - [ 機能追加 ] 作業ペイン（termId）消失時、対象 issue に PR が未生成なら wp-env 掃除のうえ自動で再実行（`status:ready` へ再キュー）する機能を追加。上限回数（既定 3 回。`orchestrator.paneResumeMax` / `PANE_RESUME_MAX` で上書き可）を超えると従来どおり `status:failed`＋手動確認に
 - [ 仕様変更 ] 各ペインのヘッダーに表示する issue 名・リンクを、task-queue の複製 issue ではなく元の作業対象リポジトリの issue のものにするように
