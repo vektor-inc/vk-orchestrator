@@ -1,5 +1,7 @@
 # Changelog
 
+- [ 仕様変更 ] 設定項目 owner/repo/sourceOrg のラベル・ヘルプを「タスク登録リポジトリ」「作業対象リポジトリ」に統一し、曖昧だった「監視対象」表記を解消
+
 = 0.5.0 =
 - [ 機能追加 ] 起動時・VK Terminals 接続時に、サイドバーメニューへ「VK Orchestrator」セクション（task-queue の issue 一覧を開く項目）を POST /api/menu で冪等に投入するように
 

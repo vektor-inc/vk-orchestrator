@@ -125,8 +125,8 @@ cp config.example.json config.json
 {
   "github": {
     "token": "ghp_xxxxxxxx",   // 自分の PAT（repo スコープ）
-    "owner": "your-org",       // キューリポのオーナー
-    "repo":  "task-queue"      // キューリポ名
+    "owner": "your-org",       // タスク登録リポジトリのオーナー
+    "repo":  "task-queue"      // タスク登録リポジトリ名
   },
   "vkTerminals": {
     "gpu": ""                  // 空=自動（WSLg では off 相当）。通常このままで OK
@@ -139,12 +139,12 @@ cp config.example.json config.json
 
 ### アサインフィルター（複数人・複数マシンで1つのキューを共有する場合）
 
-1 つのキューリポを複数人（または複数の WSL マシン）で共有するときに、**自分にアサインされた
+1 つのタスク登録リポジトリを複数人（または複数の WSL マシン）で共有するときに、**自分にアサインされた
 issue だけ**を取り込み・実行するように絞るのがアサインフィルターです。未設定のまま誤って
 他人の issue を拾わないよう、既定では issue を一切取り込みません。
 
-- **挙動**: GitHub ログイン名を指定すると、取り込み対象の source issue を**その人の担当分のみ**に
-  限定し、取り込んだ task-queue issue にも**その人を自動でアサイン**します（誰が処理中かが明確に
+- **挙動**: GitHub ログイン名を指定すると、作業対象リポジトリの Issue を**その人の担当分のみ**に
+  限定し、取り込んだ task-queue Issue にも**その人を自動でアサイン**します（誰が処理中かが明確に
   なる）。空/未設定なら**一切取り込みません**。全件を対象にする場合は `all` を明示します。
 - **指定方法（優先順位: 高い順）**:
   1. CLI 引数 `--assignee <login>`（`up` / `start` に付与。`up` は内部の orchestrator へ引き継ぎ）
@@ -176,8 +176,8 @@ npx vk-orchestrator start --assignee your-github-login
 `gh auth login` 済みの状態で:
 
 ```bash
-npm run setup:labels          # org 各リポに取り込み対象ラベル（task-queue）を作成
-npm run setup:queue-labels    # キューリポに status:* / priority:* など一式を作成
+npm run setup:labels          # 作業対象リポジトリに取り込みラベル（task-queue）を作成
+npm run setup:queue-labels    # タスク登録リポジトリに status:* / priority:* など一式を作成
 ```
 
 ---

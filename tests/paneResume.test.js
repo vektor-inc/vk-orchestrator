@@ -17,7 +17,7 @@ import { handlePaneMissing, normalizeResumeMax } from '../src/engine/pane-resume
 // console.log / warn を黙らせるためのスタブ
 const silentLogger = { log: () => {}, warn: () => {} };
 
-// task-queue 側 issue の fake（対象 issue の解決は resolveTarget の fake が担う）
+// タスク登録リポジトリ側 issue の fake（対象 issue の解決は resolveTarget の fake が担う）
 const issue = {
   number: 246,
   title: 'https://github.com/owner/repo/issues/42 を対応',

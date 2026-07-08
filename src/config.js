@@ -370,10 +370,10 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         label: 'GitHub',
         fields: [
           { key: 'github.token',      label: 'Personal Access Token', type: 'password', help: 'GitHub API へアクセスするための個人アクセストークン（repo スコープが必要）', emptyToNull: true },
-          { key: 'github.owner',      label: 'Owner',                 type: 'text', help: '監視対象リポジトリのオーナー名（ユーザー名または組織名。例: vektor-inc）' },
-          { key: 'github.repo',       label: 'Repo',                  type: 'text', help: 'オーケストレーターが監視する対象のリポジトリ名（例: task-queue）' },
-          { key: 'github.sourceOrg',  label: 'Source Org',            type: 'text', help: 'タスクを取り込む対象の組織名（未指定時は Owner と同じ）' },
-          { key: 'github.queueLabel', label: 'Queue Label',           type: 'text', help: 'このラベル名が付与されている Issue をオーケストレーターのタスクとして取みます' },
+          { key: 'github.owner',      label: 'タスク登録リポジトリのオーナー', type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリのオーナー名（ユーザー名または組織名。例: vektor-inc）' },
+          { key: 'github.repo',       label: 'タスク登録リポジトリ名',       type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリ名（例: task-queue）' },
+          { key: 'github.sourceOrg',  label: '作業対象リポジトリのオーナー（組織・省略可）', type: 'text', help: '作業対象リポジトリが属する組織名。この組織を横断検索して `task-queue` ラベル付き Issue を取り込む。未指定時はタスク登録リポジトリのオーナーと同じ組織を対象にする', emptyToNull: true },
+          { key: 'github.queueLabel', label: '取り込みラベル名',           type: 'text', help: '作業対象リポジトリの Issue にこのラベルが付いていると、オーケストレーターのタスクとして取り込みます' },
         ],
       },
       {

@@ -428,6 +428,15 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
   assert.equal(requireE2eGateField.type, 'boolean');
 });
 
+test('buildSettingsDescriptor: sourceOrg は空欄保存時に未指定として扱う', () => {
+  const desc = buildSettingsDescriptor('/tmp/config.json');
+  const sourceOrgField = desc.groups
+    .flatMap((g) => g.fields ?? [])
+    .find((f) => f.key === 'github.sourceOrg');
+  assert.ok(sourceOrgField);
+  assert.equal(sourceOrgField.emptyToNull, true);
+});
+
 // -------------------------------------------------------
 // GPU 起動モード（GUI/Electron の HW-GPU 利用切り替え）
 // -------------------------------------------------------
