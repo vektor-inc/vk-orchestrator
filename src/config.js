@@ -40,11 +40,12 @@ export const DEFAULT_TASK = {
   // src/engine/index.js の assignWpEnvPort: 9100 + (termId-1)*2 に対応。
   portBase: 9100,
   portStride: 2,
-  // wp-env 連携の ON/OFF。既定は true（現行どおりポート割り当て・{wpPort} 展開・
-  // マージ後クリーンアップを行う）。false にすると wp-env 関連（ポート割り当て・
-  // state.json への wpPort 保存・クリーンアップ）を一切行わず、{wpPort} を含まない
-  // テンプレートに差し替えることで vk-kore 以外の任意スキル／素のプロンプトを起動できる。
-  wpEnv: { enabled: true },
+  // wp-env 連携の ON/OFF。既定 null＝自動判定（タスク着手時に対象リポの `.wp-env.json`
+  // 有無を見て決める。WordPress 案件なら ON、そうでなければ OFF）。config.json / 環境変数で
+  // true / false を明示指定すると自動判定より優先する脱出ハッチになる。有効時はポート
+  // 割り当て・{wpPort} 展開・マージ後クリーンアップを行い、無効時はそれらを一切行わず
+  // {wpPort} を含まないテンプレートに差し替えることで vk-kore 以外のスキル／素のプロンプトも起動できる。
+  wpEnv: { enabled: null },
   // automerge の e2e 完了ゲートを使うか。既定 true=現行どおりマーカー必須。
   // false でマーカー無しでも automerge が進む（CI/CodeRabbit ゲートは維持）。
   requireE2eGate: true,
@@ -405,7 +406,6 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         label: 'タスク',
         fields: [
           { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'タスク着手時に各ペインへ投入するコマンド。{issueUrl} と {wpPort} は自動で置換（既定: /vk-kore {issueUrl} wp-env-port={wpPort} headless=1）' },
-          { key: 'task.wpEnv.enabled', label: 'wp-env 連携を有効化', type: 'boolean', help: 'ON でタスク着手時に wp-env ポート割り当て・{wpPort} 展開・マージ後クリーンアップを行う（既定）。OFF にすると wp-env 関連を一切行わず、{wpPort} を含まないテンプレートに差し替えて vk-kore 以外のスキルや素のプロンプトを起動できる。無人実行を維持する場合はテンプレートに headless=1 を含める' },
           { key: 'task.requireE2eGate', label: 'automerge の e2e ゲートを必須化', type: 'boolean', help: 'ON で automerge 時に e2e 完了マーカーを必須にする（既定）。OFF にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）' },
         ],
       },

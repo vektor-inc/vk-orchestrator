@@ -247,7 +247,11 @@ async function startTask(issue) {
     }
   }
 
-  const { prompt, targetIssue, wpPort } = buildCommand(title, body, termId);
+  // wp-env 連携の ON/OFF を解決する（設定で明示があればそれ、無ければ対象リポの
+  // `.wp-env.json` 有無で自動判定）。結果を buildCommand に渡してポート割り当て・
+  // {wpPort} 展開・クリーンアップ用 wpPort 保存の要否を決める。
+  const wpEnvEnabled = await resolveWpEnvEnabled(issue);
+  const { prompt, targetIssue, wpPort } = buildCommand(title, body, termId, undefined, wpEnvEnabled);
 
   // state を記録する。termId は scanWaitingInputIssues が返信を pane に転送する際の
   // 引き当てに使うため、汎用タスク（targetIssue なし）でも必ず残す。
@@ -300,6 +304,29 @@ function resolveTarget(issue) {
   );
   if (ext) return { owner: ext.owner, repo: ext.repo, number: ext.number, isSelf: false };
   return { owner: GITHUB_OWNER, repo: GITHUB_REPO, number: issue.number, isSelf: true };
+}
+
+// -------------------------------------------------------
+// wp-env 連携を有効にするか（タスク着手時に解決）。
+// - config.json / 環境変数で task.wpEnv.enabled に true/false を明示していれば最優先
+//   （自動判定より優先する脱出ハッチ）。
+// - 明示が無い（null/undefined = 自動）ときは対象リポに `.wp-env.json` があるかで判定する
+//   （WordPress 案件のみ ON）。汎用タスク（対象 issue URL 無し）や取得失敗時は false に倒す
+//   （非 WP 前提。存在しない wp-env のポート割り当て・掃除を避ける安全側の既定）。
+// -------------------------------------------------------
+async function resolveWpEnvEnabled(issue) {
+  const configVal = getTaskConfig().wpEnv?.enabled;
+  if (typeof configVal === 'boolean') return configVal;
+
+  const target = resolveTarget(issue);
+  if (target.isSelf) return false;
+
+  try {
+    return await github.hasWpEnvConfig(target.owner, target.repo);
+  } catch (err) {
+    console.warn(`  [wp-env] .wp-env.json 判定に失敗（wp-env 無効として続行）: ${err.message}`);
+    return false;
+  }
 }
 
 // -------------------------------------------------------

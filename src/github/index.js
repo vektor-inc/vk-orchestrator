@@ -647,6 +647,21 @@ export class GitHubClient {
     throw lastErr;
   }
 
+  // 対象リポジトリのデフォルトブランチに `.wp-env.json` があるかを返す。
+  // タスク着手時に wp-env 連携（ポート割り当て・{wpPort} 展開・マージ後クリーンアップ）を
+  // 自動 ON/OFF する判定に使う。WordPress 案件は `.wp-env.json` を持つため true、
+  // 非 WordPress リポは 404 で false になる。404 以外のエラー（権限・ネットワーク等）は
+  // 呼び出し側でフォールバック（安全側に倒す）できるよう throw する。
+  async hasWpEnvConfig(owner, repo) {
+    try {
+      await this.octokit.repos.getContent({ owner, repo, path: '.wp-env.json' });
+      return true;
+    } catch (err) {
+      if (err.status === 404) return false;
+      throw err;
+    }
+  }
+
   // PR上のCodeRabbitAI（bot）の最新コメント時刻を返す（コメントなしはnull）
   async getLastCodeRabbitCommentTime(owner, repo, prNumber) {
     const botLogin = 'coderabbitai[bot]';
