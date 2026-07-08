@@ -4,6 +4,7 @@
 - [ 仕様変更 ] 設定 UI から「エージェントルーム表示」トグルを撤去（config.json の `vkTerminals.agentroom` 直書きでのみ上書き可）
 - [ 仕様変更 ] vk-terminals を 1.9.1 から 1.10.0 にアップデート
 - [ 仕様変更 ] 設定項目 owner/repo/sourceOrg のラベル・ヘルプを「タスク登録リポジトリ」「作業対象リポジトリ」に統一し、曖昧だった「監視対象」表記を解消
+- [ 開発環境 ] bump:terminals（bump-vk-terminals.mjs）から CHANGELOG 自動書き換えを撤去し、依存バージョンの更新のみに変更（changelog 追記はリリース工程で対応）
 
 = 0.5.0 =
 - [ 機能追加 ] 起動時・VK Terminals 接続時に、サイドバーメニューへ「VK Orchestrator」セクション（task-queue の issue 一覧を開く項目）を POST /api/menu で冪等に投入するように
