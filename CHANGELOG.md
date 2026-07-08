@@ -1,5 +1,6 @@
 # Changelog
 
+= 0.4.0 =
 - [ 仕様変更 ] assigneeFilter が null/空のときは issue を一切取り込まず、全件取り込みは "all" の明示指定に変更（新規ユーザーの誤取り込みを防止）
 - [ 仕様変更 ] vk-terminals を 1.5.2 から 1.9.1 にアップデート
 
