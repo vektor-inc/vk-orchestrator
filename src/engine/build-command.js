@@ -100,22 +100,27 @@ export function expandTemplate(template, vars = {}) {
 // 戻り値には wpPort も含め、呼び出し側（recordTaskStart）が再計算・再読み込みせずに
 // 同じ値を使い回せるようにする（二重計算・二重 config 読み込みの回避）。
 // -------------------------------------------------------
-export function buildCommand(title, body, termId, taskConfig = getTaskConfig()) {
+export function buildCommand(title, body, termId, taskConfig = getTaskConfig(), wpEnvEnabled) {
   const fullText = [title, body].filter(Boolean).join('\n\n');
   const targetIssue = extractGitHubIssueUrl(fullText);
-  // wp-env 連携が有効か（既定 true）。false のときはポート割り当て・{wpPort} 展開・
+  // wp-env 連携が有効か。呼び出し側（startTask）が対象リポの `.wp-env.json` 有無から
+  // 解決した boolean を第5引数で渡す。無効のときはポート割り当て・{wpPort} 展開・
   // クリーンアップ用の wpPort 保存をすべて行わない。
-  const wpEnvEnabled = taskConfig.wpEnv?.enabled !== false;
+  // 未指定（ユニットテスト等で第5引数を省略）のときは taskConfig.wpEnv.enabled で判定する
+  // （null/undefined = 自動扱いで有効、明示 false のみ無効）— 後方互換のためのフォールバック。
+  const enabled = typeof wpEnvEnabled === 'boolean'
+    ? wpEnvEnabled
+    : (taskConfig.wpEnv?.enabled !== false);
 
   if (targetIssue) {
     // wp-env 有効時のみポートを割り当てる。無効時は null（state に保存されず、
     // 既存の runPostMergeCleanup / snapshotWorktreePath が !saved.wpPort で早期 return）。
-    const wpPort = wpEnvEnabled ? assignWpEnvPort(termId, taskConfig) : null;
+    const wpPort = enabled ? assignWpEnvPort(termId, taskConfig) : null;
     console.log(`  → GitHub issue URLを検出: ${targetIssue.url} → コマンドテンプレートを使用`);
     if (wpPort != null) {
       console.log(`  → wp-env ポート割り当て: ${wpPort} (testsPort=${wpPort + 1})`);
     } else {
-      console.log(`  → wp-env 無効（task.wpEnv.enabled=false）: ポート割り当てをスキップ`);
+      console.log(`  → wp-env 無効（.wp-env.json 未検出 / 設定で false）: ポート割り当てをスキップ`);
     }
 
     // コマンドテンプレートを展開する。既定テンプレートは
