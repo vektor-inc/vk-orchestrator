@@ -70,13 +70,23 @@ export class GitHubClient {
     // source repo からの claim / restore で使う。
     this.queueLabel = queueLabel || 'task-queue';
     // 自分の担当分だけを処理するための assignee フィルタ（GitHub ログイン名）。
-    // null のときは従来どおり全件を対象にする（単独運用・後方互換）。
-    // 設定すると fetch* 系の issue 取得に assignee 条件が加わり、複数メンバーが
-    // 同じ task-queue リポを衝突なく共用できる（各自が自分にアサインされた issue だけ拾う）。
-    this.assignee = assignee || null;
+    // null / 空文字 / 空白のみは安全側として issue を一切拾わない。
+    // 全件を対象にする場合は "all" を明示する。ログイン名を設定すると fetch* 系の
+    // issue 取得に assignee 条件が加わり、複数メンバーが同じ task-queue リポを衝突なく共用できる。
+    const normalizedAssignee = typeof assignee === 'string' ? assignee.trim() : assignee;
+    if (!normalizedAssignee) {
+      this.pickupEnabled = false;
+      this.assignee = null;
+    } else if (typeof normalizedAssignee === 'string' && normalizedAssignee.toLowerCase() === 'all') {
+      this.pickupEnabled = true;
+      this.assignee = null;
+    } else {
+      this.pickupEnabled = true;
+      this.assignee = normalizedAssignee;
+    }
   }
 
-  // listForRepo に渡す assignee フィルタ条件（未設定なら空オブジェクト）。
+  // listForRepo に渡す assignee フィルタ条件（フィルタなしなら空オブジェクト）。
   // 各 fetch* メソッドの検索条件にスプレッドして使う。
   assigneeQuery() {
     return this.assignee ? { assignee: this.assignee } : {};
@@ -85,6 +95,8 @@ export class GitHubClient {
   // 途中で止まったissue（in-progress / waiting-input）を取得
   // status:waiting-merge はターミナルを使わずGitHub APIだけで再開できるため対象外
   async fetchStuckIssues() {
+    if (!this.pickupEnabled) return [];
+
     const stuckLabels = ['status:in-progress', 'status:waiting-input'];
     const results = await Promise.all(
       stuckLabels.map(label =>
@@ -109,6 +121,8 @@ export class GitHubClient {
 
   // status:waiting-merge のissueを取得（マージ検知ポーリング用）
   async fetchWaitingMergeIssues() {
+    if (!this.pickupEnabled) return [];
+
     const { data } = await this.octokit.issues.listForRepo({
       owner: this.owner,
       repo: this.repo,
@@ -122,6 +136,8 @@ export class GitHubClient {
 
   // status:in-progress のopen issueを取得（人手マージの事後検知用）
   async fetchInProgressIssues() {
+    if (!this.pickupEnabled) return [];
+
     const { data } = await this.octokit.issues.listForRepo({
       owner: this.owner,
       repo: this.repo,
@@ -138,6 +154,8 @@ export class GitHubClient {
   // 注意: ここで返した issue のステータスを変更したり close したりはしない。
   // 「人の確認待ち」の意図は崩さず、PR 紐付けの追記だけを担当する補完ループ用。
   async fetchWaitingInputIssues() {
+    if (!this.pickupEnabled) return [];
+
     const { data } = await this.octokit.issues.listForRepo({
       owner: this.owner,
       repo: this.repo,
@@ -151,6 +169,8 @@ export class GitHubClient {
 
   // status:failed のopen issueを取得（事後復旧チェック用）
   async fetchFailedIssues() {
+    if (!this.pickupEnabled) return [];
+
     const { data } = await this.octokit.issues.listForRepo({
       owner: this.owner,
       repo: this.repo,
@@ -164,6 +184,8 @@ export class GitHubClient {
 
   // status:ready のissueを優先度順に取得（承認済みの実行待ち）
   async fetchPendingIssues() {
+    if (!this.pickupEnabled) return [];
+
     const { data } = await this.octokit.issues.listForRepo({
       owner: this.owner,
       repo: this.repo,
@@ -869,9 +891,11 @@ export class GitHubClient {
   // GitHub Search API はインデックス遅延（通常数秒〜数分、稀に30分程度）があるが、
   // 取り込みはリアルタイム性より確実性が大事なので許容する。
   async searchSourceIssuesByLabel(org, label) {
+    if (!this.pickupEnabled) return [];
+
     // assignee が設定されている場合は「自分にアサインされた source issue だけ」を取り込む。
-    // これにより取り込み担当が明確になり、複数メンバー運用でも各自が自分の担当分だけを取り込む
-    // （assignee 未設定なら従来どおり全件が対象）。
+    // assignee が null で pickupEnabled が true の場合は "all" 明示による全件取り込み。
+    // null / 空文字 / 空白のみは pickupEnabled=false として、ここに到達する前に何も拾わない。
     const assigneeQ = this.assignee ? ` assignee:${this.assignee}` : '';
     const q = `org:${org} label:${label} is:issue is:open -repo:${this.owner}/${this.repo}${assigneeQ}`;
     const items = await this.octokit.paginate(

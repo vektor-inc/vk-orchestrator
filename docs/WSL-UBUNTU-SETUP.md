@@ -139,13 +139,13 @@ cp config.example.json config.json
 
 ### アサインフィルター（複数人・複数マシンで1つのキューを共有する場合）
 
-1 つのキューリポを複数人（または複数の WSL マシン）で共有すると、既定では**全員が全 issue を
-取り合ってしまいます**。**自分にアサインされた issue だけ**を取り込み・実行するように絞るのが
-アサインフィルターです。
+1 つのキューリポを複数人（または複数の WSL マシン）で共有するときに、**自分にアサインされた
+issue だけ**を取り込み・実行するように絞るのがアサインフィルターです。未設定のまま誤って
+他人の issue を拾わないよう、既定では issue を一切取り込みません。
 
 - **挙動**: GitHub ログイン名を指定すると、取り込み対象の source issue を**その人の担当分のみ**に
   限定し、取り込んだ task-queue issue にも**その人を自動でアサイン**します（誰が処理中かが明確に
-  なる）。未指定なら従来どおり**全件**が対象です。
+  なる）。空/未設定なら**一切取り込みません**。全件を対象にする場合は `all` を明示します。
 - **指定方法（優先順位: 高い順）**:
   1. CLI 引数 `--assignee <login>`（`up` / `start` に付与。`up` は内部の orchestrator へ引き継ぎ）
   2. 環境変数 `ASSIGNEE_FILTER=<login>`
@@ -155,7 +155,7 @@ cp config.example.json config.json
 // config.json に常設する場合
 {
   "orchestrator": {
-    "assigneeFilter": "your-github-login"   // 空/未設定＝全件対象
+    "assigneeFilter": "your-github-login"   // 空/未設定＝一切取り込まない。全件対象は "all"
   }
 }
 ```
@@ -167,7 +167,7 @@ npm run up -- --assignee your-github-login
 npx vk-orchestrator start --assignee your-github-login
 ```
 
-> 起動時のヘッダーの `assignee :` 行で、現在のフィルタ（`(なし・全件)` かログイン名）を確認できます。
+> 起動時のヘッダーの `assignee :` 行で、現在の挙動（`(なし・拾わない)` / `(全件)` / ログイン名）を確認できます。
 
 ---
 
