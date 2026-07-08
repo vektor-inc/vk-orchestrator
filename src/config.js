@@ -398,7 +398,6 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
             ],
             help: 'GUI(Electron) の GPU 利用モード（次回 up で反映）。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、default=Chromium 任せ' },
           { key: 'vkTerminals.initialCommand',  label: '初期コマンド',        type: 'text', help: '各ペイン起動時に自動実行するコマンド（次回 up/apply で反映）' },
-          { key: 'vkTerminals.agentroom',       label: 'エージェントルーム表示', type: 'boolean', help: 'エージェントルームのペインを表示するか（次回 up/apply で反映）' },
           { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
         ],
       },

@@ -1,5 +1,6 @@
 # Changelog
 
+- [ 仕様変更 ] 設定 UI から「エージェントルーム表示」トグルを撤去（config.json の `vkTerminals.agentroom` 直書きでのみ上書き可）
 - [ 仕様変更 ] vk-terminals を 1.9.1 から 1.10.0 にアップデート
 - [ 仕様変更 ] 設定項目 owner/repo/sourceOrg のラベル・ヘルプを「タスク登録リポジトリ」「作業対象リポジトリ」に統一し、曖昧だった「監視対象」表記を解消
 
