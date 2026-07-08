@@ -217,6 +217,38 @@ export async function setTerminalPrUrl(port, termId, prUrl) {
 }
 
 /**
+ * VK Terminals のサイドバーメニューへセクションを投稿する。
+ *
+ * POST /api/menu は source 単位で丸ごと置換する冪等 API のため、起動時・接続確立時・
+ * ポーリングごとに何度呼んでも安全。timeoutMs は未応答ホスト（Tailscale IP 未接続等）で
+ * fetch が無限にハングするのを防ぐ打ち切り時間（checkHealth と同じ理由）。
+ *
+ * @param {number} port VK Terminals API ポート
+ * @param {object} section 投稿するメニューセクション payload
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs=3000] fetch の打ち切り時間
+ * @returns {Promise<object>} VK Terminals のレスポンス JSON
+ */
+export async function postMenu(port, section, { timeoutMs = 3_000 } = {}) {
+  const res = await fetch(`${BASE_URL(port)}/api/menu`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(section),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error ?? `menu post failed: HTTP ${res.status}`);
+  }
+  return json;
+}
+
+/**
  * 指定 termId の現在の lastOutputTime / lastLines を baseline として取得する。
  * 取得失敗時は null を返し、呼び出し側でフォールスルーさせる。
  *

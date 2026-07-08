@@ -12,6 +12,7 @@ import {
   checkHealth,
   createNewPane,
   getStates,
+  postMenu,
   setOwnPaneTitle,
   setTerminalPrUrl,
   setTerminalTitle,
@@ -29,6 +30,7 @@ import { startKeepAwake } from '../power/keep-awake.js';
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
 import { buildCommand, buildPaneTitle, extractGitHubIssueUrl } from './build-command.js';
+import { buildOrchestratorMenu } from './menu.js';
 
 // --- 設定 ---
 const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
@@ -171,6 +173,19 @@ async function recordPRAcrossSurfaces({ termId, queueIssueHtmlUrl, prRef, prUrl,
     } catch (err) {
       console.warn(`  ${logTag} VK Terminals への PR URL 送信失敗（処理は継続）: ${err.message}`);
     }
+  }
+}
+
+// VK Terminals のサイドバーメニューへ「VK Orchestrator」セクションを投げる（冪等）。
+// VK Terminals は再起動で注入項目を失うため、health ゲート通過後（＝接続確立時）に
+// 毎ループ投げ直す。POST /api/menu は source 単位で丸ごと置換する冪等 API なので、
+// 何度呼んでも重複しない。送信失敗は警告のみで握りつぶし、dispatch を止めない。
+async function syncOrchestratorMenu() {
+  try {
+    const section = buildOrchestratorMenu({ owner: GITHUB_OWNER, repo: GITHUB_REPO });
+    await postMenu(VK_PORT, section);
+  } catch (err) {
+    console.log(`[warn] VK Terminals サイドバーメニューの更新に失敗しました: ${err.message}`);
   }
 }
 
@@ -1332,14 +1347,17 @@ async function loop() {
     return;
   }
 
-  // 7. 指示待ちスキャン: ユーザー返信を pane に転送して in-progress に戻す
+  // 7. VK Terminals の再起動で消える注入メニューを、接続確立後に毎回冪等に再投稿する
+  await syncOrchestratorMenu();
+
+  // 8. 指示待ちスキャン: ユーザー返信を pane に転送して in-progress に戻す
   await scanWaitingInputIssues();
 
-  // 8. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す
+  // 9. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す
   //    （VK Terminals states で pane の生死・無反応を見るため checkHealth 後ろ）
   await scanWatchdog();
 
-  // 9. ready をディスパッチ
+  // 10. ready をディスパッチ
   const issues = await github.fetchPendingIssues();
   if (issues.length === 0) {
     console.log('[poll] 実行待ちタスクなし');
