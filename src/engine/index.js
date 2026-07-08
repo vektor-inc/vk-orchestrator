@@ -36,10 +36,10 @@ import { buildOrchestratorMenu } from './menu.js';
 const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
 const GITHUB_OWNER       = process.env.GITHUB_OWNER        ?? 'vektor-inc';
 const GITHUB_REPO        = process.env.GITHUB_REPO         ?? 'task-queue';
-// 取り込み対象の Organization。省略時は task-queue リポと同じ owner を見る。
+// 作業対象リポジトリのオーナー（組織）。省略時はタスク登録リポジトリと同じ owner を見る。
 const SOURCE_ORG         = process.env.SOURCE_ORG          ?? GITHUB_OWNER;
-// 取り込み対象を識別するラベル名。汎用化のため env 化（既定は従来の 'task-queue'）。
-// 他組織は QUEUE_LABEL を自組織のキュー用ラベルに変えれば、そのラベルで運用できる。
+// 作業対象リポジトリの取り込みラベル名。汎用化のため env 化（既定は従来の 'task-queue'）。
+// 他組織は QUEUE_LABEL を自組織の取り込みラベルに変えれば、そのラベルで運用できる。
 const QUEUE_LABEL        = process.env.QUEUE_LABEL         ?? 'task-queue';
 const VK_PORT            = Number(process.env.VK_TERMINALS_PORT   ?? 13847);
 const POLL_INTERVAL      = Number(process.env.POLL_INTERVAL_MS    ?? 60_000);
@@ -114,9 +114,9 @@ function getTargetRepoKey(issue) {
 // 実体は `done-gate.js`。`extractGitHubIssueUrl` と `github.getIssueState` を
 // 依存注入することでユニットテスト可能にしている。
 //
-// 背景: 対象 issue (= task-queue issue 本文に含まれる他リポジトリの issue URL) が
+// 背景: 作業対象リポジトリの issue (= タスク登録リポジトリ issue 本文に含まれる他リポジトリの issue URL) が
 // まだ open のまま、対応 PR がマージされただけで done に進めてしまうと、
-// 部分対応マージなどで task-queue 側が誤って close される事故が起きる。
+// 部分対応マージなどでタスク登録リポジトリ側が誤って close される事故が起きる。
 // 例: task-queue#49 で対象 issue は未完了のままなのに PR マージ検知で
 // done 化 → 手動 reopen が即座に再 close される、というループになった。
 // 現在は scanInProgressIssues / checkWaitingMergeIssues / recheckFailedIssues の
@@ -142,8 +142,8 @@ export { buildCommand, buildPaneTitle, assignWpEnvPort, expandTemplate, extractG
 // -------------------------------------------------------
 // PR 検出時に PR 側 / VK Terminals 側へ反映する共通フック。
 //
-// - PR 本文末尾に task-queue 側 issue URL を back-reference として追記
-//   （PR を単体で見ても task-queue 側のどの issue から出たかが追えるようにする）
+// - PR 本文末尾にタスク登録リポジトリ側 issue URL を back-reference として追記
+//   （PR を単体で見てもタスク登録リポジトリ側のどの issue から出たかが追えるようにする）
 // - VK Terminals に PR URL を流して apiPrUrl をセット
 //   （ペイン上部の PR ボタンから PR ページにジャンプできるようにする）
 //
@@ -153,7 +153,7 @@ export { buildCommand, buildPaneTitle, assignWpEnvPort, expandTemplate, extractG
 //
 // @param {object} args
 // @param {string|number|null} args.termId        対象ターミナル ID（null なら VK Terminals 通知は省略）
-// @param {string} args.queueIssueHtmlUrl         task-queue 側 issue の HTML URL（back-ref に使う）
+// @param {string} args.queueIssueHtmlUrl         タスク登録リポジトリ側 issue の HTML URL（back-ref に使う）
 // @param {{owner:string,repo:string,number:number}} args.prRef  対象 PR の owner/repo/number
 // @param {string} args.prUrl                     対象 PR の HTML URL
 // @param {string} args.logTag                    ログプレフィクス
@@ -1205,9 +1205,9 @@ async function recheckFailedIssues() {
 }
 
 // -------------------------------------------------------
-// ソースリポからのタスク取り込み（polling 方式）
+// 作業対象リポジトリからのタスク取り込み（polling 方式）
 // SOURCE_ORG 内で `task-queue` ラベルが付いた open issue を組織横断検索し、
-// 未取り込みのものを task-queue リポに status:awaiting-approval で複製する。
+// 未取り込みのものをタスク登録リポジトリに status:awaiting-approval で複製する。
 // 承認（status:ready への切り替え）と sequential / priority の付与は人手で行う。
 // -------------------------------------------------------
 
@@ -1230,13 +1230,13 @@ async function importNewTasks() {
     try {
       sourceIssues = await github.searchSourceIssuesByLabel(SOURCE_ORG, QUEUE_LABEL);
     } catch (err) {
-      console.warn(`[import] source issue 検索失敗: ${err.message}`);
+      console.warn(`[import] 作業対象リポジトリの Issue 検索失敗: ${err.message}`);
       return;
     }
 
     if (sourceIssues.length === 0) return;
 
-    console.log(`[import] task-queue ラベル付き source issue ${sourceIssues.length} 件を検出`);
+    console.log(`[import] task-queue ラベル付き作業対象リポジトリの Issue ${sourceIssues.length} 件を検出`);
 
     for (const src of sourceIssues) {
       let existing;
@@ -1296,9 +1296,9 @@ async function importNewTasks() {
         console.warn(`  [import] source 作業中ラベル付与失敗 (${src.html_url}): ${err.message}`);
       }
 
-      // source 側 issue に「task-queue で取り込みました」通知コメントを投稿する。
+      // 作業対象リポジトリ側 issue に「タスク登録リポジトリに取り込みました」通知コメントを投稿する。
       // 取り込み後はラベルが外れて一覧でも見分けが付かなくなるため、
-      // source 側を見る人がメタ issue へ辿れるようコメントで補完する。
+      // 作業対象リポジトリ側を見る人がメタ issue へ辿れるようコメントで補完する。
       // dedup は二重作成防止だけを担保しており、コメント投稿に失敗しても次ループで
       // 再投稿はしない（同じ issue に何度もコメントが付くのを避ける）。warn ログのみ。
       try {
@@ -1316,10 +1316,10 @@ async function importNewTasks() {
 // メインループ
 // -------------------------------------------------------
 async function loop() {
-  // 1. ソースリポから新規タスクを取り込む（VK Terminals 不要）
-  //    assignee 未設定時は安全側として何も拾わず、"all" 明示時のみ全 source issue を取り込む。
-  //    ログイン名指定時は「自分にアサインされた source issue だけ」を取り込み、
-  //    取り込んだメタ issue にも取り込んだユーザーをアサインする（担当が task-queue 側でも分かる）。
+  // 1. 作業対象リポジトリから新規タスクを取り込む（VK Terminals 不要）
+  //    assignee 未設定時は安全側として何も拾わず、"all" 明示時のみすべての作業対象リポジトリの Issue を取り込む。
+  //    ログイン名指定時は「自分にアサインされた作業対象リポジトリの Issue だけ」を取り込み、
+  //    取り込んだメタ issue にも取り込んだユーザーをアサインする（担当がタスク登録リポジトリ側でも分かる）。
   //    それでも複数端末が同時に取り込みを試みる可能性はあるため、importNewTasks 内で
   //    REST の removeLabel（強整合）を所有権ロックに使い、ラベルを実際に外せた1台だけが
   //    create するため二重取り込みにはならない。
