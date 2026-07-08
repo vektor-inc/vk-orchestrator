@@ -264,12 +264,12 @@ export class GitHubClient {
     return { owner, repo };
   }
 
-  // 作業対象リポジトリ側 issue に「タスク登録リポジトリに取り込まれた」通知コメントを投稿する。
+  // 作業対象リポジトリ側 issue に「task-queue で取り込みました」通知コメントを投稿する。
   // 取り込みループから直接呼ばれる。失敗時のリカバリは呼び出し側で warn ログのみ。
   async postSourceImportComment(sourceIssue, queueIssueUrl) {
     const { owner, repo } = this.parseSourceRepo(sourceIssue);
     const body = [
-      `🤖 タスク登録リポジトリに取り込みました → ${queueIssueUrl}`,
+      `🤖 task-queue で取り込みました → ${queueIssueUrl}`,
       '',
       'このタスクは自動オーケストレーター経由で対応されます。進行状況は上記メタ issue を参照してください。',
     ].join('\n');
