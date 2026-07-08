@@ -67,8 +67,8 @@ function readArgValue(name) {
 }
 
 // 自分にアサインされた issue だけを監視・実行するための assignee フィルタ（GitHub ログイン名）。
-// 優先順: --assignee 引数 > ASSIGNEE_FILTER 環境変数 > なし（＝従来どおり全件・後方互換）。
-// 設定すると複数メンバーが同じ task-queue リポを衝突なく共用できる。
+// 優先順: --assignee 引数 > ASSIGNEE_FILTER 環境変数 > なし。
+// なし / 空は安全側として何も拾わず、全件対象にする場合は "all" を明示する。
 const ASSIGNEE_FILTER = readArgValue('assignee') ?? process.env.ASSIGNEE_FILTER ?? null;
 
 if (!GITHUB_TOKEN) {
@@ -83,6 +83,12 @@ const github = new GitHubClient({
   assignee: ASSIGNEE_FILTER,
   queueLabel: QUEUE_LABEL,
 });
+
+function formatAssigneeMode(client) {
+  if (!client.pickupEnabled) return '(なし・拾わない)';
+  if (!client.assignee) return '(全件)';
+  return `${client.assignee} (担当分のみ)`;
+}
 
 // 現在 startTask を起動中の issue 番号のセット。
 // setInterval で並行発火する複数 loop が同じ issue を二重に起動するのを防ぐ。
@@ -1296,12 +1302,13 @@ async function importNewTasks() {
 // -------------------------------------------------------
 async function loop() {
   // 1. ソースリポから新規タスクを取り込む（VK Terminals 不要）
-  //    assignee 設定時は「自分にアサインされた source issue だけ」を取り込み、
+  //    assignee 未設定時は安全側として何も拾わず、"all" 明示時のみ全 source issue を取り込む。
+  //    ログイン名指定時は「自分にアサインされた source issue だけ」を取り込み、
   //    取り込んだメタ issue にも取り込んだユーザーをアサインする（担当が task-queue 側でも分かる）。
   //    それでも複数端末が同時に取り込みを試みる可能性はあるため、importNewTasks 内で
   //    REST の removeLabel（強整合）を所有権ロックに使い、ラベルを実際に外せた1台だけが
   //    create するため二重取り込みにはならない。
-  //    （assignee 未設定時は従来どおり全件取り込み。実行は assignee フィルタ側でも絞られる。）
+  //    pickupEnabled=false の場合は fetch 系が空配列を返すため、取り込み・実行とも何もしない。
   await importNewTasks();
 
   // 2. in-progress スキャン: 指示待ち検知 → waiting-input / PR 完了 → waiting-merge /
@@ -1389,7 +1396,7 @@ async function main() {
   console.log(`=== task-queue orchestrator ===`);
   console.log(`  repo         : ${GITHUB_OWNER}/${GITHUB_REPO}`);
   console.log(`  source org   : ${SOURCE_ORG}`);
-  console.log(`  assignee     : ${ASSIGNEE_FILTER ?? '(なし・全件)'}${ASSIGNEE_FILTER ? '（取り込み・実行とも担当分のみ。取り込み時に担当者をアサイン）' : ''}`);
+  console.log(`  assignee     : ${formatAssigneeMode(github)}`);
   console.log(`  terminal     : http://127.0.0.1:${VK_PORT}`);
   console.log(`  interval     : ${POLL_INTERVAL / 1000}s`);
   console.log(`  watchdog idle: ${WATCHDOG_IDLE / 60000}min`);
