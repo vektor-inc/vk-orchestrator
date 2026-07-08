@@ -1,6 +1,7 @@
 # Changelog
 
 - [ 仕様変更 ] assigneeFilter が null/空のときは issue を一切取り込まず、全件取り込みは "all" の明示指定に変更（新規ユーザーの誤取り込みを防止）
+- [ 仕様変更 ] vk-terminals を 1.5.2 から 1.9.1 にアップデート
 
 = 0.3.0 =
 - [ 機能追加 ] `up` の GUI(Electron) 起動に GPU モード設定（config `vkTerminals.gpu` / env `VK_TERMINALS_GPU`）を追加。`off`（既定・非 macOS）でエラー抑制、`default` で Chromium 任せを選択可能
