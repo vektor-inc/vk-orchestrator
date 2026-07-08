@@ -1,5 +1,6 @@
 # Changelog
 
+= 0.5.0 =
 - [ 機能追加 ] 起動時・VK Terminals 接続時に、サイドバーメニューへ「VK Orchestrator」セクション（task-queue の issue 一覧を開く項目）を POST /api/menu で冪等に投入するように
 
 = 0.4.0 =
