@@ -48,7 +48,7 @@ export function extractGitHubIssueUrl(text) {
 //
 // task-queue に複製したメタ issue ではなく、元の作業対象リポジトリの issue の
 // タイトル・リンクを表示するための純粋関数（issue #23）。
-// - metaIssue:      task-queue 側のメタ issue（`{ number, title, html_url }`）
+// - metaIssue:      タスク登録リポジトリ側のメタ issue（`{ number, title, html_url }`）
 // - resolvedTarget: 元の作業対象 issue が解決できたときのみ `{ number, title, url }`。
 //                   解決できない汎用タスクや取得失敗時は null を渡す。
 // resolvedTarget があればそれを、無ければ従来どおりメタ issue を表示対象にする。

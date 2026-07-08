@@ -165,7 +165,7 @@ export async function setTerminalTitle(port, termId, title, url = null) {
  * 指定ターミナルに PR URL をセットする。
  *
  * VK Terminals issue #44 で導入された PR ボタン表示用のフィールド `apiPrUrl` に流し込む。
- * task-queue 側（orchestrator）は PR を検知した時点でこの関数を呼び、ペイン上部の
+ * タスク登録リポジトリ側（orchestrator）は PR を検知した時点でこの関数を呼び、ペイン上部の
  * タスクタイトル行から PR ページへ直接ジャンプできるようにする。
  *
  * 実装メモ:

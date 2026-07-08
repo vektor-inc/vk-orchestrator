@@ -66,13 +66,13 @@ export class GitHubClient {
     this.octokit = new Octokit({ auth: token });
     this.owner = owner;
     this.repo = repo;
-    // 取り込み対象を識別するラベル名。汎用化のため注入可能（既定は従来の 'task-queue'）。
-    // source repo からの claim / restore で使う。
+    // 作業対象リポジトリの取り込みラベル名。汎用化のため注入可能（既定は従来の 'task-queue'）。
+    // 作業対象リポジトリからの claim / restore で使う。
     this.queueLabel = queueLabel || 'task-queue';
     // 自分の担当分だけを処理するための assignee フィルタ（GitHub ログイン名）。
     // null / 空文字 / 空白のみは安全側として issue を一切拾わない。
     // 全件を対象にする場合は "all" を明示する。ログイン名を設定すると fetch* 系の
-    // issue 取得に assignee 条件が加わり、複数メンバーが同じ task-queue リポを衝突なく共用できる。
+    // issue 取得に assignee 条件が加わり、複数メンバーが同じタスク登録リポジトリを衝突なく共用できる。
     const normalizedAssignee = typeof assignee === 'string' ? assignee.trim() : assignee;
     if (!normalizedAssignee) {
       this.pickupEnabled = false;
@@ -215,8 +215,8 @@ export class GitHubClient {
 
   // issueのラベルを更新（status を付け替える）
   //
-  // 副作用: status:done / status:failed への「遷移」を検知した場合、source 側 issue
-  // （task-queue 側 issue 本文 1 行目に記録された外部リポジトリの issue URL）に
+  // 副作用: status:done / status:failed への「遷移」を検知した場合、作業対象リポジトリ側 issue
+  // （タスク登録リポジトリ側 issue 本文 1 行目に記録された外部リポジトリの issue URL）に
   // 完了/失敗通知コメントを投稿する。同じ status を再設定するだけのケース（restart
   // 復旧で同状態に上書きされた、recheck ループで再評価された等）では遷移ではないので
   // コメントは投稿しない。コメント投稿失敗時はラベル更新の成功を損なわないよう warn のみ。
@@ -253,18 +253,18 @@ export class GitHubClient {
     }
   }
 
-  // source issue の repository_url（"https://api.github.com/repos/{owner}/{repo}" 形式）から
+  // 作業対象リポジトリの Issue の repository_url（"https://api.github.com/repos/{owner}/{repo}" 形式）から
   // owner / repo を取り出す。取り込み系メソッド共通のヘルパー。
   parseSourceRepo(sourceIssue) {
     const m = sourceIssue.repository_url.match(/repos\/([^/]+)\/([^/]+)$/);
     if (!m) {
-      throw new Error(`source issue の repository_url を解釈できません: ${sourceIssue.repository_url}`);
+      throw new Error(`作業対象リポジトリの Issue の repository_url を解釈できません: ${sourceIssue.repository_url}`);
     }
     const [, owner, repo] = m;
     return { owner, repo };
   }
 
-  // source 側 issue に「task-queue に取り込まれた」通知コメントを投稿する。
+  // 作業対象リポジトリ側 issue に「task-queue で取り込みました」通知コメントを投稿する。
   // 取り込みループから直接呼ばれる。失敗時のリカバリは呼び出し側で warn ログのみ。
   async postSourceImportComment(sourceIssue, queueIssueUrl) {
     const { owner, repo } = this.parseSourceRepo(sourceIssue);
@@ -367,12 +367,12 @@ export class GitHubClient {
     throw lastErr;
   }
 
-  // PR 本文末尾に「task-queue 側 issue 由来である」back-reference を追記する。
+  // PR 本文末尾に「タスク登録リポジトリ側 issue 由来である」back-reference を追記する。
   //
-  // task-queue 側 issue → PR の紐づけは appendPRUrlToIssue が担っているが、逆方向（PR → task-queue 側 issue）の
-  // 紐づけは Claude が PR 本文で言及する保証がなく、特に「task-queue リポに直接登録された汎用 issue」では
+  // タスク登録リポジトリ側 issue → PR の紐づけは appendPRUrlToIssue が担っているが、逆方向（PR → タスク登録リポジトリ側 issue）の
+  // 紐づけは Claude が PR 本文で言及する保証がなく、特に「タスク登録リポジトリに直接登録された汎用 issue」では
   // PR 本文に何の情報も載らないままになるケースがある。orchestrator が検知時に back-reference を入れることで、
-  // PR 単体を見ても task-queue 側のどの issue から出たかが追えるようにする。
+  // PR 単体を見てもタスク登録リポジトリ側のどの issue から出たかが追えるようにする。
   //
   // 既に同じ URL が PR 本文に含まれていればスキップ（idempotent）。
   // appendPRUrlToIssue と同じく指数バックオフ（1s, 3s, 9s）で最大3回リトライする。
@@ -393,7 +393,7 @@ export class GitHubClient {
         // 含む別 issue にヒットする）。本文から issue URL を抽出し、厳密一致で比較する。
         const issueUrls = (pr.body ?? '').match(ISSUE_URL_PATTERN) ?? [];
         if (issueUrls.includes(queueIssueUrl)) {
-          console.log(`  [GitHub] PR ${owner}/${repo}#${number} 本文に task-queue 側 issue URL は既に記載済みです`);
+          console.log(`  [GitHub] PR ${owner}/${repo}#${number} 本文にタスク登録リポジトリ側 issue URL は既に記載済みです`);
           return;
         }
 
@@ -405,7 +405,7 @@ export class GitHubClient {
           body: newBody,
         });
 
-        console.log(`  [GitHub] PR ${owner}/${repo}#${number} 本文に task-queue 側 issue URL を追記: ${queueIssueUrl}`);
+        console.log(`  [GitHub] PR ${owner}/${repo}#${number} 本文にタスク登録リポジトリ側 issue URL を追記: ${queueIssueUrl}`);
         return;
       } catch (err) {
         lastErr = err;
@@ -883,17 +883,17 @@ export class GitHubClient {
   }
 
   // -------------------------------------------------------
-  // ソースリポからのタスク取り込み（polling 方式）
+  // 作業対象リポジトリからのタスク取り込み（polling 方式）
   // -------------------------------------------------------
 
   // 指定 organization 内で `task-queue` ラベルが付いた open issue を組織横断で検索する。
-  // task-queue リポ自身は対象から除外（自分自身の status:* 系が誤検出されないため）。
+  // タスク登録リポジトリ自身は対象から除外（自分自身の status:* 系が誤検出されないため）。
   // GitHub Search API はインデックス遅延（通常数秒〜数分、稀に30分程度）があるが、
   // 取り込みはリアルタイム性より確実性が大事なので許容する。
   async searchSourceIssuesByLabel(org, label) {
     if (!this.pickupEnabled) return [];
 
-    // assignee が設定されている場合は「自分にアサインされた source issue だけ」を取り込む。
+    // assignee が設定されている場合は「自分にアサインされた作業対象リポジトリの Issue だけ」を取り込む。
     // assignee が null で pickupEnabled が true の場合は "all" 明示による全件取り込み。
     // null / 空文字 / 空白のみは pickupEnabled=false として、ここに到達する前に何も拾わない。
     const assigneeQ = this.assignee ? ` assignee:${this.assignee}` : '';
@@ -906,7 +906,7 @@ export class GitHubClient {
     return items.filter(i => !i.pull_request);
   }
 
-  // 指定された source issue URL が task-queue リポに既に取り込まれているか確認する。
+  // 指定された作業対象リポジトリの Issue URL がタスク登録リポジトリに既に取り込まれているか確認する。
   // open / closed 両方を見ることで、完了済みタスクへの再ラベル付けによる重複インポートを防ぐ。
   async findTaskQueueIssueBySourceUrl(sourceUrl) {
     const q = `repo:${this.owner}/${this.repo} is:issue "${sourceUrl}" in:body`;
@@ -921,10 +921,10 @@ export class GitHubClient {
     }) ?? null;
   }
 
-  // source issue を task-queue リポに新規 issue として取り込む。
+  // 作業対象リポジトリの Issue をタスク登録リポジトリに新規 issue として取り込む。
   // ラベルは status:awaiting-approval のみ。sequential / priority は人が承認時に付与する。
   // assignee が設定されていれば、取り込んだユーザー（＝この orchestrator の担当者）を
-  // 新規 issue にそのままアサインし、誰が取り込み・処理するかを task-queue 側でも示す。
+  // 新規 issue にそのままアサインし、誰が取り込み・処理するかをタスク登録リポジトリ側でも示す。
   // push 権限の無い assignee は GitHub API 側で無視される（エラーにはならない）。
   async createTaskQueueIssueFromSource(sourceIssue) {
     // repository_url は "https://api.github.com/repos/{owner}/{repo}" 形式
@@ -940,7 +940,7 @@ export class GitHubClient {
     return data;
   }
 
-  // source repo の issue から `task-queue` ラベルを外し、取り込みの所有権を確保する。
+  // 作業対象リポジトリの Issue から `task-queue` ラベルを外し、取り込みの所有権を確保する。
   //
   // 複数端末（assignee フィルタ運用）が同時に取り込みを試みても、REST の removeLabel は
   // Search API と違って強整合なので、ラベルを実際に外せた1台だけが取り込みを行う。
@@ -948,7 +948,7 @@ export class GitHubClient {
   // これにより Search API のインデックス遅延（最大30分）に関係なく二重取り込みを防げる。
   //
   // 戻り値: true=自分が確保した（取り込みを続行してよい） / false=他端末が確保済み（スキップ）。
-  // ラベル剥がしを create より「先」に行うため、create が失敗すると source が
+  // ラベル剥がしを create より「先」に行うため、create が失敗すると作業対象リポジトリの Issue が
   // どのラベルも無い orphan になる。呼び出し側は create 失敗時に
   // restoreSourceTaskQueueLabel でロールバックすること。
   async claimSourceIssueByLabelRemoval(sourceIssue) {
@@ -970,7 +970,7 @@ export class GitHubClient {
 
   // 取り込みの所有権確保後に create が失敗した場合のロールバック。
   // 先に外した `task-queue` ラベルを再付与し、次ループでリトライ可能な状態に戻す
-  // （source が orphan のまま放置されるのを防ぐ）。ラベル定義は repo 側に残っているので
+  // （作業対象リポジトリの Issue が orphan のまま放置されるのを防ぐ）。ラベル定義は repo 側に残っているので
   // addLabels で再付与できる（issue から外しただけでラベル自体は消えていない）。
   async restoreSourceTaskQueueLabel(sourceIssue) {
     const { owner, repo } = this.parseSourceRepo(sourceIssue);
@@ -982,9 +982,9 @@ export class GitHubClient {
     });
   }
 
-  // source repo の issue に作業中ラベル（既定: working。labels.workingInProgress で変更可）を付ける。
+  // 作業対象リポジトリの Issue に作業中ラベル（既定: working。labels.workingInProgress で変更可）を付ける。
   // 取り込み時点（task-queue ラベルを外すタイミング）で呼び出すことで、
-  // vk-kore の実行開始を待たずに source 側の一覧でも対応が始まったことを示す。
+  // vk-kore の実行開始を待たずに作業対象リポジトリ側の一覧でも対応が始まったことを示す。
   // vk-kore が実行開始時に付けるラベルと同名・同色（付与済みでも addLabels は冪等）。
   // addLabels はラベル未作成の repo では自動作成するがランダム色になるため、
   // 先に vk-kore と同じ色（FBCA04）で作成を試みる。422（作成済み）は無視する。

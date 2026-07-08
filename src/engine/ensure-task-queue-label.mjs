@@ -1,23 +1,24 @@
 /**
  * ensure-task-queue-label.mjs
  *
- * org の各リポジトリに取り込み対象ラベル（既定 `task-queue`）が存在することを保証する。
+ * 作業対象リポジトリに取り込みラベル（既定 `task-queue`）が存在することを保証する。
  *
  * 背景:
  *   orchestrator は GitHub Search API で `label:<queueLabel>` を組織横断検索して
- *   取り込み対象 issue を見つける（github.js の searchSourceIssuesByLabel）。
+ *   作業対象リポジトリの Issue を見つける（github.js の searchSourceIssuesByLabel）。
  *   ラベルは GitHub の issue 画面から都度作れるが、各リポジトリに事前に作っておくと
  *   依頼者がラベル名のタイプミスや未作成で詰まらない。新規リポジトリ追加時に流すと便利。
  *
- * ラベル名・対象 org / キューリポは config.json（`github.queueLabel` / `owner` / `repo`）
- * または環境変数（`QUEUE_LABEL` / `GITHUB_OWNER` / `GITHUB_REPO`）で切り替えられる。
+ * ラベル名・ラベル登録先 org / タスク登録リポジトリは
+ * config.json（`github.queueLabel` / `owner` / `repo`）または環境変数
+ * （`QUEUE_LABEL` / `GITHUB_OWNER` / `GITHUB_REPO`）で切り替えられる。
  * 優先順位は他のコードと同じく env > config.json > 既定値。
  *
  * 実行:
  *   node ensure-task-queue-label.mjs                # org 各リポに queueLabel を ensure
  *   node ensure-task-queue-label.mjs repo1 repo2    # 指定リポジトリのみ
  *   node ensure-task-queue-label.mjs --list         # 対象リポジトリ一覧を表示するだけ
- *   node ensure-task-queue-label.mjs --status       # キューリポに status:* / priority:* など運用ラベル一式を ensure
+ *   node ensure-task-queue-label.mjs --status       # タスク登録リポジトリに status:* / priority:* など運用ラベル一式を ensure
  *   node ensure-task-queue-label.mjs --status --list # 登録するラベル一覧を表示するだけ
  *
  * 認証:
@@ -53,10 +54,10 @@ assertSafeName('GITHUB_REPO', TASK_REPO);
 // ラベル名は `status:ready` のようにコロン等を含み得るため NAME_PATTERN では縛らない。
 // 空文字だけ弾き、API パスに埋め込む箇所（GET）では encodeURIComponent する。
 if (!LABEL) {
-  throw new Error('取り込み対象ラベル名（QUEUE_LABEL / github.queueLabel）が空です。');
+  throw new Error('作業対象リポジトリの取り込みラベル名（QUEUE_LABEL / github.queueLabel）が空です。');
 }
 
-// キューリポ（OWNER/TASK_REPO）に登録する運用ラベル一式（--status モードで使用）。
+// タスク登録リポジトリ（OWNER/TASK_REPO）に登録する運用ラベル一式（--status モードで使用）。
 // 色・説明は現行 task-queue リポの定義をそのまま写したもの。
 // orchestrator が自動付与する status:* は未存在でも API 側で自動作成されるが、
 // その場合ランダム色・説明なしになる。人が付ける status:ready / priority:* /
@@ -78,8 +79,8 @@ const QUEUE_REPO_LABELS = [
   { name: 'automerge',               color: '6d1e95', description: 'マージ手順を事前承認（orchestrator が自動マージ）' },
 ];
 
-// 取り込み対象ラベル（queueLabel）1 種類の定義。org 各リポへ ensure する既定モードで使用。
-const QUEUE_LABEL_DEF = { name: LABEL, color: '0075ca', description: `${LABEL} 取り込み対象ラベル` };
+// 作業対象リポジトリの取り込みラベル（queueLabel）1 種類の定義。org 各リポへ ensure する既定モードで使用。
+const QUEUE_LABEL_DEF = { name: LABEL, color: '0075ca', description: `${LABEL} 作業対象リポジトリの取り込みラベル` };
 
 if (!SETUP_TOKEN) {
   try {
@@ -146,9 +147,9 @@ function ensureLabel(repo, def) {
   console.log(`    ✅ label '${def.name}' 作成`);
 }
 
-// キューリポ（OWNER/TASK_REPO）に運用ラベル一式（QUEUE_REPO_LABELS）を ensure する。
+// タスク登録リポジトリ（OWNER/TASK_REPO）に運用ラベル一式（QUEUE_REPO_LABELS）を ensure する。
 function ensureQueueRepoLabels() {
-  console.log(`=== キューリポ '${OWNER}/${TASK_REPO}' に運用ラベル一式を ensure ===\n`);
+  console.log(`=== タスク登録リポジトリ '${OWNER}/${TASK_REPO}' に運用ラベル一式を ensure ===\n`);
 
   if (listOnly) {
     console.log('登録するラベル一覧:');
@@ -171,7 +172,7 @@ function ensureQueueRepoLabels() {
   console.log(`\n完了: ${ok} 件成功、${ng} 件失敗`);
 }
 
-// org 各リポジトリに取り込み対象ラベル（queueLabel）を ensure する（既定モード）。
+// org 各リポジトリに作業対象リポジトリの取り込みラベル（queueLabel）を ensure する（既定モード）。
 function ensureQueueLabelOnOrgRepos() {
   console.log(`=== '${LABEL}' ラベル ensure (org: ${OWNER}) ===\n`);
 

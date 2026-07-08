@@ -19,8 +19,8 @@ export function taskQueueIssuesUrl(owner, repo) {
 /**
  * VK Terminals のサイドバーメニューへ投入する VK Orchestrator セクションを組み立てる。
  *
- * 初期項目は task-queue の issue 一覧を開く項目。owner/repo は監視対象（既定
- * vektor-inc/task-queue）から解決する。POST /api/menu は同じ source の再投稿で
+ * 初期項目は task-queue の issue 一覧を開く項目。owner/repo はタスク登録リポジトリ
+ * （task-queue。既定 vektor-inc/task-queue）から解決する。POST /api/menu は同じ source の再投稿で
  * セクション全体を置換するため、ここでは常に完全なセクション payload を返す。
  *
  * @param {object} params

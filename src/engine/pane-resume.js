@@ -55,7 +55,7 @@ export function normalizeResumeMax(value, fallback = DEFAULT_RESUME_MAX) {
 /**
  * pane 消失が確定したタスクを、条件を満たせば自動再開（再キュー）する。
  *
- * @param {object}   issue   task-queue 側 issue（{ number, title, body }）
+ * @param {object}   issue   タスク登録リポジトリ側 issue（{ number, title, body }）
  * @param {object}   saved   state.json のタスクレコード（{ termId, wpPort, resumeCount, ... }）
  * @param {object}   deps
  * @param {function} deps.findPRForIssue        (owner, repo, number) => Promise<pr|null>

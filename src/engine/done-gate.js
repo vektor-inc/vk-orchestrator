@@ -1,16 +1,16 @@
 // -------------------------------------------------------
 // done 遷移ゲート（共通ヘルパー）
 // -------------------------------------------------------
-// task-queue 側 issue を `status:done` に遷移させてよいかを判定する共通ゲート。
+// タスク登録リポジトリ側 issue を `status:done` に遷移させてよいかを判定する共通ゲート。
 //
-// 背景: task-queue 側 issue を done 化する経路は複数存在する（scanInProgressIssues /
+// 背景: タスク登録リポジトリ側 issue を done 化する経路は複数存在する（scanInProgressIssues /
 // checkWaitingMergeIssues / recheckFailedIssues）。これらが「対象 PR がマージ済みか」
 // だけで判定していたため、
-// 対象 issue がまだ open（= 部分対応のみマージされた状態）でも task-queue 側が
+// 対象 issue がまだ open（= 部分対応のみマージされた状態）でもタスク登録リポジトリ側が
 // 自動 close されてしまう不具合があった（task-queue#49 の事象）。
 //
 // このヘルパーを done 遷移直前に呼ぶことで、対象 issue が open のうちは
-// task-queue 側を done 化しないように一元的にガードする。
+// タスク登録リポジトリ側を done 化しないように一元的にガードする。
 //
 // 仕様:
 //   - 本文に対象 issue URL が無い（task-queue 内部完結タスク等） → done OK
@@ -23,7 +23,7 @@
 // 依存注入で受け取る純粋関数。ユニットテストでは fake を渡してテストする。
 
 /**
- * @param {object}   issue              task-queue 側 issue（{ number, title, body }）
+ * @param {object}   issue              タスク登録リポジトリ側 issue（{ number, title, body }）
  * @param {object}   deps
  * @param {function} deps.extractGitHubIssueUrl  index.js の同名関数
  * @param {function} deps.getIssueState          (owner, repo, number) => Promise<{ state }>
