@@ -494,13 +494,22 @@ function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
     }
   }
 
+  if (hasOwnPath(cfg, 'multi_repo_task.default_engine')) {
+    const raw = String(getByPath(cfg, 'multi_repo_task.default_engine') ?? '').trim();
+    if (raw === '') {
+      deleteByPath(out, 'multi_repo_task.default_engine');
+    } else if (raw === 'claude' || raw === 'codex') {
+      setByPath(out, 'multi_repo_task.default_engine', raw);
+    }
+  }
+
   return out;
 }
 
 /**
  * 統合 config.json の vk-agents 共通設定を、vk-agents リポジトリの config.json へ投影する。
  *
- * vk-agents の config.json を正本として read-merge-write し、GUI が扱う2キーだけを更新する。
+ * vk-agents の config.json を正本として read-merge-write し、GUI が扱うキーだけを更新する。
  * そのうえで sync.sh --claude-global と同じく ~/.claude/vk-agents-settings.json へ同内容を
  * 派生ファイルとして書き出す（reader はこの派生ファイルを読むため）。
  * @param {object} cfg loadUnifiedConfig() の戻り値
@@ -514,7 +523,8 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
   const hasConfig = existsSync(configPath);
   const hasGuiSettings =
     hasOwnPath(cfg, 'features.coderabbit') ||
-    hasOwnPath(cfg, 'staff_wp_dev.engine');
+    hasOwnPath(cfg, 'staff_wp_dev.engine') ||
+    hasOwnPath(cfg, 'multi_repo_task.default_engine');
   if (!hasConfig && !hasGuiSettings) return null;
 
   let vkAgentsConfig;
@@ -597,6 +607,13 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
               { value: 'codex',  label: 'codex（単独作業のみ・push/PR は司が担当）' },
             ],
             help: 'staff-wp-dev（和田）を起動するときの実行エンジン。未設定時は claude にフォールバックします' },
+          { key: 'multi_repo_task.default_engine', label: 'vk-multi-repo-task の既定実行エンジン', type: 'select',
+            options: [
+              { value: '',       label: '未設定（既定: claude）' },
+              { value: 'claude', label: 'claude' },
+              { value: 'codex',  label: 'codex' },
+            ],
+            help: 'マルチリポジトリタスク（vk-multi-repo-task）を新規作成するときの既定エンジン。未設定時は claude にフォールバックします' },
         ],
       },
       {

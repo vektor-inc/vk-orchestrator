@@ -31,5 +31,8 @@
   },
   "staff_wp_dev": {
     "engine": ""
+  },
+  "multi_repo_task": {
+    "default_engine": ""
   }
 }
