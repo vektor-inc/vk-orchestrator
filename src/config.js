@@ -46,9 +46,6 @@ export const DEFAULT_TASK = {
   // 割り当て・{wpPort} 展開・マージ後クリーンアップを行い、無効時はそれらを一切行わず
   // {wpPort} を含まないテンプレートに差し替えることで vk-kore 以外のスキル／素のプロンプトも起動できる。
   wpEnv: { enabled: null },
-  // automerge の e2e 完了ゲートを使うか。既定 true=現行どおりマーカー必須。
-  // false でマーカー無しでも automerge が進む（CI/CodeRabbit ゲートは維持）。
-  requireE2eGate: true,
 };
 
 /**
@@ -69,8 +66,8 @@ export const DEFAULT_PROTOCOL = {
 /**
  * labels セクションの既定値。
  * task-queue のステータス/優先度ラベルと、対象リポ側の作業中ラベル。
- * e2e 完了マーカー（ラベル名・SHA 接頭辞）は config 化せず、src/github/index.js の
- * 固定定数（E2E_PASSED_LABEL / E2E_PASSED_SHA_PREFIX）のまま運用する。
+ * エージェントレビュー完了マーカー（ラベル名・SHA 接頭辞）は config 化せず、src/github/index.js の
+ * 固定定数（REVIEW_PASSED_LABEL / REVIEW_PASSED_SHA_PREFIX）のまま運用する。
  */
 export const DEFAULT_LABELS = {
   status: {
@@ -620,7 +617,6 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         label: 'タスク',
         fields: [
           { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'タスク着手時に各ペインへ投入するコマンド。{issueUrl} と {wpPort} は自動で置換（既定: /vk-kore {issueUrl} wp-env-port={wpPort} headless=1）' },
-          { key: 'task.requireE2eGate', label: 'automerge の e2e ゲートを必須化', type: 'boolean', default: true, help: 'ON で automerge 時に e2e 完了マーカーを必須にする（既定）。OFF にすると e2e を回さないプロジェクトでもマーカー無しで automerge が進む（CI/CodeRabbit ゲートは維持）' },
         ],
       },
     ],
@@ -670,15 +666,11 @@ export function getTaskConfig(cfg = loadUnifiedConfig()) {
   if (env.TASK_COMMAND_TEMPLATE) merged.commandTemplate = env.TASK_COMMAND_TEMPLATE;
   if (env.TASK_WP_PORT_BASE)     merged.portBase = Number(env.TASK_WP_PORT_BASE);
   if (env.TASK_WP_PORT_STRIDE)   merged.portStride = Number(env.TASK_WP_PORT_STRIDE);
-  // wpEnv.enabled / requireE2eGate の env 上書き。空文字・未定義は無視（parseEnvBool が
+  // wpEnv.enabled の env 上書き。空文字・未定義は無視（parseEnvBool が
   // undefined を返す）。'false' / '0' を false 扱いにし、それ以外の非空値は true とみなす。
   const wpEnvEnabled = parseEnvBool(env.TASK_WP_ENV_ENABLED);
   if (wpEnvEnabled !== undefined) {
     merged.wpEnv = { ...merged.wpEnv, enabled: wpEnvEnabled }; // ネスト構造を保つ
-  }
-  const requireE2eGate = parseEnvBool(env.TASK_REQUIRE_E2E_GATE);
-  if (requireE2eGate !== undefined) {
-    merged.requireE2eGate = requireE2eGate;
   }
   return merged;
 }

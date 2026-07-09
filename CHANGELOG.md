@@ -1,5 +1,6 @@
 # Changelog
 
+- [ 仕様変更 ] automerge 完了ゲートを `agent-review-passed` マーカー規約に一本化し、`requireE2eGate` 設定を廃止
 - [ 不具合修正 ] 設定パネルの「automerge の e2e ゲートを必須化」チェックボックスが、保存値なしの初期状態で実際の既定（ON）と異なり未チェック表示になる不具合を修正
 
 = 0.8.0 =

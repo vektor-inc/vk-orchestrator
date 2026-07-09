@@ -28,7 +28,6 @@ import {
   getVkTerminalsGpuMode,
   gpuLaunchOptions,
   DEFAULT_LABELS,
-  DEFAULT_TASK,
 } from '../src/config.js';
 
 function withTmpConfig(obj, fn) {
@@ -352,7 +351,7 @@ test('toVkTerminalsConfig: トークンを VK Terminals 設定に絶対に含め
 // task / protocol / labels セクション（汎用化の土台。既定値は現行ハードコード値）
 // -------------------------------------------------------
 
-const TASK_ENV_KEYS = ['TASK_COMMAND_TEMPLATE', 'TASK_WP_PORT_BASE', 'TASK_WP_PORT_STRIDE', 'TASK_WP_ENV_ENABLED', 'TASK_REQUIRE_E2E_GATE'];
+const TASK_ENV_KEYS = ['TASK_COMMAND_TEMPLATE', 'TASK_WP_PORT_BASE', 'TASK_WP_PORT_STRIDE', 'TASK_WP_ENV_ENABLED'];
 
 function withoutTaskEnv(fn) {
   const saved = Object.fromEntries(TASK_ENV_KEYS.map((k) => [k, process.env[k]]));
@@ -429,35 +428,6 @@ test('getTaskConfig: 空白のみの TASK_WP_ENV_ENABLED は未指定扱い（tr
   });
 });
 
-test('getTaskConfig: requireE2eGate は既定で true', () => {
-  withoutTaskEnv(() => {
-    assert.equal(getTaskConfig({}).requireE2eGate, true);
-  });
-});
-
-test('getTaskConfig: TASK_REQUIRE_E2E_GATE env が config.json より優先される', () => {
-  withoutTaskEnv(() => {
-    // 'false' / '0' は false 扱い
-    process.env.TASK_REQUIRE_E2E_GATE = 'false';
-    assert.equal(getTaskConfig({ task: { requireE2eGate: true } }).requireE2eGate, false);
-
-    process.env.TASK_REQUIRE_E2E_GATE = '0';
-    assert.equal(getTaskConfig({}).requireE2eGate, false);
-
-    // それ以外の非空値は true 扱い（config.json の false を上書きして true に戻せる）
-    process.env.TASK_REQUIRE_E2E_GATE = 'true';
-    assert.equal(getTaskConfig({ task: { requireE2eGate: false } }).requireE2eGate, true);
-  });
-});
-
-test('getTaskConfig: 空文字の TASK_REQUIRE_E2E_GATE は無視され config.json/既定が使われる', () => {
-  withoutTaskEnv(() => {
-    process.env.TASK_REQUIRE_E2E_GATE = '';
-    assert.equal(getTaskConfig({}).requireE2eGate, true);
-    assert.equal(getTaskConfig({ task: { requireE2eGate: false } }).requireE2eGate, false);
-  });
-});
-
 // -------------------------------------------------------
 // GUI 設定パネル由来の空値汚染（"" / null / [] / {}）が既定を潰さないこと
 // （設定パネルは全項目を書き戻すため、未入力項目が空で保存されうる）
@@ -492,7 +462,6 @@ test('pruneEmpty 経由でも false / 0 は有意値として残る', () => {
   withoutTaskEnv(() => {
     // wpEnv.enabled:false は空扱いにされず反映される
     assert.equal(getTaskConfig({ task: { wpEnv: { enabled: false } } }).wpEnv.enabled, false);
-    assert.equal(getTaskConfig({ task: { requireE2eGate: false } }).requireE2eGate, false);
   });
 });
 
@@ -576,7 +545,7 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
 
   const fieldKeys = desc.groups.flatMap((g) => (g.fields ?? []).map((f) => f.key));
   assert.ok(fieldKeys.includes('task.commandTemplate'));
-  assert.ok(fieldKeys.includes('task.requireE2eGate'));
+  assert.ok(!fieldKeys.includes('task.requireE2eGate')); // #57 で requireE2eGate 廃止
 
   assert.ok(!fieldKeys.includes('protocol.statusLinePrefix'));
   assert.ok(!fieldKeys.includes('protocol.statusTokens'));
@@ -597,15 +566,6 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
   // wp-env 連携は対象リポの .wp-env.json 有無で自動判定するようになり、手動トグルは撤去済み。
   // config.json / 環境変数（task.wpEnv.enabled）での明示指定は脱出ハッチとして残すが GUI には出さない。
   assert.ok(!fieldKeys.includes('task.wpEnv.enabled'));
-
-  // task.requireE2eGate は boolean 型の項目として登録されていること。
-  const requireE2eGateField = desc.groups
-    .flatMap((g) => g.fields ?? [])
-    .find((f) => f.key === 'task.requireE2eGate');
-  assert.ok(requireE2eGateField);
-  assert.equal(requireE2eGateField.type, 'boolean');
-  // env 非依存に、GUI 初期表示と実行時の生の既定を直接比較する。
-  assert.equal(requireE2eGateField.default, DEFAULT_TASK.requireE2eGate);
 });
 
 test('buildSettingsDescriptor: sourceOrg は空欄保存時に未指定として扱う', () => {
