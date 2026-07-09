@@ -220,6 +220,53 @@ export async function setTerminalPrUrl(port, termId, prUrl) {
 }
 
 /**
+ * 指定ターミナルの入力待ちマーカー状態を VK Terminals へ push する。
+ *
+ * waiting は #59 で追加。VK Terminals 側の `/api/set-title` は replace セマンティクスのため、
+ * clobber 防止として title / url / prUrl を getStates で引き継いで送る。
+ * vk-terminals#95 の受け口が入るまで waiting は無視される（前方互換）。
+ *
+ * @param {number} port              VK Terminals API ポート
+ * @param {string|number} termId     対象ターミナル ID
+ * @param {boolean} waiting          入力待ちマーカーを点灯するなら true、消灯するなら false
+ */
+export async function pushWaitingMarker(port, termId, waiting) {
+  const { terminals } = await getStates(port);
+  // /api/states のレスポンス形が想定外（terminals 欠落・非オブジェクト）だと
+  // Object.values(undefined) で TypeError になり原因が追いづらいため、
+  // 明示的に検証して原因が分かるエラーメッセージを返す。
+  if (!terminals || typeof terminals !== 'object') {
+    throw new Error(`invalid states response from VK Terminals (port=${port}): terminals missing`);
+  }
+  const term = Object.values(terminals).find(t => String(t.termId) === String(termId));
+  if (!term) {
+    throw new Error(`terminal ${termId} not found`);
+  }
+  const payload = {
+    termId,
+    title:   term.apiTitle ?? '',
+    url:     term.apiUrl   ?? '',
+    prUrl:   term.apiPrUrl ?? '',
+    waiting: !!waiting,
+  };
+  const res = await fetch(`${BASE_URL(port)}/api/set-title`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error ?? `set-title (waiting) failed: HTTP ${res.status}`);
+  }
+  return json;
+}
+
+/**
  * VK Terminals のサイドバーメニューへセクションを投稿する。
  *
  * POST /api/menu は source 単位で丸ごと置換する冪等 API のため、起動時・接続確立時・
