@@ -196,6 +196,31 @@ export function expandTemplate(template, vars = {}) {
   });
 }
 
+function normalizeCommandWhitespace(command) {
+  return String(command).replace(/\s+/g, ' ').trim();
+}
+
+function removeDisabledWpPortToken(command, wpPort) {
+  if (wpPort !== null && wpPort !== undefined) return normalizeCommandWhitespace(command);
+  return String(command)
+    .split(/\s+/)
+    .filter((token) => {
+      if (!token) return false;
+      if (!token.includes('{wpPort}')) return true;
+      return /\{\w+\}/.test(token.replaceAll('{wpPort}', ''));
+    })
+    .join(' ')
+    .trim();
+}
+
+function assertNoUnexpandedPlaceholders(command) {
+  const placeholders = [...String(command).matchAll(/\{\w+\}/g)].map(match => match[0]);
+  if (placeholders.length === 0) return;
+  throw new Error(
+    `コマンドテンプレートに未展開プレースホルダが残っています: ${[...new Set(placeholders)].join(', ')}`
+  );
+}
+
 // -------------------------------------------------------
 // Claudeへの送信コマンドを組み立てる。
 // 戻り値には wpPort も含め、呼び出し側（recordTaskStart）が再計算・再読み込みせずに
@@ -231,7 +256,9 @@ export async function buildCommand(title, body, termId, taskConfig = getTaskConf
       issueUrl: targetIssue.url,
       wpPort,
     });
-    return { prompt, targetIssue, wpPort };
+    const normalizedPrompt = removeDisabledWpPortToken(prompt, wpPort);
+    assertNoUnexpandedPlaceholders(normalizedPrompt);
+    return { prompt: normalizedPrompt, targetIssue, wpPort };
   }
 
   // 汎用タスク（GitHub issue URL なし）: テンプレートは使わず title + body をそのまま送る。

@@ -20,6 +20,7 @@ import { submitToClaude } from '../src/terminals/index.js';
 
 const PORT   = 13847;
 const TERMID = 'term-1';
+const CLEAR_INPUT_SEQUENCE = '\x01\x0b';
 
 let originalFetch;
 /**
@@ -27,6 +28,8 @@ let originalFetch;
  *   - statesQueue: /api/states が呼ばれるたびに先頭から取り出して返す
  *                  ({ lastOutputTime, lastLines } or 'error' → fetch を reject)
  *   - sendCalls:   /api/send で受け取った body のログ
+ *   - inputBuffer: VK Terminals 側の入力欄を模した蓄積バッファ
+ *   - submittedInputs: Enter で確定された入力行
  *   - statesCalls: /api/states の呼び出し回数
  */
 let scenario;
@@ -44,7 +47,7 @@ function mockFetch() {
       //   - Enter 未送信 & 本文 2 回以上: afterBodyRetry（本文再送後。未定義なら afterBody にフォールバック
       //                                    = 「再送しても画面は変わらない」動作になる）
       //   - Enter 送信済み（何回でも）:  afterEnter     （Enter 送信後の確認ポーリング）
-      const bodySends  = scenario.sendCalls.filter(c => c.input !== '\r').length;
+      const bodySends  = scenario.sendCalls.filter(c => c.input !== '\r' && c.input !== CLEAR_INPUT_SEQUENCE).length;
       const enterSends = scenario.sendCalls.filter(c => c.input === '\r').length;
       const phase =
         enterSends > 0 ? 'afterEnter'
@@ -73,6 +76,14 @@ function mockFetch() {
     if (u.endsWith('/api/send')) {
       const body = init && init.body ? JSON.parse(init.body) : {};
       scenario.sendCalls.push(body);
+      if (body.input === CLEAR_INPUT_SEQUENCE) {
+        scenario.inputBuffer = '';
+      } else if (body.input === '\r') {
+        scenario.submittedInputs.push(scenario.inputBuffer);
+        scenario.inputBuffer = '';
+      } else {
+        scenario.inputBuffer += body.input;
+      }
       return {
         ok: true,
         json: async () => ({ ok: true }),
@@ -96,6 +107,8 @@ function resetScenario(overrides = {}) {
     },
     statesCalls: 0,
     sendCalls:   [],
+    inputBuffer: '',
+    submittedInputs: [],
     ...overrides,
   };
 }
@@ -234,8 +247,29 @@ describe('submitToClaude', () => {
     assert.equal(result.bodyConfirmed, true, '再送でエコーを確認できたので bodyConfirmed=true');
     const bodySends = scenario.sendCalls.filter(c => c.input === 'hello');
     assert.equal(bodySends.length, 2, '飲み込まれた本文は 1 回だけ再送され、エコー確認後は再送を止める');
-    // 本文(2回) + Enter(1回) の計 3 回のみ。Enter 側は afterEnter で AND 判定 progressed=true のため再送なし。
-    assert.equal(scenario.sendCalls.length, 3, 'エコー確認後は Enter も 1 回で成功し、余計な再送が起きない');
+    // 本文(2回) + 再送前クリア(1回) + Enter(1回) の計 4 回のみ。
+    // Enter 側は afterEnter で AND 判定 progressed=true のため再送なし。
+    assert.equal(scenario.sendCalls.length, 4, 'エコー確認後は Enter も 1 回で成功し、余計な再送が起きない');
+    assert.equal(scenario.sendCalls[1].input, CLEAR_INPUT_SEQUENCE, '本文再送の直前に入力行をクリアする');
+  });
+
+  it('本文再送時は入力行をクリアしてから再送し、Enter で確定される行を重複連結しない', async () => {
+    const body = '/vk-kore https://github.com/vektor-inc/vk-blocks-pro/issues/123 wp-env-port=9100 headless=1';
+    scenario.statesByPhase = {
+      beforeBody: { lastOutputTime: 100, lastLines: 'Fable 5 is back and better than ever!' },
+      afterBody:  { lastOutputTime: 100, lastLines: 'Fable 5 is back and better than ever!' },
+      afterEnter: { lastOutputTime: 2_000, lastLines: 'after-enter' },
+    };
+
+    const result = await submitToClaude(PORT, TERMID, body, 10, FAST_OPTIONS);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.bodyConfirmed, false, 'エコー未確認のまま本文再送を使い切る');
+    assert.deepEqual(
+      scenario.submittedInputs,
+      [body],
+      '入力欄が追記型でも、Enter で確定されるコマンドは本文1回分だけになる'
+    );
   });
 
   it('(g) 全トークンが4文字未満の本文 → エコー確認をスキップし本文再送しない（bodyConfirmed=true）', async () => {

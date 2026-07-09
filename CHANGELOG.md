@@ -1,5 +1,8 @@
 # Changelog
 
+- [ 不具合修正 ] wp-env 無効時に vk-kore 起動コマンドへ未展開の `wp-env-port={wpPort}` が残って送出される不具合の修正
+- [ 不具合修正 ] ペインへの本文再送時に入力行をクリアせず起動コマンドが重複連結される不具合の修正
+
 = 0.9.0 =
 - [ 機能追加 ] status:waiting-input の issue 連動ペインに入力待ちマーカーを push し、定期監視で再点灯／in-progress 復帰時に消灯する機能を追加
 - [ 仕様変更 ] automerge 完了ゲートを `agent-review-passed` マーカー規約に一本化し、`requireE2eGate` 設定を廃止

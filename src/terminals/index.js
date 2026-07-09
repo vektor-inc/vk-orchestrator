@@ -8,6 +8,7 @@ import { stripControlChars } from '../engine/build-command.js';
 // 必ず「呼び出し時」に読むこと（関数化している理由）。
 const apiHost = () => process.env.VK_TERMINALS_HOST ?? '127.0.0.1';
 const BASE_URL = (port) => `http://${apiHost()}:${port}`;
+const CLEAR_INPUT_SEQUENCE = '\x01\x0b';
 
 /**
  * 自分自身が動作している VK Terminals ペインのタイトルを設定するための
@@ -592,6 +593,8 @@ export async function submitToClaude(port, termId, prompt, delayMs = 500, option
       `  [submitToClaude] 本文のエコーを確認できません。本文ごと再送します (termId=${termId}, attempt=${attempt + 1}/${safeMaxRetries})`
     );
     try {
+      // Ctrl-A で行頭へ戻してから Ctrl-K で行末まで削除する。空欄では no-op で、追記型の入力欄でも再送を置換にできる。
+      await sendToTerminal(port, termId, CLEAR_INPUT_SEQUENCE);
       await sendToTerminal(port, termId, body);
     } catch (err) {
       console.warn(`  [submitToClaude] 本文再送失敗（処理は継続）: ${err.message}`);
