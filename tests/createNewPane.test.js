@@ -39,6 +39,17 @@ test('createNewPane: noClaude:true をボディに乗せて termId を返す', a
   assert.deepEqual(lastBody, { cwd: '/work/dir', noClaude: true });
 });
 
+test('createNewPane: stashed:true を noClaude と一緒にボディへ乗せる', async () => {
+  await createNewPane(PORT, '/work/dir', { noClaude: true, stashed: true });
+  assert.deepEqual(lastBody, { cwd: '/work/dir', noClaude: true, stashed: true });
+});
+
+test('createNewPane: stashed 未指定ならボディにキーを付けない（後方互換）', async () => {
+  await createNewPane(PORT, '/work/dir', { noClaude: true });
+  assert.deepEqual(lastBody, { cwd: '/work/dir', noClaude: true });
+  assert.equal(Object.prototype.hasOwnProperty.call(lastBody, 'stashed'), false);
+});
+
 test('createNewPane: cwd のみ指定なら noClaude を付けない（後方互換）', async () => {
   await createNewPane(PORT, '/work/dir');
   assert.deepEqual(lastBody, { cwd: '/work/dir' });
