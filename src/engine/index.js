@@ -13,6 +13,7 @@ import {
   createNewPane,
   getStates,
   postMenu,
+  pushWaitingMarker,
   setOwnPaneTitle,
   setTerminalPrUrl,
   setTerminalTitle,
@@ -664,6 +665,66 @@ async function scanWaitingInputIssues() {
       console.log(`  [scan-waiting-input] issue #${issue.number}: 返信(id:${reply.id})を転送 → in-progress`);
     } catch (err) {
       console.warn(`  [scan-waiting-input] issue #${issue.number}: in-progress 復帰失敗（次ループ再試行）: ${err.message}`);
+    }
+  }
+}
+
+// -------------------------------------------------------
+// 入力待ちマーカー push スキャン: issue 連動ペインの入力待ち表示を
+// status ラベルの権威情報から VK Terminals へ冪等に push する。
+//
+// waiting-input は毎ループ点灯を投げ直すことで、ペイン側で一時的に誤解除されても
+// 再点灯できる。in-progress は明示的に消灯する。VK Terminals への副作用なので
+// loop() の checkHealth() ゲート通過後に呼ぶ。
+// -------------------------------------------------------
+async function scanWaitingMarkers() {
+  let waitingIssues;
+  try {
+    waitingIssues = await github.fetchWaitingInputIssues();
+  } catch (err) {
+    console.warn(`[scan-waiting-markers] waiting-input issue 取得失敗: ${err.message}`);
+    return;
+  }
+
+  for (const issue of waitingIssues) {
+    let saved = null;
+    try {
+      saved = await getTask(issue.number);
+    } catch (err) {
+      console.warn(`  [scan-waiting-markers] issue #${issue.number}: state 取得失敗: ${err.message}`);
+      continue;
+    }
+    if (saved?.termId == null) continue;
+
+    try {
+      await pushWaitingMarker(VK_PORT, saved.termId, true);
+    } catch (err) {
+      console.warn(`  [scan-waiting-markers] issue #${issue.number}: 入力待ちマーカー点灯失敗: ${err.message}`);
+    }
+  }
+
+  let inProgressIssues;
+  try {
+    inProgressIssues = await github.fetchInProgressIssues();
+  } catch (err) {
+    console.warn(`[scan-waiting-markers] in-progress issue 取得失敗: ${err.message}`);
+    return;
+  }
+
+  for (const issue of inProgressIssues) {
+    let saved = null;
+    try {
+      saved = await getTask(issue.number);
+    } catch (err) {
+      console.warn(`  [scan-waiting-markers] issue #${issue.number}: state 取得失敗: ${err.message}`);
+      continue;
+    }
+    if (saved?.termId == null) continue;
+
+    try {
+      await pushWaitingMarker(VK_PORT, saved.termId, false);
+    } catch (err) {
+      console.warn(`  [scan-waiting-markers] issue #${issue.number}: 入力待ちマーカー消灯失敗: ${err.message}`);
     }
   }
 }
@@ -1401,11 +1462,15 @@ async function loop() {
   // 8. 指示待ちスキャン: ユーザー返信を pane に転送して in-progress に戻す
   await scanWaitingInputIssues();
 
-  // 9. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す
+  // 9. issue 連動ペインの入力待ちマーカーを push（waiting-input→点灯 / in-progress→消灯）。
+  //    VK Terminals が要るので checkHealth 後ろ
+  await scanWaitingMarkers();
+
+  // 10. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す
   //    （VK Terminals states で pane の生死・無反応を見るため checkHealth 後ろ）
   await scanWatchdog();
 
-  // 10. ready をディスパッチ
+  // 11. ready をディスパッチ
   const issues = await github.fetchPendingIssues();
   if (issues.length === 0) {
     console.log('[poll] 実行待ちタスクなし');
