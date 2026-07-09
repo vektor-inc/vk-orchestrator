@@ -3,7 +3,7 @@
  * bump-vk-terminals.mjs
  *
  * vk-terminals 依存を指定タグ（バージョン）に更新する。
- * package.json / package-lock.json / CHANGELOG.md をまとめて書き換え、
+ * package.json / package-lock.json をまとめて書き換え、
  * 常に `git+https://…#<タグ>` 固定（SSH 回避）を維持する。
  *
  * 使い方:
@@ -77,22 +77,7 @@ lock = lock.replace(
 JSON.parse(lock);
 writeFileSync(lockPath, lock);
 
-// --- CHANGELOG.md ---
-const clPath = join(ROOT, 'CHANGELOG.md');
-let cl = readFileSync(clPath, 'utf8');
-const entryRe = /(vk-terminals 依存をタグ `)[^`]+(` に固定)/;
-if (entryRe.test(cl)) {
-  cl = cl.replace(entryRe, `$1${version}$2`);
-  writeFileSync(clPath, cl);
-  console.log('CHANGELOG.md: 既存の vk-terminals エントリを更新しました。');
-} else {
-  console.warn(
-    'CHANGELOG.md: 既存の vk-terminals エントリが見つかりませんでした。\n' +
-    '  次の行を [ 仕様変更 ] グループに手動で追加してください:\n' +
-    `  - [ 仕様変更 ] vk-terminals 依存をタグ \`${version}\` に固定し、取得を SSH から https に変更`
-  );
-}
-
 console.log(`\n✅ vk-terminals → ${version}（commit ${sha.slice(0, 7)}）に更新しました。`);
 console.log('   package.json / package-lock.json を git+https 固定で書き換え済み。');
+console.log('   CHANGELOG への追記が必要な場合はリリース工程で対応してください。');
 console.log('   反映: rm -rf node_modules/vk-terminals && npm run setup:terminals');
