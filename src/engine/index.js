@@ -949,7 +949,7 @@ async function checkWaitingMergeIssues() {
 
       // automerge・外部マージ（GitHub UI 等）いずれで merged になった場合も、
       // 残った wp-env コンテナ・worktree・マージ済みブランチをここで掃除する。
-      await runPostMergeCleanup(issue, prState, '[merge-watch]');
+      await runPostMergeCleanup(issue, prRef, prState, '[merge-watch]');
     } else {
       // open / 未マージで closed のどちらも「待ち続ける」方針（手動で再open or 再マージされる可能性を考慮）
       console.log(`  [merge-watch] issue #${issue.number}: PR #${prRef.number} は ${prState.state}${prState.merged ? '(merged)' : ''} のため待機継続`);
@@ -1053,7 +1053,7 @@ async function tryAutoMerge(issue, prRef, prState, prUrl) {
 
   // automerge は司ではなく orchestrator がマージするため、司の手動マージ時に vk-kore が
   // 呼ぶ vk-clean-repo（マージ後 cleanup）が走らない。ここで同等の掃除を肩代わりする。
-  await runPostMergeCleanup(issue, prState, tag);
+  await runPostMergeCleanup(issue, prRef, prState, tag);
 }
 
 // -------------------------------------------------------
@@ -1089,7 +1089,7 @@ async function snapshotWorktreePath(issueNumber) {
   }
 }
 
-async function runPostMergeCleanup(issue, prState, tag) {
+async function runPostMergeCleanup(issue, prRef, prState, tag) {
   let saved;
   try {
     saved = await getTask(issue.number);
@@ -1099,11 +1099,15 @@ async function runPostMergeCleanup(issue, prState, tag) {
   if (!saved) return; // 記録なし＝既に掃除済み or task-queue 管理外のマージ
 
   try {
+    const sourceRepo = prRef?.owner && prRef?.repo ? { owner: prRef.owner, repo: prRef.repo } : null;
     const summary = await cleanupForIssue({
       issueNumber: issue.number,
       wpPort: saved.wpPort ?? null,
       branch: prState?.headRefName ?? null,
       worktreePath: saved.worktreePath ?? null,
+      deleteRemoteBranch: sourceRepo
+        ? async (branch) => github.deleteRemoteBranch(sourceRepo.owner, sourceRepo.repo, branch)
+        : null,
     });
     await github.addComment(
       issue.number,
