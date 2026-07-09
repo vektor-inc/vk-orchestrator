@@ -10,8 +10,8 @@
 // （移設した engine 側は従来どおり process.env を読むため、applyConfigToEnv() で
 //   config.json の値を process.env に流し込んでから engine を起動する。挙動は不変。）
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
-import { resolve, dirname, join } from 'path';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'fs';
+import { resolve, dirname, join, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -397,6 +397,26 @@ function readJsonObject(path) {
   }
 }
 
+function writeJsonAtomic(path, obj) {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const tmpPath = join(
+    dir,
+    `.${basename(path)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
+  );
+  try {
+    writeFileSync(tmpPath, JSON.stringify(obj, null, 2) + '\n', { flag: 'wx' });
+    renameSync(tmpPath, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // temp が作られる前の失敗、または rename 済みなら削除不要。
+    }
+    throw err;
+  }
+}
+
 function detectVkAgentsRepoPath() {
   const candidates = [
     join(dirname(REPO_ROOT), 'vk-agents'),
@@ -497,13 +517,19 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
     hasOwnPath(cfg, 'staff_wp_dev.engine');
   if (!hasConfig && !hasGuiSettings) return null;
 
-  const next = applyVkAgentsGuiSettings(readJsonObject(configPath), cfg);
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, JSON.stringify(next, null, 2) + '\n');
+  let vkAgentsConfig;
+  try {
+    vkAgentsConfig = readJsonObject(configPath);
+  } catch (err) {
+    console.warn(`[vk-agents] ${configPath} が不正な JSON のため設定投影をスキップしました: ${err.message}`);
+    return null;
+  }
+
+  const next = applyVkAgentsGuiSettings(vkAgentsConfig, cfg);
+  writeJsonAtomic(configPath, next);
 
   const globalSettingsPath = options.globalSettingsPath ?? vkAgentsGlobalSettingsPath();
-  mkdirSync(dirname(globalSettingsPath), { recursive: true });
-  writeFileSync(globalSettingsPath, JSON.stringify(next, null, 2) + '\n');
+  writeJsonAtomic(globalSettingsPath, next);
 
   return { configPath, globalSettingsPath };
 }
@@ -564,7 +590,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         label: 'vk-agents（エージェント共通設定）',
         fields: [
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
-          { key: 'staff_wp_dev.engine', label: '和田の実行エンジン', type: 'select',
+          { key: 'staff_wp_dev.engine', label: 'staff-wp-dev（和田）の実行エンジン', type: 'select',
             options: [
               { value: '',       label: '未設定（既定: claude）' },
               { value: 'claude', label: 'claude' },

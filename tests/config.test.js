@@ -6,8 +6,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, readdirSync } from 'fs';
+import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import {
   loadUnifiedConfig,
@@ -213,6 +213,8 @@ test('writeVkAgentsSettings: GUI の2キーだけを read-merge-write し、既�
       staff_wp_dev: { engine: 'codex' },
     });
     assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), written);
+    assert.equal(readdirSync(dir).some((name) => name.endsWith('.tmp')), false);
+    assert.equal(readdirSync(dirname(globalSettingsPath)).some((name) => name.endsWith('.tmp')), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -275,6 +277,34 @@ test('writeVkAgentsSettings: config.json も GUI 設定も無ければ何もし�
     assert.throws(() => readFileSync(configPath, 'utf8'), /ENOENT/);
     assert.throws(() => readFileSync(globalSettingsPath, 'utf8'), /ENOENT/);
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeVkAgentsSettings: vk-agents config.json が不正 JSON なら warn して非書き込みでスキップする', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-'));
+  const savedWarn = console.warn;
+  const warnings = [];
+  try {
+    const configPath = join(dir, 'config.json');
+    const globalSettingsPath = join(dir, 'settings.json');
+    const invalidJson = '{ "features": {';
+    writeFileSync(configPath, invalidJson);
+    console.warn = (msg) => warnings.push(msg);
+
+    const result = writeVkAgentsSettings(
+      { features: { coderabbit: false }, staff_wp_dev: { engine: 'codex' } },
+      { configPath, globalSettingsPath },
+    );
+
+    assert.equal(result, null);
+    assert.equal(readFileSync(configPath, 'utf8'), invalidJson);
+    assert.throws(() => readFileSync(globalSettingsPath, 'utf8'), /ENOENT/);
+    assert.equal(readdirSync(dir).some((name) => name.endsWith('.tmp')), false);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /不正な JSON/);
+  } finally {
+    console.warn = savedWarn;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -568,6 +598,7 @@ test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () 
 
   const engineField = group.fields.find((f) => f.key === 'staff_wp_dev.engine');
   assert.ok(engineField);
+  assert.equal(engineField.label, 'staff-wp-dev（和田）の実行エンジン');
   assert.equal(engineField.type, 'select');
   assert.deepEqual(
     engineField.options.map((o) => o.value),
