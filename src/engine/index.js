@@ -13,7 +13,7 @@ import {
   createNewPane,
   getStates,
   postMenu,
-  pushWaitingMarker,
+  setExternalWaiting,
   setOwnPaneTitle,
   setTerminalPrUrl,
   setTerminalTitle,
@@ -697,7 +697,7 @@ async function scanWaitingMarkers() {
     if (saved?.termId == null) continue;
 
     try {
-      await pushWaitingMarker(VK_PORT, saved.termId, true);
+      await setExternalWaiting(VK_PORT, saved.termId, true);
     } catch (err) {
       console.warn(`  [scan-waiting-markers] issue #${issue.number}: 入力待ちマーカー点灯失敗: ${err.message}`);
     }
@@ -722,7 +722,7 @@ async function scanWaitingMarkers() {
     if (saved?.termId == null) continue;
 
     try {
-      await pushWaitingMarker(VK_PORT, saved.termId, false);
+      await setExternalWaiting(VK_PORT, saved.termId, false);
     } catch (err) {
       console.warn(`  [scan-waiting-markers] issue #${issue.number}: 入力待ちマーカー消灯失敗: ${err.message}`);
     }

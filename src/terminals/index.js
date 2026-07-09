@@ -221,39 +221,22 @@ export async function setTerminalPrUrl(port, termId, prUrl) {
 }
 
 /**
- * 指定ターミナルの入力待ちマーカー状態を VK Terminals へ push する。
+ * 指定ターミナルの入力待ちマーカー状態を VK Terminals へセットする。
  *
- * waiting は #59 で追加。VK Terminals 側の `/api/set-title` は replace セマンティクスのため、
- * clobber 防止として title / url / prUrl を getStates で引き継いで送る。
- * vk-terminals#95 の受け口が入るまで waiting は無視される（前方互換）。
+ * externalWaiting は `/api/set-status` だけが更新する。`/api/set-title` は title/url/prUrl の
+ * 置換用で waiting を反映しないため、状態引き継ぎのための getStates は不要。
+ * VK Terminals 側は waiting を厳密な boolean として検証するため、送信前に `!!` で正規化する。
  *
  * @param {number} port              VK Terminals API ポート
  * @param {string|number} termId     対象ターミナル ID
- * @param {boolean} waiting          入力待ちマーカーを点灯するなら true、消灯するなら false
+ * @param {*} waiting                入力待ちマーカーを点灯するなら truthy、消灯するなら falsy
+ * @returns {Promise<object>} VK Terminals のレスポンス JSON
  */
-export async function pushWaitingMarker(port, termId, waiting) {
-  const { terminals } = await getStates(port);
-  // /api/states のレスポンス形が想定外（terminals 欠落・非オブジェクト）だと
-  // Object.values(undefined) で TypeError になり原因が追いづらいため、
-  // 明示的に検証して原因が分かるエラーメッセージを返す。
-  if (!terminals || typeof terminals !== 'object') {
-    throw new Error(`invalid states response from VK Terminals (port=${port}): terminals missing`);
-  }
-  const term = Object.values(terminals).find(t => String(t.termId) === String(termId));
-  if (!term) {
-    throw new Error(`terminal ${termId} not found`);
-  }
-  const payload = {
-    termId,
-    title:   term.apiTitle ?? '',
-    url:     term.apiUrl   ?? '',
-    prUrl:   term.apiPrUrl ?? '',
-    waiting: !!waiting,
-  };
-  const res = await fetch(`${BASE_URL(port)}/api/set-title`, {
+export async function setExternalWaiting(port, termId, waiting) {
+  const res = await fetch(`${BASE_URL(port)}/api/set-status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ termId, waiting: !!waiting }),
   });
   let json;
   try {
@@ -262,7 +245,7 @@ export async function pushWaitingMarker(port, termId, waiting) {
     json = null;
   }
   if (!res.ok || !json?.ok) {
-    throw new Error(json?.error ?? `set-title (waiting) failed: HTTP ${res.status}`);
+    throw new Error(json?.error ?? `set-status failed: HTTP ${res.status}`);
   }
   return json;
 }
