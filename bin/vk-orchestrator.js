@@ -268,7 +268,9 @@ async function main() {
         const forwarded = process.argv.slice(3).filter((a) => a !== '--no-orchestrator');
         try {
           const repoRoot = resolve(__dirname, '..');
-          const termId = await createNewPane(port, repoRoot, { noClaude: true });
+          // orchestrator ペインは常時監視するものではないためサイドバーに格納して開く。
+          // VK Terminals が stashed 未対応の版では未知フィールドとして無視される。
+          const termId = await createNewPane(port, repoRoot, { noClaude: true, stashed: true });
           console.log(`orchestrator ペインを作成しました (termId: ${termId})`);
 
           // 素のシェルの起動を少し待ってからコマンドを流し込む（プロンプト出現前の取りこぼし対策）。

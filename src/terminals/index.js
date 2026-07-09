@@ -116,10 +116,13 @@ export async function findIdleTerminal(port, busyTermIds = new Set()) {
 //   cwd を指定するとそのディレクトリで開く（未指定なら VK Terminals 側で HOME にフォールバック）。
 //   options.noClaude=true を渡すと claude を自動起動せず素のシェルとしてペインを開く
 //   （orchestrator 自体をペインで動かす用途など）。
+//   options.stashed=true を渡すとサイドバーに格納した状態でペインを開く
+//   （VK Terminals が未対応の版では未知フィールドとして無視される）。
 export async function createNewPane(port, cwd = null, options = {}) {
   const body = {};
   if (cwd) body.cwd = cwd;
   if (typeof options.noClaude === 'boolean') body.noClaude = options.noClaude;
+  if (typeof options.stashed === 'boolean') body.stashed = options.stashed;
   const res = await fetch(`${BASE_URL(port)}/api/new-pane`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
