@@ -10,7 +10,13 @@
 // config.json / 環境変数に依存せずユニットテストできる。
 // -------------------------------------------------------
 
+import net from 'node:net';
+
 import { getTaskConfig } from '../config.js';
+
+const DEFAULT_PORT_PROBE_HOST = '127.0.0.1';
+export const DEFAULT_WP_ENV_PORT_SCAN_LIMIT = 128;
+const RESERVED_WP_ENV_PORTS = new Set([8888, 8889]);
 
 // -------------------------------------------------------
 // 表示不能な制御文字の除去（多層防御用の純粋ヘルパー）。
@@ -70,13 +76,108 @@ export function buildPaneTitle(metaIssue, resolvedTarget) {
 }
 
 // -------------------------------------------------------
-// ターミナルID → wp-env ポート割り当て（8888/8889 は禁止）
-// terminal 1 → portBase、terminal 2 → portBase+portStride …（testsPort は vk-kore 側で +1 する）
-// 基準値・間隔は task 設定（portBase / portStride）から取得する。config 未設定時は
-// 既定値（portBase=9100 / portStride=2）となり現行と同一のポート値になる。
+// 実 OS レベルのポート空き確認。テストでは assignWpEnvPort の options.isPortAvailable で
+// スタブを注入し、この関数へ到達しないようにする。
+// probe 後から wp-env 起動までの間に他プロセスへポートを奪われる TOCTOU は原理的に残る。
+// その場合は wp-env 自身の起動失敗として顕在化させ、ここでは事前スクリーニングに徹する。
 // -------------------------------------------------------
-export function assignWpEnvPort(termId, taskConfig = getTaskConfig()) {
-  return taskConfig.portBase + (Number(termId) - 1) * taskConfig.portStride;
+export function isPortAvailable(port, host = DEFAULT_PORT_PROBE_HOST) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    let settled = false;
+    const done = (available) => {
+      if (settled) return;
+      settled = true;
+      resolve(available);
+    };
+
+    server.once('error', () => done(false));
+    server.once('listening', () => {
+      server.close(() => done(true));
+    });
+    try {
+      server.listen(port, host);
+    } catch {
+      done(false);
+    }
+  });
+}
+
+function normalizePortSet(ports = []) {
+  const normalized = new Set();
+  for (const port of ports ?? []) {
+    const n = Number(port);
+    if (Number.isInteger(n) && n > 0) normalized.add(n);
+  }
+  return normalized;
+}
+
+function isReservedPair(port, reservedPorts) {
+  return (
+    RESERVED_WP_ENV_PORTS.has(port) ||
+    RESERVED_WP_ENV_PORTS.has(port + 1) ||
+    reservedPorts.has(port) ||
+    reservedPorts.has(port + 1)
+  );
+}
+
+// state.json の issue レコード群から、他アクティブタスクが確保済みの wp-env ポート集合を作る。
+// wp-env は wpPort と testsPort(wpPort+1) のペアを使うため、両方を予約済みに含める。
+// 現在起動しようとしている issue 自身の古いレコードは除外し、再開時の自己衝突を避ける。
+// -------------------------------------------------------
+export function collectReservedWpEnvPorts(taskRecords = {}, currentIssueNumber = null) {
+  const reserved = new Set();
+  const currentKey = currentIssueNumber == null ? null : String(currentIssueNumber);
+
+  for (const [issueNumber, record] of Object.entries(taskRecords ?? {})) {
+    if (currentKey !== null && String(issueNumber) === currentKey) continue;
+    const wpPort = Number(record?.wpPort);
+    if (!Number.isInteger(wpPort) || wpPort <= 0) continue;
+    reserved.add(wpPort);
+    reserved.add(wpPort + 1);
+  }
+
+  return reserved;
+}
+
+// ターミナルID → wp-env ポート割り当て（8888/8889 は禁止）
+// terminal 1 → portBase、terminal 2 → portBase+portStride …を探索起点にし、
+// 起点から portStride 刻みで wpPort/testsPort の空きペアを前方走査する。
+// 起点ペアが空いていれば従来どおり同一ポートを返す（後方互換）。
+// -------------------------------------------------------
+export async function assignWpEnvPort(termId, taskConfig = getTaskConfig(), options = {}) {
+  const base = Number(taskConfig.portBase);
+  const stride = Number(taskConfig.portStride);
+  const term = Number(termId);
+  if (!Number.isInteger(base) || base <= 0 || !Number.isInteger(stride) || stride <= 0 || !Number.isInteger(term) || term <= 0) {
+    throw new Error(`wp-env ポート割り当て設定が不正です (termId=${termId}, portBase=${taskConfig.portBase}, portStride=${taskConfig.portStride})`);
+  }
+
+  const startPort = base + (term - 1) * stride;
+  const maxScanAttempts = options.maxScanAttempts ?? DEFAULT_WP_ENV_PORT_SCAN_LIMIT;
+  if (!Number.isInteger(maxScanAttempts) || maxScanAttempts <= 0) {
+    throw new Error(`wp-env ポート探索上限が不正です (maxScanAttempts=${maxScanAttempts})`);
+  }
+
+  const probe = options.isPortAvailable ?? isPortAvailable;
+  const host = options.host ?? DEFAULT_PORT_PROBE_HOST;
+  const reservedPorts = normalizePortSet(options.reservedPorts);
+
+  for (let attempt = 0; attempt < maxScanAttempts; attempt += 1) {
+    const port = startPort + attempt * stride;
+    if (isReservedPair(port, reservedPorts)) continue;
+
+    const [wpAvailable, testsAvailable] = await Promise.all([
+      probe(port, host),
+      probe(port + 1, host),
+    ]);
+    if (wpAvailable && testsAvailable) return port;
+  }
+
+  const lastPort = startPort + (maxScanAttempts - 1) * stride;
+  throw new Error(
+    `wp-env の空きポートペアが見つかりません (start=${startPort}, last=${lastPort}, stride=${stride}, attempts=${maxScanAttempts})`
+  );
 }
 
 // -------------------------------------------------------
@@ -100,7 +201,7 @@ export function expandTemplate(template, vars = {}) {
 // 戻り値には wpPort も含め、呼び出し側（recordTaskStart）が再計算・再読み込みせずに
 // 同じ値を使い回せるようにする（二重計算・二重 config 読み込みの回避）。
 // -------------------------------------------------------
-export function buildCommand(title, body, termId, taskConfig = getTaskConfig(), wpEnvEnabled) {
+export async function buildCommand(title, body, termId, taskConfig = getTaskConfig(), wpEnvEnabled, portOptions = {}) {
   const fullText = [title, body].filter(Boolean).join('\n\n');
   const targetIssue = extractGitHubIssueUrl(fullText);
   // wp-env 連携が有効か。呼び出し側（startTask）が対象リポの `.wp-env.json` 有無から
@@ -115,7 +216,7 @@ export function buildCommand(title, body, termId, taskConfig = getTaskConfig(), 
   if (targetIssue) {
     // wp-env 有効時のみポートを割り当てる。無効時は null（state に保存されず、
     // 既存の runPostMergeCleanup / snapshotWorktreePath が !saved.wpPort で早期 return）。
-    const wpPort = enabled ? assignWpEnvPort(termId, taskConfig) : null;
+    const wpPort = enabled ? await assignWpEnvPort(termId, taskConfig, portOptions) : null;
     console.log(`  → GitHub issue URLを検出: ${targetIssue.url} → コマンドテンプレートを使用`);
     if (wpPort != null) {
       console.log(`  → wp-env ポート割り当て: ${wpPort} (testsPort=${wpPort + 1})`);

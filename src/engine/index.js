@@ -19,7 +19,7 @@ import {
   submitToClaude,
   waitForClaudeReady,
 } from '../terminals/index.js';
-import { recordTaskStart, updateTask, removeTask, getTask } from './state.js';
+import { recordTaskStart, updateTask, removeTask, getTask, getAllTasks } from './state.js';
 import { cleanupForIssue, formatCleanupSummary, inspectWorktreeByPort } from './cleanup.js';
 import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
 import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
@@ -29,7 +29,12 @@ import { startKeepAwake } from '../power/keep-awake.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
-import { buildCommand, buildPaneTitle, extractGitHubIssueUrl } from './build-command.js';
+import {
+  buildCommand,
+  buildPaneTitle,
+  collectReservedWpEnvPorts,
+  extractGitHubIssueUrl,
+} from './build-command.js';
 import { buildOrchestratorMenu } from './menu.js';
 
 // --- 設定 ---
@@ -251,7 +256,31 @@ async function startTask(issue) {
   // `.wp-env.json` 有無で自動判定）。結果を buildCommand に渡してポート割り当て・
   // {wpPort} 展開・クリーンアップ用 wpPort 保存の要否を決める。
   const wpEnvEnabled = await resolveWpEnvEnabled(issue);
-  const { prompt, targetIssue, wpPort } = buildCommand(title, body, termId, undefined, wpEnvEnabled);
+  let reservedPorts = new Set();
+  if (wpEnvEnabled) {
+    try {
+      reservedPorts = collectReservedWpEnvPorts(await getAllTasks(), number);
+    } catch (err) {
+      console.warn(`  [state] 予約済み wp-env ポート取得失敗（OS probe のみで続行）: ${err.message}`);
+    }
+  }
+  let prompt;
+  let targetIssue;
+  let wpPort;
+  try {
+    ({ prompt, targetIssue, wpPort } = await buildCommand(
+      title,
+      body,
+      termId,
+      undefined,
+      wpEnvEnabled,
+      { reservedPorts }
+    ));
+  } catch (err) {
+    // ペインを閉じる API がまだ無いためオーファンは残るが、failed 化でリトライストームは防止する。
+    await markTaskFailed(issue, `wp-env の空きポートを確保できませんでした（${err.message}）`);
+    return false;
+  }
 
   // state を記録する。termId は scanWaitingInputIssues が返信を pane に転送する際の
   // 引き当てに使うため、汎用タスク（targetIssue なし）でも必ず残す。
