@@ -1,5 +1,5 @@
-// scanWatchdog（pane 消失検知）から呼ばれるクリーンアップ処理。
-// 残った wp-env コンテナを destroy し、worktree を削除する（ブランチは残す）。
+// scanWatchdog（pane 消失検知）やマージ後処理から呼ばれるクリーンアップ処理。
+// 残った wp-env コンテナを destroy し、worktree と指定されたブランチを掃除する。
 import { promisify } from 'util';
 import { execFile } from 'child_process';
 import { promises as fs } from 'fs';
@@ -129,7 +129,7 @@ export async function inspectWorktreeByPort(wpPort) {
  * 部分失敗してもエラーは投げず、ログだけ残す（次のステップ＝status:ready 戻し／done 遷移は続行させたい）。
  * 返り値: クリーンアップ内容のサマリ（GitHub コメント用）
  */
-export async function cleanupForIssue({ issueNumber, wpPort, branch = null, worktreePath = null }) {
+export async function cleanupForIssue({ issueNumber, wpPort, branch = null, worktreePath = null, deleteRemoteBranch = null }) {
   const summary = {
     wpPort,
     containers: [],
@@ -140,6 +140,7 @@ export async function cleanupForIssue({ issueNumber, wpPort, branch = null, work
     worktreeRemoved: false,
     branch,
     branchRemoved: false,
+    remoteBranchRemoved: false,
     notes: [],
   };
 
@@ -165,14 +166,11 @@ export async function cleanupForIssue({ issueNumber, wpPort, branch = null, work
   }
   summary.worktreePath = workingDir;
 
-  if (!wpPort && !workingDir) {
-    summary.notes.push('wpPort も worktree パスも未記録のため掃除対象を特定できず');
-    return summary;
-  }
-
   // 3. compose プロジェクト単位で削除（destroy 相当：コンテナ＋ボリューム＋ネットワーク）。
   //    コンテナが生存していないときは docker 掃除はスキップし、worktree/branch 掃除へ進む。
-  if (containers.length === 0) {
+  if (!wpPort && !workingDir) {
+    summary.notes.push('wpPort も worktree パスも未記録のため docker / worktree 掃除はスキップ');
+  } else if (containers.length === 0) {
     summary.notes.push(wpPort ? `ポート ${wpPort} を使うコンテナなし（docker 掃除はスキップ）` : 'wpPort 未記録のため docker 掃除はスキップ');
   } else if (projectName) {
     // 3-1. コンテナを停止して削除
@@ -245,7 +243,19 @@ export async function cleanupForIssue({ issueNumber, wpPort, branch = null, work
     }
   }
 
-  // 5. マージ済みローカルブランチの削除（branch 指定時のみ。vk-clean-repo 相当）
+  // 5. マージ済みブランチの削除（branch 指定時のみ。vk-clean-repo 相当）
+  //    リモートブランチは worktree 特定と独立して GitHub API で削除する。
+  //    ローカルブランチは repoRoot が分かる場合だけベストエフォートで削除する。
+  if (branch && deleteRemoteBranch) {
+    try {
+      await deleteRemoteBranch(branch);
+      summary.remoteBranchRemoved = true;
+    } catch (err) {
+      summary.notes.push(`リモートブランチ削除失敗 (${branch}): ${err.message}`);
+    }
+  }
+
+  // 6. マージ済みローカルブランチの削除（branch 指定時のみ。vk-clean-repo 相当）
   //    worktree 削除後に実行する（チェックアウト中のブランチは削除できないため）。
   //    squash merge では git 上は未マージ扱いになるため -D で強制削除する。
   if (branch) {
@@ -267,7 +277,9 @@ export async function cleanupForIssue({ issueNumber, wpPort, branch = null, work
         }
       }
     } else {
-      summary.notes.push(`リポジトリルートが特定できずブランチ削除スキップ: ${branch}`);
+      summary.notes.push(
+        `ローカル worktree/branch は特定できず: ${branch}${summary.remoteBranchRemoved ? '（リモートは削除済み）' : ''}`
+      );
     }
   }
 
@@ -282,7 +294,9 @@ export function formatCleanupSummary(summary) {
     lines.push(`- worktree: \`${summary.worktreePath}\` ${summary.worktreeRemoved ? '→ 削除' : '→ 残存'}`);
   }
   if (summary.branch) {
-    lines.push(`- ブランチ: \`${summary.branch}\` ${summary.branchRemoved ? '→ 削除' : '→ 残存'}`);
+    const localStatus = summary.branchRemoved ? 'ローカル削除' : 'ローカル残存';
+    const remoteStatus = summary.remoteBranchRemoved ? 'リモート削除' : 'リモート残存';
+    lines.push(`- ブランチ: \`${summary.branch}\` → ${localStatus} / ${remoteStatus}`);
   }
   if (summary.containers.length > 0) {
     lines.push(`- 検出コンテナ: ${summary.containers.length} 個 → \`docker rm\` ${summary.containersRemoved} 件 / ボリューム ${summary.volumesRemoved} 件 / ネットワーク ${summary.networksRemoved} 件`);

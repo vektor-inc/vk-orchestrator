@@ -892,6 +892,33 @@ export class GitHubClient {
     return data;
   }
 
+  /**
+   * 対象リポジトリのリモートブランチを削除する。
+   *
+   * 既に削除済み、または ref が存在しない場合はクリーンアップ済みとして成功扱いにする。
+   * 422 は ref 不存在を示す場合のみ成功扱いにし、保護ブランチ拒否などの 422 は throw する。
+   *
+   * @param {string} owner
+   * @param {string} repo
+   * @param {string} branch
+   * @returns {Promise<void>}
+   */
+  async deleteRemoteBranch(owner, repo, branch) {
+    try {
+      await this.octokit.git.deleteRef({
+        owner,
+        repo,
+        ref: `heads/${branch}`,
+      });
+      console.log(`  [GitHub] remote branch ${owner}/${repo}:${branch} を削除しました`);
+    } catch (err) {
+      if (err.status === 404) return;
+      // 422 は ref 不存在時のみ削除済み扱いにする（保護ブランチ拒否などは呼び出し側へ渡す）。
+      if (err.status === 422 && /does not exist|not exist|not found|No commit found/i.test(err.message ?? '')) return;
+      throw err;
+    }
+  }
+
   // issue オブジェクトから automerge ラベルが付いているかを判定する。
   hasAutomergeLabel(issue) {
     return (issue.labels ?? []).some(l => (typeof l === 'string' ? l : l.name) === 'automerge');

@@ -26,15 +26,16 @@ describe('formatCleanupSummary', () => {
       worktreeRemoved: true,
       branch: 'feature/issue-12',
       branchRemoved: true,
+      remoteBranchRemoved: true,
       notes: [],
     });
     assert.match(out, /wp-env ポート: `8920`/);
     assert.match(out, /worktree: `\/repo\/\.claude\/worktrees\/issue-12` → 削除/);
-    assert.match(out, /ブランチ: `feature\/issue-12` → 削除/);
+    assert.match(out, /ブランチ: `feature\/issue-12` → ローカル削除 \/ リモート削除/);
     assert.match(out, /検出コンテナ: 3 個/);
   });
 
-  it('ブランチ削除に失敗したら残存表示になる', () => {
+  it('ローカルブランチ削除に失敗したらローカル残存表示になる', () => {
     const out = formatCleanupSummary({
       wpPort: 8920,
       containers: [],
@@ -45,9 +46,10 @@ describe('formatCleanupSummary', () => {
       worktreeRemoved: true,
       branch: 'feature/issue-12',
       branchRemoved: false,
+      remoteBranchRemoved: true,
       notes: ['ブランチ削除失敗 (feature/issue-12): error'],
     });
-    assert.match(out, /ブランチ: `feature\/issue-12` → 残存/);
+    assert.match(out, /ブランチ: `feature\/issue-12` → ローカル残存 \/ リモート削除/);
     assert.match(out, /備考: ブランチ削除失敗/);
   });
 
@@ -62,6 +64,7 @@ describe('formatCleanupSummary', () => {
       worktreeRemoved: true,
       branch: null,
       branchRemoved: false,
+      remoteBranchRemoved: false,
       notes: [],
     });
     assert.doesNotMatch(out, /ブランチ:/);
