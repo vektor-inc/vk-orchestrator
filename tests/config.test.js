@@ -28,6 +28,7 @@ import {
   getVkTerminalsGpuMode,
   gpuLaunchOptions,
   DEFAULT_LABELS,
+  DEFAULT_TASK,
 } from '../src/config.js';
 
 function withTmpConfig(obj, fn) {
@@ -603,6 +604,8 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
     .find((f) => f.key === 'task.requireE2eGate');
   assert.ok(requireE2eGateField);
   assert.equal(requireE2eGateField.type, 'boolean');
+  // env 非依存に、GUI 初期表示と実行時の生の既定を直接比較する。
+  assert.equal(requireE2eGateField.default, DEFAULT_TASK.requireE2eGate);
 });
 
 test('buildSettingsDescriptor: sourceOrg は空欄保存時に未指定として扱う', () => {
