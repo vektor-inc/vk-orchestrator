@@ -1,5 +1,6 @@
 # Changelog
 
+= 0.6.0 =
 - [ 仕様変更 ] wp-env 連携の ON/OFF を、対象リポジトリの `.wp-env.json` 有無から着手時に自動判定するようにし、GUI の手動トグル（wp-env 連携を有効化）を撤去（`task.wpEnv.enabled` の config.json / 環境変数での明示指定は自動判定より優先する脱出ハッチとして存続）
 - [ 仕様変更 ] 設定 UI から「エージェントルーム表示」トグルを撤去（config.json の `vkTerminals.agentroom` 直書きでのみ上書き可）
 - [ 仕様変更 ] vk-terminals を 1.9.1 から 1.10.1 にアップデート
