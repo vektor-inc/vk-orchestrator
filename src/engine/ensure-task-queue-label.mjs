@@ -62,7 +62,7 @@ if (!LABEL) {
 // orchestrator が自動付与する status:* は未存在でも API 側で自動作成されるが、
 // その場合ランダム色・説明なしになる。人が付ける status:ready / priority:* /
 // sequential / parallel / automerge は事前に作っておかないと候補に出ず手動作成が要る。
-// e2e-passed は各 source リポの PR に vk-kore が付けるラベルのためここには含めない。
+// agent-review-passed は各 source リポの PR に付けられるレビュー完了マーカーのラベルのためここには含めない。
 const QUEUE_REPO_LABELS = [
   { name: 'status:awaiting-approval', color: 'fbca04', description: '実行承認待ち（人の確認待ち。orchestrator は拾わない）' },
   { name: 'status:ready',            color: 'e4e669', description: '実行待ち（承認済み。orchestrator が拾う対象）' },

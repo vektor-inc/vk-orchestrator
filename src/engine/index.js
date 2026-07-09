@@ -1001,29 +1001,21 @@ async function tryAutoMerge(issue, prRef, prState, prUrl) {
     return;
   }
 
-  // e2e 完了ゲート: vk-kore の最終レビュー・e2e ゲート通過マーカーが現 head SHA に対して存在するときだけ進める。
+  // エージェントレビュー完了ゲート: レビュー完了マーカーが現 head SHA に対して存在するときだけ進める。
   // 必ず completion.headSha（検証時点の head）で照合する（prState 側の古い sha を使わない＝TOCTOU 回避）。
   // ゲート未充足は「保留（次ループで再判定）」であり失敗ではない。マーカーが付けば次ループでマージされる。
   // マーカー確認の API 失敗も checkPRCompletion と対称に「次ループ再試行（return）」へ丸める。
   // fail-closed: 確認できない間はマージへ進まず保留する（過去の PR 監視 tick クラッシュ対策とも整合）。
-  //
-  // task.requireE2eGate（既定 true）が false のプロジェクトは e2e を回さない前提のため、
-  // マーカー確認そのものをスキップして先へ進む（CI/CodeRabbit ゲートは checkPRCompletion で維持済み）。
-  const taskCfg = getTaskConfig();
-  if (taskCfg.requireE2eGate === false) {
-    console.log(`  ${tag}: requireE2eGate=false のため e2e 完了マーカーゲートをスキップ`);
-  } else {
-    let e2ePassed;
-    try {
-      e2ePassed = await github.hasE2ePassedMarker(prRef.owner, prRef.repo, prRef.number, completion.headSha);
-    } catch (err) {
-      console.warn(`  ${tag}: e2e-passed マーカー確認に失敗（次ループで再試行）: ${err.message}`);
-      return;
-    }
-    if (!e2ePassed) {
-      console.log(`  ${tag}: PR #${prRef.number} は e2e-passed マーカー（現 head SHA 一致）が無いため自動マージ保留`);
-      return;
-    }
+  let reviewPassed;
+  try {
+    reviewPassed = await github.hasReviewGateMarker(prRef.owner, prRef.repo, prRef.number, completion.headSha);
+  } catch (err) {
+    console.warn(`  ${tag}: agent-review-passed マーカー確認に失敗（次ループで再試行）: ${err.message}`);
+    return;
+  }
+  if (!reviewPassed) {
+    console.log(`  ${tag}: PR #${prRef.number} は agent-review-passed マーカー（現 head SHA 一致）が無いため自動マージ保留`);
+    return;
   }
 
   try {

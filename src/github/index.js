@@ -1,20 +1,20 @@
 import { Octokit } from '@octokit/rest';
 import { getLabelsConfig } from '../config.js';
 
-// e2e 完了マーカーのラベル名 / SHA コメント接頭辞。
-// 汎用化 issue #10 の方針により、ゲートの ON/OFF は config 化する一方、
-// マーカー名自体は固定定数のまま運用する（config.js の DEFAULT_LABELS からは撤去済み）。
-const E2E_PASSED_LABEL = 'e2e-passed';
-const E2E_PASSED_SHA_PREFIX = 'e2e-passed-sha:';
+// エージェントレビュー完了マーカーのラベル名 / SHA コメント接頭辞。
+// automerge を使うタスクコマンドがレビュー完了時に付ける公開規約として固定し、
+// マーカー名自体は config 化しない（config.js の DEFAULT_LABELS からは撤去済み）。
+const REVIEW_PASSED_LABEL = 'agent-review-passed';
+const REVIEW_PASSED_SHA_PREFIX = 'agent-review-passed-sha:';
 
-// e2e 完了マーカー判定で使う、呼び出し引数に依存しない固定値。
-// hasE2ePassedMarker が毎回組み立て直さないようモジュールスコープへホイストする。
+// エージェントレビュー完了マーカー判定で使う、呼び出し引数に依存しない固定値。
+// hasReviewGateMarker が毎回組み立て直さないようモジュールスコープへホイストする。
 // SHA コメントの投稿者として信頼する author_association（write 権限相当）。
 const TRUSTED_ASSOC = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-// 「<E2E_PASSED_SHA_PREFIX> <sha>」を拾う正規表現。接頭辞は正規表現メタ文字（`:` 等）を
+// 「<REVIEW_PASSED_SHA_PREFIX> <sha>」を拾う正規表現。接頭辞は正規表現メタ文字（`:` 等）を
 // 含む可能性があるため escape してから組み立てる。短縮 SHA（7 桁以上）も許容する。
-const E2E_SHA_RE = new RegExp(
-  `${E2E_PASSED_SHA_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*([0-9a-f]{7,40})`,
+const REVIEW_SHA_RE = new RegExp(
+  `${REVIEW_PASSED_SHA_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*([0-9a-f]{7,40})`,
   'i'
 );
 
@@ -792,41 +792,41 @@ export class GitHubClient {
     return { coderabbitOk, ciPassing, ready: coderabbitOk && ciPassing, headSha };
   }
 
-  // e2e 完了マーカー（vk-kore のレビュー・e2e ゲート通過）が現 head SHA に対して存在するか判定する。
-  // automerge ルートでのみ使用。マーカー = 'e2e-passed' ラベル + 「e2e-passed-sha: <sha>」コメント（現 head と一致）。
+  // エージェントレビュー完了マーカーが現 head SHA に対して存在するか判定する。
+  // automerge ルートでのみ使用。マーカー = 'agent-review-passed' ラベル + 「agent-review-passed-sha: <sha>」コメント（現 head と一致）。
   //
-  // マーカーの意味は「vk-kore の最終レビュー・e2e ゲート通過（e2e 実施 PASS または正当なスキップ）」だが、
+  // マーカーの意味は「automerge を使うタスクコマンドの最終レビュー通過」だが、
   // orchestrator は意味を解釈せず、ラベルと SHA 一致だけを見る。
   // SHA 照合は呼び出し側（checkPRCompletion）の headSha を渡して行い、検証後に push が割り込んだ場合は
   // SHA 不一致でマーカー無効＝自動マージ保留になる（TOCTOU 対策。mergePR(sha) と同じ思想）。
   // ラベルと SHA 一致コメントの両方が揃ったときだけ true を返す（安全側：マーカー無し → マージしない）。
   //
   // SHA コメントは投稿者の author_association が信頼境界内（OWNER/MEMBER/COLLABORATOR）の
-  // ものだけを採用する。マーカーの第一のゲートは「'e2e-passed' ラベル付与＝write 権限が必要」だが、
+  // ものだけを採用する。マーカーの第一のゲートは「'agent-review-passed' ラベル付与＝write 権限が必要」だが、
   // SHA コメント側も write 権限保持者に限定して二要素とも信頼境界に寄せる多層防御
   // （PR にコメントできる第三者によるマーカー偽装を防ぐ）。マーカーコメントは bot アプリではなく
-  // vk-kore（司）が member の gh トークンで投稿する運用のため、bot ログイン固定ではなく
+  // エージェント実行者が member の gh トークンで投稿する運用のため、bot ログイン固定ではなく
   // author_association で判定する（vk-agents[bot] 固定だと現行運用に合わずゲートが壊れる）。
-  async hasE2ePassedMarker(owner, repo, prNumber, headSha) {
-    // 1. E2E_PASSED_LABEL ラベルの有無を pulls.get の labels から判定する。
+  async hasReviewGateMarker(owner, repo, prNumber, headSha) {
+    // 1. REVIEW_PASSED_LABEL ラベルの有無を pulls.get の labels から判定する。
     const { data: pr } = await this.octokit.pulls.get({
       owner, repo, pull_number: prNumber,
     });
     const hasLabel = (pr.labels ?? []).some(
-      l => (typeof l === 'string' ? l : l.name) === E2E_PASSED_LABEL
+      l => (typeof l === 'string' ? l : l.name) === REVIEW_PASSED_LABEL
     );
     if (!hasLabel) return false;
 
-    // 2. コメントを全件取得し、「<E2E_PASSED_SHA_PREFIX> <sha>」が現 head SHA と前方一致するものを探す。
+    // 2. コメントを全件取得し、「<REVIEW_PASSED_SHA_PREFIX> <sha>」が現 head SHA と前方一致するものを探す。
     //    短縮 SHA（7 桁以上）も許容するため headSha.startsWith(sha) で判定する。
-    //    TRUSTED_ASSOC / E2E_SHA_RE は呼び出し引数に依存しないためモジュールスコープに定義。
+    //    TRUSTED_ASSOC / REVIEW_SHA_RE は呼び出し引数に依存しないためモジュールスコープに定義。
     const comments = await this.octokit.paginate(this.octokit.issues.listComments, {
       owner, repo, issue_number: prNumber, per_page: 100,
     });
     for (const c of comments) {
       // 信頼境界外（CONTRIBUTOR / NONE 等）の投稿者によるマーカーは無視する。
       if (!TRUSTED_ASSOC.has(c.author_association)) continue;
-      const m = (c.body ?? '').match(E2E_SHA_RE);
+      const m = (c.body ?? '').match(REVIEW_SHA_RE);
       if (m && headSha.startsWith(m[1].toLowerCase())) {
         return true;
       }
