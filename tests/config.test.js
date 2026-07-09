@@ -603,6 +603,7 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
     .find((f) => f.key === 'task.requireE2eGate');
   assert.ok(requireE2eGateField);
   assert.equal(requireE2eGateField.type, 'boolean');
+  assert.equal(requireE2eGateField.default, getTaskConfig({}).requireE2eGate);
 });
 
 test('buildSettingsDescriptor: sourceOrg は空欄保存時に未指定として扱う', () => {
