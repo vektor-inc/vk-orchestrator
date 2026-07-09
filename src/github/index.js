@@ -264,12 +264,12 @@ export class GitHubClient {
     return { owner, repo };
   }
 
-  // 作業対象リポジトリ側 issue に「task-queue で取り込みました」通知コメントを投稿する。
+  // 作業対象リポジトリ側 issue に「オーケストレーターが取り込みました」通知コメントを投稿する。
   // 取り込みループから直接呼ばれる。失敗時のリカバリは呼び出し側で warn ログのみ。
   async postSourceImportComment(sourceIssue, queueIssueUrl) {
     const { owner, repo } = this.parseSourceRepo(sourceIssue);
     const body = [
-      `🤖 task-queue で取り込みました → ${queueIssueUrl}`,
+      `🤖 オーケストレーターが取り込みました → ${queueIssueUrl}`,
       '',
       'このタスクは自動オーケストレーター経由で対応されます。進行状況は上記メタ issue を参照してください。',
     ].join('\n');
@@ -285,9 +285,9 @@ export class GitHubClient {
   // setStatus 経由で done / failed への遷移時にのみ呼ばれる。
   async postSourceCompletionComment(sourceRef, queueIssueUrl, newStatus) {
     const body = newStatus === 'status:done'
-      ? `✅ task-queue で完了しました → ${queueIssueUrl}`
+      ? `✅ オーケストレーターが完了しました → ${queueIssueUrl}`
       : [
-          `⚠️ task-queue で失敗ステータスになりました → ${queueIssueUrl}`,
+          `⚠️ オーケストレーターが失敗ステータスになりました → ${queueIssueUrl}`,
           '',
           '詳細はメタ issue を確認してください。',
         ].join('\n');
