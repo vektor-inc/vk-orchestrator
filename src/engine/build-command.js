@@ -78,6 +78,8 @@ export function buildPaneTitle(metaIssue, resolvedTarget) {
 // -------------------------------------------------------
 // 実 OS レベルのポート空き確認。テストでは assignWpEnvPort の options.isPortAvailable で
 // スタブを注入し、この関数へ到達しないようにする。
+// probe 後から wp-env 起動までの間に他プロセスへポートを奪われる TOCTOU は原理的に残る。
+// その場合は wp-env 自身の起動失敗として顕在化させ、ここでは事前スクリーニングに徹する。
 // -------------------------------------------------------
 export function isPortAvailable(port, host = DEFAULT_PORT_PROBE_HOST) {
   return new Promise((resolve) => {
@@ -93,7 +95,11 @@ export function isPortAvailable(port, host = DEFAULT_PORT_PROBE_HOST) {
     server.once('listening', () => {
       server.close(() => done(true));
     });
-    server.listen(port, host);
+    try {
+      server.listen(port, host);
+    } catch {
+      done(false);
+    }
   });
 }
 
@@ -143,7 +149,7 @@ export async function assignWpEnvPort(termId, taskConfig = getTaskConfig(), opti
   const base = Number(taskConfig.portBase);
   const stride = Number(taskConfig.portStride);
   const term = Number(termId);
-  if (!Number.isInteger(base) || !Number.isInteger(stride) || stride <= 0 || !Number.isInteger(term) || term <= 0) {
+  if (!Number.isInteger(base) || base <= 0 || !Number.isInteger(stride) || stride <= 0 || !Number.isInteger(term) || term <= 0) {
     throw new Error(`wp-env ポート割り当て設定が不正です (termId=${termId}, portBase=${taskConfig.portBase}, portStride=${taskConfig.portStride})`);
   }
 

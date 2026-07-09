@@ -264,14 +264,23 @@ async function startTask(issue) {
       console.warn(`  [state] 予約済み wp-env ポート取得失敗（OS probe のみで続行）: ${err.message}`);
     }
   }
-  const { prompt, targetIssue, wpPort } = await buildCommand(
-    title,
-    body,
-    termId,
-    undefined,
-    wpEnvEnabled,
-    { reservedPorts }
-  );
+  let prompt;
+  let targetIssue;
+  let wpPort;
+  try {
+    ({ prompt, targetIssue, wpPort } = await buildCommand(
+      title,
+      body,
+      termId,
+      undefined,
+      wpEnvEnabled,
+      { reservedPorts }
+    ));
+  } catch (err) {
+    // ペインを閉じる API がまだ無いためオーファンは残るが、failed 化でリトライストームは防止する。
+    await markTaskFailed(issue, `wp-env の空きポートを確保できませんでした（${err.message}）`);
+    return false;
+  }
 
   // state を記録する。termId は scanWaitingInputIssues が返信を pane に転送する際の
   // 引き当てに使うため、汎用タスク（targetIssue なし）でも必ず残す。

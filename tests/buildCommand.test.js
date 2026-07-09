@@ -13,6 +13,7 @@ import {
   assignWpEnvPort,
   collectReservedWpEnvPorts,
   expandTemplate,
+  isPortAvailable,
 } from '../src/engine/build-command.js';
 
 // #7 の既定値と同じフラット構造 + wpEnv フラグ（#8）。
@@ -93,6 +94,19 @@ test('assignWpEnvPort: 上限まで探索しても空きが無ければ例外を
     }),
     /空きポートペアが見つかりません/
   );
+});
+
+test('assignWpEnvPort: portBase が 0 または負値なら設定不正として早期に例外を投げる', async () => {
+  for (const portBase of [0, -9100]) {
+    await assert.rejects(
+      assignWpEnvPort(1, { ...DEFAULT_CFG, portBase }, PORTS_AVAILABLE),
+      /wp-env ポート割り当て設定が不正です/
+    );
+  }
+});
+
+test('isPortAvailable: 範囲外ポートは同期 RangeError を漏らさず false に倒す', async () => {
+  assert.equal(await isPortAvailable(70000), false);
 });
 
 test('buildCommand: 既定 config + issue URL → /vk-kore <url> wp-env-port=<port> headless=1', async () => {
