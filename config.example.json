@@ -22,5 +22,17 @@
       { "cwd": "/absolute/path/to/another/project" },
       { "cwd": "/absolute/path/to/plain/dir", "noClaude": true }
     ]
+  },
+  "vkAgents": {
+    "repoPath": ""
+  },
+  "features": {
+    "coderabbit": true
+  },
+  "staff_wp_dev": {
+    "engine": ""
+  },
+  "multi_repo_task": {
+    "default_engine": ""
   }
 }

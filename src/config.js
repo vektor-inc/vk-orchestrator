@@ -10,8 +10,8 @@
 // （移設した engine 側は従来どおり process.env を読むため、applyConfigToEnv() で
 //   config.json の値を process.env に流し込んでから engine を起動する。挙動は不変。）
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
-import { resolve, dirname, join } from 'path';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'fs';
+import { resolve, dirname, join, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -350,6 +350,200 @@ export function writeVkTerminalsConfig(cfg = {}, vkDir = resolveVkTerminalsDir()
   return target;
 }
 
+function getByPath(obj, path) {
+  return path.split('.').reduce((cur, key) => (cur == null ? undefined : cur[key]), obj);
+}
+
+function hasOwnPath(obj, path) {
+  let cur = obj;
+  for (const key of path.split('.')) {
+    if (cur == null || typeof cur !== 'object' || !Object.prototype.hasOwnProperty.call(cur, key)) {
+      return false;
+    }
+    cur = cur[key];
+  }
+  return true;
+}
+
+function setByPath(obj, path, value) {
+  const keys = path.split('.');
+  let cur = obj;
+  for (const key of keys.slice(0, -1)) {
+    if (cur[key] == null || typeof cur[key] !== 'object' || Array.isArray(cur[key])) {
+      cur[key] = {};
+    }
+    cur = cur[key];
+  }
+  cur[keys.at(-1)] = value;
+}
+
+function deleteByPath(obj, path) {
+  const keys = path.split('.');
+  let cur = obj;
+  for (const key of keys.slice(0, -1)) {
+    if (cur == null || typeof cur !== 'object') return;
+    cur = cur[key];
+  }
+  if (cur != null && typeof cur === 'object') delete cur[keys.at(-1)];
+}
+
+function readJsonObject(path) {
+  if (!path || !existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (err) {
+    throw new Error(`[Config] JSON ファイルの読み込みに失敗しました (${path}): ${err.message}`);
+  }
+}
+
+function writeJsonAtomic(path, obj) {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const tmpPath = join(
+    dir,
+    `.${basename(path)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
+  );
+  try {
+    writeFileSync(tmpPath, JSON.stringify(obj, null, 2) + '\n', { flag: 'wx' });
+    renameSync(tmpPath, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // temp が作られる前の失敗、または rename 済みなら削除不要。
+    }
+    throw err;
+  }
+}
+
+function detectVkAgentsRepoPath() {
+  const candidates = [
+    join(dirname(REPO_ROOT), 'vk-agents'),
+    join(dirname(dirname(REPO_ROOT)), 'vk-agents'),
+    join(homedir(), 'Documents', 'git', 'vk-agents'),
+    join(homedir(), 'Documents', 'claude', 'vk-agents'),
+  ];
+  return candidates.find((dir) => existsSync(join(dir, 'scripts', 'sync.sh'))) ?? null;
+}
+
+/**
+ * vk-agents リポジトリのパスを解決する。
+ * 優先順位: env VK_AGENTS_DIR/VK_AGENTS_REPO_PATH > config(vkAgents.repoPath) > 既知の兄弟配置。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @returns {string|null}
+ */
+export function resolveVkAgentsRepoPath(cfg = loadUnifiedConfig()) {
+  const raw =
+    process.env.VK_AGENTS_DIR ??
+    process.env.VK_AGENTS_REPO_PATH ??
+    cfg?.vkAgents?.repoPath ??
+    '';
+  const explicit = String(raw).trim();
+  if (explicit) return resolve(explicit);
+  return detectVkAgentsRepoPath();
+}
+
+/**
+ * vk-agents の個人設定 config.json パスを解決する。
+ * 優先順位: env VK_AGENTS_CONFIG/VK_AGENTS_CONFIG_PATH > config(vkAgents.configPath)
+ * > 解決済み vk-agents リポジトリ直下 config.json。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @returns {string|null}
+ */
+export function resolveVkAgentsConfigPath(cfg = loadUnifiedConfig()) {
+  const raw =
+    process.env.VK_AGENTS_CONFIG ??
+    process.env.VK_AGENTS_CONFIG_PATH ??
+    cfg?.vkAgents?.configPath ??
+    '';
+  const explicit = String(raw).trim();
+  if (explicit) return resolve(explicit);
+  const repoPath = resolveVkAgentsRepoPath(cfg);
+  return repoPath ? join(repoPath, 'config.json') : null;
+}
+
+/**
+ * vk-agents の Claude グローバル派生設定パス。
+ * sync.sh --claude-global と同じ場所へ、vk-agents config.json の投影として書く。
+ * @param {string} [homeDir]
+ * @returns {string}
+ */
+export function vkAgentsGlobalSettingsPath(homeDir = homedir()) {
+  return join(homeDir, '.claude', 'vk-agents-settings.json');
+}
+
+function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
+  const out = deepMerge({}, vkAgentsConfig);
+
+  if (hasOwnPath(cfg, 'features.coderabbit')) {
+    const raw = getByPath(cfg, 'features.coderabbit');
+    if (raw === true || raw === false) {
+      setByPath(out, 'features.coderabbit', raw);
+    } else if (raw === 'true' || raw === 'false') {
+      setByPath(out, 'features.coderabbit', raw === 'true');
+    }
+  }
+
+  if (hasOwnPath(cfg, 'staff_wp_dev.engine')) {
+    const raw = String(getByPath(cfg, 'staff_wp_dev.engine') ?? '').trim();
+    if (raw === '') {
+      deleteByPath(out, 'staff_wp_dev.engine');
+    } else if (raw === 'claude' || raw === 'codex') {
+      setByPath(out, 'staff_wp_dev.engine', raw);
+    }
+  }
+
+  if (hasOwnPath(cfg, 'multi_repo_task.default_engine')) {
+    const raw = String(getByPath(cfg, 'multi_repo_task.default_engine') ?? '').trim();
+    if (raw === '') {
+      deleteByPath(out, 'multi_repo_task.default_engine');
+    } else if (raw === 'claude' || raw === 'codex') {
+      setByPath(out, 'multi_repo_task.default_engine', raw);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * 統合 config.json の vk-agents 共通設定を、vk-agents リポジトリの config.json へ投影する。
+ *
+ * vk-agents の config.json を正本として read-merge-write し、GUI が扱うキーだけを更新する。
+ * そのうえで sync.sh --claude-global と同じく ~/.claude/vk-agents-settings.json へ同内容を
+ * 派生ファイルとして書き出す（reader はこの派生ファイルを読むため）。
+ * @param {object} cfg loadUnifiedConfig() の戻り値
+ * @param {{ configPath?: string, globalSettingsPath?: string }} [options]
+ * @returns {{ configPath: string, globalSettingsPath: string }|null}
+ */
+export function writeVkAgentsSettings(cfg = {}, options = {}) {
+  const configPath = options.configPath ?? resolveVkAgentsConfigPath(cfg);
+  if (!configPath) return null;
+
+  const hasConfig = existsSync(configPath);
+  const hasGuiSettings =
+    hasOwnPath(cfg, 'features.coderabbit') ||
+    hasOwnPath(cfg, 'staff_wp_dev.engine') ||
+    hasOwnPath(cfg, 'multi_repo_task.default_engine');
+  if (!hasConfig && !hasGuiSettings) return null;
+
+  let vkAgentsConfig;
+  try {
+    vkAgentsConfig = readJsonObject(configPath);
+  } catch (err) {
+    console.warn(`[vk-agents] ${configPath} が不正な JSON のため設定投影をスキップしました: ${err.message}`);
+    return null;
+  }
+
+  const next = applyVkAgentsGuiSettings(vkAgentsConfig, cfg);
+  writeJsonAtomic(configPath, next);
+
+  const globalSettingsPath = options.globalSettingsPath ?? vkAgentsGlobalSettingsPath();
+  writeJsonAtomic(globalSettingsPath, next);
+
+  return { configPath, globalSettingsPath };
+}
+
 /**
  * VK Terminals の設定パネル用「設定ディスクリプタ」を組み立てる。
  *
@@ -400,6 +594,26 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
             help: 'GUI(Electron) の GPU 利用モード（次回 up で反映）。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、default=Chromium 任せ' },
           { key: 'vkTerminals.initialCommand',  label: '初期コマンド',        type: 'text', help: '各ペイン起動時に自動実行するコマンド（次回 up/apply で反映）' },
           { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
+        ],
+      },
+      {
+        label: 'vk-agents（エージェント共通設定）',
+        fields: [
+          { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
+          { key: 'staff_wp_dev.engine', label: 'staff-wp-dev（和田）の実行エンジン', type: 'select',
+            options: [
+              { value: '',       label: '未設定（既定: claude）' },
+              { value: 'claude', label: 'claude' },
+              { value: 'codex',  label: 'codex（単独作業のみ・push/PR は司が担当）' },
+            ],
+            help: 'staff-wp-dev（和田）を起動するときの実行エンジン。未設定時は claude にフォールバックします' },
+          { key: 'multi_repo_task.default_engine', label: 'vk-multi-repo-task の既定実行エンジン', type: 'select',
+            options: [
+              { value: '',       label: '未設定（既定: claude）' },
+              { value: 'claude', label: 'claude' },
+              { value: 'codex',  label: 'codex' },
+            ],
+            help: 'マルチリポジトリタスク（vk-multi-repo-task）を新規作成するときの既定エンジン。未設定時は claude にフォールバックします' },
         ],
       },
       {
