@@ -170,11 +170,18 @@ async function main() {
       break;
     case 'apply': {
       // 統合設定の vkTerminals セクションから、VK Terminals のインストールディレクトリ内
-      // config.json を書き出す。
-      const { writeVkTerminalsConfig } = await import('../src/config.js');
+      // config.json を書き出す。vk-agents 共通設定も同じ apply/up タイミングで投影する。
+      const { writeVkTerminalsConfig, writeVkAgentsSettings } = await import('../src/config.js');
       const vkDir = await resolveVkDirOrExit();
       const target = writeVkTerminalsConfig(unifiedConfig, vkDir);
       console.log(`VK Terminals 設定を書き出しました → ${target}`);
+      const vkAgents = writeVkAgentsSettings(unifiedConfig);
+      if (vkAgents) {
+        console.log(`vk-agents 設定を書き出しました → ${vkAgents.configPath}`);
+        console.log(`vk-agents 派生設定を書き出しました → ${vkAgents.globalSettingsPath}`);
+      } else {
+        console.warn('[apply] vk-agents 設定の投影はスキップしました（config.json 未作成、またはパス未解決）。');
+      }
       await warnIfShadowedByHomeConfig();
       break;
     }
@@ -191,7 +198,7 @@ async function main() {
       // API が listen してからでないとペイン作成もできないため、waitForHealth で疎通を待つ。
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
-      const { writeVkTerminalsConfig, writeSettingsDescriptor, resolveConfigPath,
+      const { writeVkTerminalsConfig, writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath,
         getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
       const { waitForHealth, createNewPane, sendToTerminal } =
@@ -203,6 +210,13 @@ async function main() {
       const vkDir = await resolveVkDirOrExit();
       const target = writeVkTerminalsConfig(unifiedConfig, vkDir);
       console.log(`VK Terminals 設定を反映しました → ${target}`);
+      const vkAgents = writeVkAgentsSettings(unifiedConfig);
+      if (vkAgents) {
+        console.log(`vk-agents 設定を反映しました → ${vkAgents.configPath}`);
+        console.log(`vk-agents 派生設定を反映しました → ${vkAgents.globalSettingsPath}`);
+      } else {
+        console.warn('[up] vk-agents 設定の投影はスキップしました（config.json 未作成、またはパス未解決）。');
+      }
       await warnIfShadowedByHomeConfig();
 
       // GUI の設定パネルから統合 config.json を直接編集できるよう、設定ディスクリプタを
