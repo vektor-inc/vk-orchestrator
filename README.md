@@ -208,6 +208,7 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 |---|---|---|---|
 | `task.commandTemplate` | `TASK_COMMAND_TEMPLATE` | タスク着手時に各ペインへ投入するコマンド。`{issueUrl}` / `{wpPort}` は自動置換 | `/vk-kore {issueUrl} wp-env-port={wpPort} headless=1` |
 | `features.coderabbit` | — | エージェント側の CodeRabbit 監視を有効化（vk-agents 設定へ投影）。OFF で `/code-review` 等での確認に切替 | `true` |
+| `features.coderabbit_ignore` | — | `features.coderabbit` が ON のとき、`/vk-pr` の PR 本文に `@coderabbitai ignore` を記載して CodeRabbit レビューをスキップ | `false` |
 | `staff_wp_dev.engine` | — | staff-wp-dev（和田）の実行エンジン（`claude` / `codex`） | 空＝`claude` |
 | `multi_repo_task.default_engine` | — | vk-multi-repo-task を新規作成するときの既定エンジン（`claude` / `codex`） | 空＝`claude` |
 | `vkAgents.repoPath` | `VK_AGENTS_DIR` / `VK_AGENTS_REPO_PATH` | vk-agents リポジトリのパス。未指定は既知の private clone を優先探索し、無ければ同梱 `vendor/vk-agents-public` を使用 | 自動探索 |
