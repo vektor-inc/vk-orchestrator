@@ -173,10 +173,11 @@ export async function setTerminalTitle(port, termId, title, url = null) {
  * タスクタイトル行から PR ページへ直接ジャンプできるようにする。
  *
  * 実装メモ:
- *   VK Terminals 側は `/api/set-title` の `prUrl` フィールドで受け取る仕様で、
- *   `title` / `url` / `prUrl` の 3 つをペアで置換するセマンティクスを持つ。
+ *   VK Terminals 側は `/api/set-title` の `prUrl` / `prMerged` フィールドで受け取る仕様で、
+ *   `title` / `url` / `prUrl` / `prMerged` をペアで置換するセマンティクスを持つ。
  *   そのため prUrl だけ単独更新するには、先に getStates で現在の apiTitle / apiUrl を
  *   取得してから一緒に送り直す必要がある。
+ *   prMerged を省略すると VK Terminals 側で false 扱いになり、マージ済み表示は解除される。
  *
  *   呼び出し側 (recordPRAcrossSurfaces) は失敗を warn で握りつぶす運用なので、
  *   状態取得などの途中失敗は throw して上に伝える。
@@ -184,8 +185,11 @@ export async function setTerminalTitle(port, termId, title, url = null) {
  * @param {number} port           VK Terminals API ポート
  * @param {string|number} termId  対象ターミナル ID
  * @param {string|null} prUrl     PR の HTML URL（クリアしたい場合は空文字）
+ * @param {object} [options]
+ * @param {boolean} [options.prMerged=false] PR ボタンをマージ済み表示（紫）へ切り替えるフラグ。
+ *   既定 false。省略時は VK Terminals 側でも false 扱いになる。
  */
-export async function setTerminalPrUrl(port, termId, prUrl) {
+export async function setTerminalPrUrl(port, termId, prUrl, { prMerged = false } = {}) {
   const { terminals } = await getStates(port);
   // /api/states のレスポンス形が想定外（terminals 欠落・非オブジェクト）だと
   // Object.values(undefined) で TypeError になり原因が追いづらいため、
@@ -199,9 +203,10 @@ export async function setTerminalPrUrl(port, termId, prUrl) {
   }
   const payload = {
     termId,
-    title: term.apiTitle ?? '',
-    url:   term.apiUrl   ?? '',
-    prUrl: prUrl ?? '',
+    title:    term.apiTitle ?? '',
+    url:      term.apiUrl   ?? '',
+    prUrl:    prUrl ?? '',
+    prMerged: prMerged === true,
   };
   const res = await fetch(`${BASE_URL(port)}/api/set-title`, {
     method: 'POST',

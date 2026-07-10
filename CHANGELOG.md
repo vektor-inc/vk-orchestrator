@@ -1,5 +1,7 @@
 # Changelog
 
+- [ 機能追加 ] PR のマージ検知時に VK Terminals の連動ペインへ prMerged を送信し、PR ボタンをマージ済み表示（紫）へ切り替える機能を追加
+
 = 0.10.0 =
 - [ 仕様変更 ] vk-terminals を 1.13.0 から 1.14.0 にアップデート
 - [ 不具合修正 ] wp-env 無効時に vk-kore 起動コマンドへ未展開の `wp-env-port={wpPort}` が残って送出される不具合の修正

@@ -102,6 +102,25 @@ describe('setTerminalPrUrl', () => {
     assert.equal(payload.prUrl, prUrl, 'prUrl がそのままペイロードに乗る');
   });
 
+  it('prMerged: true を渡すと既存情報と PR URL を維持したままマージ済み表示を送信する', async () => {
+    const prUrl = 'https://github.com/vektor-inc/foo/pull/123';
+
+    await setTerminalPrUrl(PORT, TERMID, prUrl, { prMerged: true });
+
+    const payload = scenario.setTitleCalls[0];
+    assert.equal(payload.title, '#42 既存タイトル', 'apiTitle が維持される');
+    assert.equal(payload.url, 'https://github.com/vektor-inc/task-queue/issues/42', 'apiUrl が維持される');
+    assert.equal(payload.prUrl, prUrl, 'PR ボタンの URL が維持される');
+    assert.equal(payload.prMerged, true, 'マージ済み表示フラグが true で送られる');
+  });
+
+  it('第4引数を省略した場合は prMerged が true にならない', async () => {
+    await setTerminalPrUrl(PORT, TERMID, 'https://github.com/vektor-inc/foo/pull/123');
+
+    const payload = scenario.setTitleCalls[0];
+    assert.notEqual(payload.prMerged, true, '後方互換として省略時はマージ済み表示にしない');
+  });
+
   it('prUrl に空文字 / null を渡すとクリア扱いで送信される', async () => {
     await setTerminalPrUrl(PORT, TERMID, '');
     assert.equal(scenario.setTitleCalls[0].prUrl, '', '空文字はそのまま空文字で送る');
