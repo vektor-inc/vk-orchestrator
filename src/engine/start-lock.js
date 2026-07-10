@@ -23,29 +23,52 @@ export function createStartLock({
   let acquiredRecord = null;
 
   async function acquire() {
-    const existing = await readLock(lockFile);
-    if (existing?.pid != null && isProcessAlive(existing.pid, processApi)) {
-      throw new Error(
-        `[start-lock] vk-orchestrator は既に起動中です (pid=${existing.pid}, startedAt=${existing.startedAt ?? 'unknown'}). ` +
-        `終了してから再実行してください。`
-      );
-    }
-
-    const stale = existing?.pid != null;
-    if (stale) {
-      logger.warn?.(`[start-lock] stale lock を検出したため取得し直します (pid=${existing.pid}, startedAt=${existing.startedAt ?? 'unknown'})`);
-    }
-
     const record = { pid: processApi.pid, startedAt: now().toISOString() };
-    await fs.mkdir(dirname(lockFile), { recursive: true });
-    await fs.writeFile(lockFile, JSON.stringify(record), 'utf8');
-    acquiredRecord = record;
+    await fs.mkdir(dirname(lockFile), { recursive: true, mode: 0o700 });
 
-    return {
-      acquired: true,
-      stale,
-      previousPid: existing?.pid ?? null,
-    };
+    let lastStale = false;
+    let lastPreviousPid = null;
+    const maxStaleRetries = 2;
+
+    for (let staleRetries = 0; staleRetries <= maxStaleRetries; staleRetries += 1) {
+      try {
+        // mode は新規作成時だけ適用される。既存 lock は chmod せず、以後の作成既定だけ締める。
+        await fs.writeFile(lockFile, JSON.stringify(record), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        acquiredRecord = record;
+
+        return {
+          acquired: true,
+          stale: lastStale,
+          previousPid: lastPreviousPid,
+        };
+      } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
+      }
+
+      const existing = await readLock(lockFile);
+      if (existing?.pid != null && isProcessAlive(existing.pid, processApi)) {
+        throw new Error(
+          `[start-lock] vk-orchestrator は既に起動中です (pid=${existing.pid}, startedAt=${existing.startedAt ?? 'unknown'}). ` +
+          `終了してから再実行してください。`
+        );
+      }
+
+      lastStale = true;
+      lastPreviousPid = existing?.pid ?? null;
+      logger.warn?.(`[start-lock] stale lock を検出したため取得し直します (pid=${existing?.pid ?? 'unknown'}, startedAt=${existing?.startedAt ?? 'unknown'})`);
+
+      if (staleRetries >= maxStaleRetries) {
+        throw new Error('[start-lock] stale lock の再取得に失敗しました');
+      }
+
+      try {
+        await fs.unlink(lockFile);
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+      }
+    }
+
+    throw new Error('[start-lock] lock の取得に失敗しました');
   }
 
   async function release() {
@@ -101,8 +124,10 @@ async function readLock(lockFile) {
 }
 
 function isProcessAlive(pid, processApi) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+
   try {
-    processApi.kill(Number(pid), 0);
+    processApi.kill(pid, 0);
     return true;
   } catch (err) {
     // ESRCH はプロセス不在。EPERM は存在するが権限がない状態なので「生存」とみなす。

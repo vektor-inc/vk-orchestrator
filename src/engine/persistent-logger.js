@@ -33,10 +33,11 @@ export function createPersistentLogger({
 
   const writeLine = (level, args) => {
     try {
-      fs.mkdirSync(dirname(logFile), { recursive: true });
+      fs.mkdirSync(dirname(logFile), { recursive: true, mode: 0o700 });
       rotateIfNeeded({ fs, logFile, maxBytes });
       const body = redactSecrets(formatArgs(args));
-      fs.appendFileSync(logFile, `[${now().toISOString()}] [${level}] ${body}\n`, 'utf8');
+      // mode は新規作成時だけ適用される。既存ログは chmod せず、以後の作成既定だけ締める。
+      fs.appendFileSync(logFile, `[${now().toISOString()}] [${level}] ${body}\n`, { encoding: 'utf8', mode: 0o600 });
     } catch (err) {
       if (!writeFailedWarned) {
         writeFailedWarned = true;

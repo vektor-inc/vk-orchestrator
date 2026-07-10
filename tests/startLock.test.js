@@ -9,6 +9,47 @@ async function makeTempDir() {
 }
 
 describe('start lock', () => {
+  it('同時取得では片方だけがロック作成に成功する', async () => {
+    const { createStartLock } = await import('../src/engine/start-lock.js');
+    const dir = await makeTempDir();
+    const lockFile = join(dir, 'orchestrator.lock');
+    const alivePids = new Set([111, 222]);
+    const makeProcess = (pid) => ({
+      pid,
+      kill(targetPid, signal) {
+        assert.equal(signal, 0);
+        if (alivePids.has(targetPid)) return true;
+        const err = new Error('not found');
+        err.code = 'ESRCH';
+        throw err;
+      },
+    });
+    const lockA = createStartLock({
+      lockFile,
+      process: makeProcess(111),
+      now: () => new Date('2026-07-10T01:00:00.000Z'),
+    });
+    const lockB = createStartLock({
+      lockFile,
+      process: makeProcess(222),
+      now: () => new Date('2026-07-10T01:00:00.000Z'),
+    });
+
+    const results = await Promise.allSettled([lockA.acquire(), lockB.acquire()]);
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+    assert.match(
+      results.find((result) => result.status === 'rejected').reason.message,
+      /既に起動中/
+    );
+
+    const record = JSON.parse(await fs.readFile(lockFile, 'utf8'));
+    assert.ok(alivePids.has(record.pid));
+
+    await lockA.release();
+    await lockB.release();
+  });
+
   it('生存中 PID のロックがある場合は起動を中止するエラーにする', async () => {
     const { createStartLock } = await import('../src/engine/start-lock.js');
     const dir = await makeTempDir();
@@ -64,5 +105,60 @@ describe('start lock', () => {
 
     await lock.release();
     await assert.rejects(() => fs.readFile(lockFile, 'utf8'), /ENOENT/);
+  });
+
+  it('不正な pid の lock は process.kill せず stale として奪取する', async () => {
+    const { createStartLock } = await import('../src/engine/start-lock.js');
+    const invalidPids = [-1, 1.5, '111'];
+
+    for (const invalidPid of invalidPids) {
+      const dir = await makeTempDir();
+      const lockFile = join(dir, 'orchestrator.lock');
+      await fs.writeFile(lockFile, JSON.stringify({ pid: invalidPid, startedAt: '2026-07-10T00:00:00.000Z' }), 'utf8');
+      const killCalls = [];
+
+      const lock = createStartLock({
+        lockFile,
+        process: {
+          pid: 222,
+          kill(pid, signal) {
+            killCalls.push([pid, signal]);
+            return true;
+          },
+        },
+        now: () => new Date('2026-07-10T01:00:00.000Z'),
+      });
+
+      const result = await lock.acquire();
+      assert.deepEqual(result, { acquired: true, stale: true, previousPid: invalidPid });
+      assert.deepEqual(killCalls, []);
+      assert.deepEqual(JSON.parse(await fs.readFile(lockFile, 'utf8')), {
+        pid: 222,
+        startedAt: '2026-07-10T01:00:00.000Z',
+      });
+    }
+  });
+
+  it('新規ロックファイルと親ディレクトリを所有者限定 mode で作成する', async () => {
+    const { createStartLock } = await import('../src/engine/start-lock.js');
+    const dir = await makeTempDir();
+    const lockDir = join(dir, 'locks');
+    const lockFile = join(lockDir, 'orchestrator.lock');
+
+    const lock = createStartLock({
+      lockFile,
+      process: {
+        pid: 222,
+        kill() {
+          return true;
+        },
+      },
+      now: () => new Date('2026-07-10T01:00:00.000Z'),
+    });
+
+    await lock.acquire();
+
+    assert.equal((await fs.stat(lockDir)).mode & 0o777, 0o700);
+    assert.equal((await fs.stat(lockFile)).mode & 0o777, 0o600);
   });
 });
