@@ -1,16 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { extractGitHubIssueUrl } from '../src/engine/build-command.js';
 import { closeSourceIssueBeforeGate } from '../src/engine/source-close.js';
-
-function fakeExtractGitHubIssueUrl(text) {
-  if (!text) return null;
-  const match = text.match(
-    /https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/issues\/(\d+)/
-  );
-  if (!match) return null;
-  return { url: match[0], owner: match[1], repo: match[2], number: Number(match[3]) };
-}
 
 describe('closeSourceIssueBeforeGate', () => {
   it('対象 issue URL があれば closeSourceIssue を呼ぶ', async () => {
@@ -22,7 +14,7 @@ describe('closeSourceIssueBeforeGate', () => {
         body: 'https://github.com/vektor-inc/vk-terminals/issues/95',
       },
       {
-        extractGitHubIssueUrl: fakeExtractGitHubIssueUrl,
+        extractGitHubIssueUrl,
         closeSourceIssue: async (target) => {
           calls.push(target);
         },
@@ -46,7 +38,7 @@ describe('closeSourceIssueBeforeGate', () => {
     const result = await closeSourceIssueBeforeGate(
       { number: 11, title: '汎用タスク', body: 'URL なし' },
       {
-        extractGitHubIssueUrl: fakeExtractGitHubIssueUrl,
+        extractGitHubIssueUrl,
         closeSourceIssue: async () => {
           called = true;
         },
@@ -67,7 +59,7 @@ describe('closeSourceIssueBeforeGate', () => {
         body: 'https://github.com/vektor-inc/vk-terminals/issues/95',
       },
       {
-        extractGitHubIssueUrl: fakeExtractGitHubIssueUrl,
+        extractGitHubIssueUrl,
         closeSourceIssue: async () => {
           throw new Error('rate limit');
         },
