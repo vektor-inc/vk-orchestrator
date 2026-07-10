@@ -576,7 +576,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
           { key: 'orchestrator.watchdogIdleMs',  label: 'ウォッチドッグ idle (ms)', type: 'number', help: 'この時間ターミナルが無活動だと停滞とみなす閾値（ミリ秒。例: 10800000 = 3 時間）' },
           { key: 'orchestrator.paneResumeMax',   label: 'ペイン消失時の自動再開上限 (回)', type: 'number', help: '作業ペイン消失時（PR 未生成に限る）に自動で再実行する上限回数。超えると failed になり手動確認が必要（既定: 3）' },
           { key: 'orchestrator.assigneeFilter',  label: '担当者フィルタ (login)', type: 'text', help: 'この GitHub ログイン名が assign されている Issue だけを取り込む。空＝一切取り込まない（安全側の既定）。全件取り込むには all と入力', emptyToNull: true },
-          { key: 'orchestrator.taskCwd',         label: 'タスク用ペインの起点ディレクトリ', type: 'text', help: 'タスク着手時に開くペイン（Claude Code）の起点ディレクトリ。自分のリポジトリ置き場を指定しておくと探索・クローンがそこ基準で進む。空＝専用ディレクトリ ~/vk-orchestrator-tasks（自動作成）で起動し、ホームディレクトリや機密ディレクトリを起点にしない。相対パスは orchestrator 起動時の作業ディレクトリ基準で解決', emptyToNull: true },
+          { key: 'orchestrator.taskCwd',         label: 'タスク用ペインの Claude Code 起点ディレクトリ', type: 'text', help: 'タスク着手時に開くペインの Claude Code の起点ディレクトリを指定してください。自分のリポジトリ置き場を指定しておくと、探索・クローンがそこ基準で進みます。未設定の場合は専用ディレクトリ ~/vk-orchestrator-tasks（自動作成）で起動し、ホームディレクトリや機密ディレクトリを起点にしません。なお、ここで指定するのはあくまで起点で、操作権限があれば他のディレクトリのファイルも操作できます。別のディレクトリにある既存リポジトリを扱いたい場合も、スキルや Claude のグローバル設定であらかじめ対象リポジトリを指定しておけば、そちらで作業します。相対パスは orchestrator 起動時の作業ディレクトリ基準で解決します。', emptyToNull: true },
         ],
       },
       {

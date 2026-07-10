@@ -163,7 +163,7 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 | `orchestrator.watchdogIdleMs` | `WATCHDOG_IDLE_MS` | ウォッチドッグ閾値 | `10800000` |
 | `orchestrator.paneResumeMax` | `PANE_RESUME_MAX` | ペイン消失時（PR 未生成）の自動再開上限回数 | `3` |
 | `orchestrator.assigneeFilter` | `ASSIGNEE_FILTER` | 担当者フィルタ。空/未設定は一切取り込まず、全件対象は `all` を明示 | `null`（拾わない） |
-| `orchestrator.taskCwd` | `TASK_CWD` | タスク用ペイン（Claude Code）の起点ディレクトリ | `~/vk-orchestrator-tasks`（無ければ自動作成） |
+| `orchestrator.taskCwd` | `TASK_CWD` | タスク用ペインの Claude Code 起点ディレクトリ | `~/vk-orchestrator-tasks`（無ければ自動作成） |
 | `vkTerminals.port` / `vkTerminals.host` | `VK_TERMINALS_PORT` / `VK_TERMINALS_HOST` | VK Terminals API | `13847` / `127.0.0.1` |
 | `vkTerminals.gpu` | `VK_TERMINALS_GPU` | GUI の GPU 起動モード（下記） | 空=自動 |
 | `vkTerminals.initialCommand` / `agentroom` / `additionalPanes` | （`apply` で反映） | VK Terminals のペイン構成等 | — |
