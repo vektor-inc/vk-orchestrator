@@ -24,7 +24,12 @@ const SECRET_PATTERNS = [
   /Bearer\s+[A-Za-z0-9._~+/-]{20,}=*/g,
   // Slack トークン（xoxb- / xoxa- / xoxp- / xoxr- / xoxs-）
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  // Anthropic API キー
+  /\bsk-ant-[A-Za-z0-9._-]{20,}\b/g,
 ];
+
+// git remote URL に埋め込まれた token は URL 構造を残し、token 部分だけ潰す。
+const GIT_REMOTE_X_ACCESS_TOKEN = /(x-access-token:)[^@\s]+(@)/g;
 
 // PEM 秘密鍵ブロック（複数行）。BEGIN 〜 END までをまるごと潰す。
 // END 行が欠けた途中までの出力（lastLines はターミナルの末尾断片なので起こりうる）でも
@@ -50,6 +55,8 @@ export function redactSecrets(text) {
   result = result.replace(PEM_WITHOUT_END, REDACTED);
 
   // 2. 単一トークン系パターン
+  result = result.replace(GIT_REMOTE_X_ACCESS_TOKEN, `$1${REDACTED}$2`);
+
   for (const pattern of SECRET_PATTERNS) {
     result = result.replace(pattern, REDACTED);
   }

@@ -1,6 +1,9 @@
 # Changelog
 
 - [ 機能追加 ] npm start 起動時に vk-orchestrator 自身の新しいリリースタグを検出し main を ff 追従・再起動してから起動する自己更新機能を追加
+- [ 機能追加 ] オーケストレーターの console 出力をタイムスタンプ付きの永続ログへ保存する機能を追加
+- [ 機能追加 ] start の多重起動をロックファイルで検知して state.json の競合を防止する機能を追加
+- [ 不具合修正 ] PR マージ検知時に state から termId を取得できず連動ペインのマージ済み表示が更新されない不具合を修正
 - [ その他 ] README の設定項目表と config.example.json を実態に合わせ、task/features/staff_wp_dev/multi_repo_task/vkAgents の各設定とテスト件数など乖離していた記述を更新
 
 = 0.11.0 =

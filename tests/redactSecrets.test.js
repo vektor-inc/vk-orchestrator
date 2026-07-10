@@ -8,6 +8,8 @@
  *   - AWS アクセスキー ID（AKIA...）を伏字化する
  *   - Authorization: Bearer トークンを伏字化する
  *   - Slack トークン（xoxb- 等）を伏字化する
+ *   - git remote URL 内の x-access-token を伏字化する
+ *   - Anthropic API キー（sk-ant-）を伏字化する
  *   - PEM 秘密鍵ブロック（BEGIN〜END）をまるごと伏字化する
  *   - END が欠けた途中までの PEM ブロックも BEGIN 以降を伏字化する
  *   - 複数の秘匿情報が混在しても全て伏字化する
@@ -52,6 +54,16 @@ describe('redactSecrets', () => {
   it('Slack トークン（xoxb-）を伏字化する', () => {
     const out = redactSecrets('SLACK=' + ['xoxb', '1234567890', 'ABCDEFGHIJKLMN'].join('-'));
     assert.equal(out, `SLACK=${REDACTED}`);
+  });
+
+  it('git remote URL 内の x-access-token を token 部分だけ伏字化する', () => {
+    const out = redactSecrets('https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz0123456789@github.com/owner/repo.git');
+    assert.equal(out, `https://x-access-token:${REDACTED}@github.com/owner/repo.git`);
+  });
+
+  it('Anthropic API キー（sk-ant-）を伏字化する', () => {
+    const out = redactSecrets('ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN');
+    assert.equal(out, `ANTHROPIC_API_KEY=${REDACTED}`);
   });
 
   it('PEM 秘密鍵ブロック（BEGIN〜END）をまるごと伏字化する', () => {
