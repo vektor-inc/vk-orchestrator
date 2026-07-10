@@ -19,12 +19,13 @@ export function createStartLock({
   process: processApi = process,
   now = () => new Date(),
   logger = console,
+  fs: fsApi = fs,
 } = {}) {
   let acquiredRecord = null;
 
   async function acquire() {
     const record = { pid: processApi.pid, startedAt: now().toISOString() };
-    await fs.mkdir(dirname(lockFile), { recursive: true, mode: 0o700 });
+    await fsApi.mkdir(dirname(lockFile), { recursive: true, mode: 0o700 });
 
     let lastStale = false;
     let lastPreviousPid = null;
@@ -33,7 +34,7 @@ export function createStartLock({
     for (let staleRetries = 0; staleRetries <= maxStaleRetries; staleRetries += 1) {
       try {
         // mode は新規作成時だけ適用される。既存 lock は chmod せず、以後の作成既定だけ締める。
-        await fs.writeFile(lockFile, JSON.stringify(record), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        await fsApi.writeFile(lockFile, JSON.stringify(record), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
         acquiredRecord = record;
 
         return {
@@ -45,12 +46,9 @@ export function createStartLock({
         if (err.code !== 'EEXIST') throw err;
       }
 
-      const existing = await readLock(lockFile);
+      const existing = await readLock(lockFile, fsApi);
       if (existing?.pid != null && isProcessAlive(existing.pid, processApi)) {
-        throw new Error(
-          `[start-lock] vk-orchestrator は既に起動中です (pid=${existing.pid}, startedAt=${existing.startedAt ?? 'unknown'}). ` +
-          `終了してから再実行してください。`
-        );
+        throw alreadyRunningError(existing);
       }
 
       lastStale = true;
@@ -62,7 +60,12 @@ export function createStartLock({
       }
 
       try {
-        await fs.unlink(lockFile);
+        const current = await readLock(lockFile, fsApi);
+        if (sameLockRecord(current, existing)) {
+          await fsApi.unlink(lockFile);
+        } else {
+          throw alreadyRunningError(current);
+        }
       } catch (err) {
         if (err.code !== 'ENOENT') throw err;
       }
@@ -75,12 +78,12 @@ export function createStartLock({
     if (!acquiredRecord) return;
 
     try {
-      const current = await readLock(lockFile);
+      const current = await readLock(lockFile, fsApi);
       if (
         current?.pid === acquiredRecord.pid &&
         current?.startedAt === acquiredRecord.startedAt
       ) {
-        await fs.unlink(lockFile);
+        await fsApi.unlink(lockFile);
       }
     } catch {
       // 終了処理なので best effort。ロック削除失敗で終了を妨げない。
@@ -111,9 +114,9 @@ export function createStartLock({
   return { acquire, release, releaseSync, lockFile };
 }
 
-async function readLock(lockFile) {
+async function readLock(lockFile, fsApi = fs) {
   try {
-    const text = await fs.readFile(lockFile, 'utf8');
+    const text = await fsApi.readFile(lockFile, 'utf8');
     const parsed = JSON.parse(text);
     return parsed && typeof parsed === 'object' ? parsed : null;
   } catch (err) {
@@ -121,6 +124,24 @@ async function readLock(lockFile) {
     // 壊れた lock は stale と同等に扱って上書きできるようにする。
     return null;
   }
+}
+
+function alreadyRunningError(record) {
+  return new Error(
+    `[start-lock] vk-orchestrator は既に起動中です (pid=${record?.pid ?? 'unknown'}, startedAt=${record?.startedAt ?? 'unknown'}). ` +
+    `終了してから再実行してください。`
+  );
+}
+
+function sameLockRecord(current, expected) {
+  if (current === null || expected === null) {
+    return current === expected;
+  }
+
+  return (
+    current.pid === expected.pid &&
+    current.startedAt === expected.startedAt
+  );
 }
 
 function isProcessAlive(pid, processApi) {

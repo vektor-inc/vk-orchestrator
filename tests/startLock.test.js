@@ -107,6 +107,56 @@ describe('start lock', () => {
     await assert.rejects(() => fs.readFile(lockFile, 'utf8'), /ENOENT/);
   });
 
+  it('stale 判定後に差し替わったロックは削除せず取得に失敗する', async () => {
+    const { createStartLock } = await import('../src/engine/start-lock.js');
+    const staleRecord = { pid: 111, startedAt: '2026-07-10T00:00:00.000Z' };
+    const liveRecord = { pid: 333, startedAt: '2026-07-10T00:00:01.000Z' };
+    const lockFile = '/tmp/orchestrator.lock';
+    let lockText = JSON.stringify(staleRecord);
+    let readCount = 0;
+    let unlinkCalled = false;
+
+    const lock = createStartLock({
+      lockFile,
+      fs: {
+        async mkdir() {},
+        async writeFile() {
+          const err = new Error('exists');
+          err.code = 'EEXIST';
+          throw err;
+        },
+        async readFile() {
+          readCount += 1;
+          const result = lockText;
+          if (readCount === 1) {
+            lockText = JSON.stringify(liveRecord);
+          }
+          return result;
+        },
+        async unlink() {
+          unlinkCalled = true;
+        },
+      },
+      process: {
+        pid: 222,
+        kill(pid, signal) {
+          assert.equal(pid, staleRecord.pid);
+          assert.equal(signal, 0);
+          const err = new Error('not found');
+          err.code = 'ESRCH';
+          throw err;
+        },
+      },
+      now: () => new Date('2026-07-10T01:00:00.000Z'),
+      logger: { warn() {} },
+    });
+
+    await assert.rejects(() => lock.acquire(), /既に起動中.*pid=333/);
+    assert.equal(readCount, 2);
+    assert.equal(unlinkCalled, false);
+    assert.equal(lockText, JSON.stringify(liveRecord));
+  });
+
   it('不正な pid の lock は process.kill せず stale として奪取する', async () => {
     const { createStartLock } = await import('../src/engine/start-lock.js');
     const invalidPids = [-1, 1.5, '111'];
