@@ -1,6 +1,5 @@
 {
   "github": {
-    "token": "ghp_xxxxxxxxxxxxxxxxxxxx",
     "owner": "your-org",
     "repo": "task-queue",
     "sourceOrg": "your-org",

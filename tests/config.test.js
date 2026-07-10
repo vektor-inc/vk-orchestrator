@@ -12,6 +12,9 @@ import { tmpdir } from 'os';
 import {
   loadUnifiedConfig,
   applyConfigToEnv,
+  ensureGitHubToken,
+  getGitHubTokenFromGh,
+  loadConfig,
   toVkTerminalsConfig,
   vkTerminalsConfigPath,
   writeVkTerminalsConfig,
@@ -138,6 +141,68 @@ test('applyConfigToEnv: .env の GITHUB_TOKEN が config.json より優先され
   try {
     applyConfigToEnv({ github: { token: 'ghp_fromconfig' } });
     assert.equal(process.env.GITHUB_TOKEN, 'ghp_fromenv');
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = saved;
+  }
+});
+
+test('ensureGitHubToken: 既存の GITHUB_TOKEN を優先し gh を呼ばない', () => {
+  const saved = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = 'ghp_fromenv';
+  try {
+    const token = ensureGitHubToken({
+      execFileSync: () => {
+        throw new Error('should not be called');
+      },
+    });
+    assert.equal(token, 'ghp_fromenv');
+    assert.equal(process.env.GITHUB_TOKEN, 'ghp_fromenv');
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = saved;
+  }
+});
+
+test('ensureGitHubToken: 未設定なら gh auth token の結果を GITHUB_TOKEN に反映する', () => {
+  const saved = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  const calls = [];
+  try {
+    const token = ensureGitHubToken({
+      execFileSync: (file, args, options) => {
+        calls.push({ file, args, options });
+        return 'gho_fromgh\n';
+      },
+    });
+    assert.equal(token, 'gho_fromgh');
+    assert.equal(process.env.GITHUB_TOKEN, 'gho_fromgh');
+    assert.deepEqual(calls, [
+      {
+        file: 'gh',
+        args: ['auth', 'token'],
+        options: { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      },
+    ]);
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = saved;
+  }
+});
+
+test('getGitHubTokenFromGh: gh auth token の出力を trim する', () => {
+  const token = getGitHubTokenFromGh(() => 'gho_token\n');
+  assert.equal(token, 'gho_token');
+});
+
+test('loadConfig: gh auth token でも未解決なら gh auth login へ誘導する', () => {
+  const saved = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  try {
+    assert.throws(
+      () => loadConfig(['node', 'bin'], { execFileSync: () => { throw new Error('no auth'); } }),
+      /gh auth login/,
+    );
   } finally {
     if (saved === undefined) delete process.env.GITHUB_TOKEN;
     else process.env.GITHUB_TOKEN = saved;
@@ -636,6 +701,11 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
 
   const fieldKeys = desc.groups.flatMap((g) => (g.fields ?? []).map((f) => f.key));
   assert.ok(fieldKeys.includes('task.commandTemplate'));
+  const githubGroup = desc.groups.find((g) => g.label === 'GitHub');
+  assert.match(githubGroup?.note ?? '', /gh auth login/);
+  assert.match(githubGroup?.note ?? '', /このパネルでの入力は廃止/);
+  // GitHub トークンは gh auth login 推奨のため、GUI から config.json へ保存する導線を出さない。
+  assert.ok(!fieldKeys.includes('github.token'));
   assert.ok(!fieldKeys.includes('task.requireE2eGate')); // #57 で requireE2eGate 廃止
 
   assert.ok(!fieldKeys.includes('protocol.statusLinePrefix'));

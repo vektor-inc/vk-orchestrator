@@ -3,10 +3,10 @@
 // VK Orchestrator は「単一の設定ファイル(config.json)」を正とし、そこから
 //   1) 自分自身(オーケストレーター)のランタイム設定
 //   2) VK Terminals 用の設定ファイル(VK Terminals のインストールディレクトリ内 config.json)
-// の両方を賄う。秘密情報(GITHUB_TOKEN)だけは .env に置く（config.json はコミット対象に
-// しやすいよう秘密を含めない設計）。
+// の両方を賄う。秘密情報(GITHUB_TOKEN)は gh auth login または .env に置く
+// （config.json はコミット対象にしやすいよう秘密を含めない設計）。
 //
-// 設定の優先順位: 明示的な環境変数 > config.json > 各既定値。
+// 設定の優先順位: 明示的な環境変数 / .env > config.json > gh auth token > 各既定値。
 // （移設した engine 側は従来どおり process.env を読むため、applyConfigToEnv() で
 //   config.json の値を process.env に流し込んでから engine を起動する。挙動は不変。）
 
@@ -15,10 +15,13 @@ import { resolve, dirname, join, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import { execFileSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
+
+export const GITHUB_TOKEN_RESOLUTION_HELP = 'GitHub トークンを解決できません。gh CLI 未導入の場合は `brew install gh`（Ubuntu: `sudo apt install gh`）でインストールし、`gh auth login` で認証してください。';
 
 // -------------------------------------------------------
 // 汎用化に向けた設定セクションの既定値。
@@ -188,8 +191,8 @@ export function applyConfigToEnv(cfg = {}) {
     process.env[key] = String(val);
   };
   const gh = cfg.github ?? {};
-  // トークンも config.json で一元管理できるようにする（config.json は .gitignore 対象）。
-  // .env に GITHUB_TOKEN があればそちらが優先される（env > config.json）。
+  // 後方互換のため github.token は引き続き読むが、新規設定では gh auth login を推奨する。
+  // .env に GITHUB_TOKEN があればそちらが優先される（env/.env > config.json）。
   set('GITHUB_TOKEN', gh.token);
   set('GITHUB_OWNER', gh.owner);
   set('GITHUB_REPO', gh.repo);
@@ -561,8 +564,8 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
     groups: [
       {
         label: 'GitHub',
+        note: 'GitHub トークンは `gh auth login` で管理します（このパネルでの入力は廃止）。',
         fields: [
-          { key: 'github.token',      label: 'Personal Access Token', type: 'password', help: 'GitHub API へアクセスするための個人アクセストークン（repo スコープが必要）', emptyToNull: true },
           { key: 'github.owner',      label: 'タスク登録リポジトリのオーナー', type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリのオーナー名（ユーザー名または組織名。例: vektor-inc）' },
           { key: 'github.repo',       label: 'タスク登録リポジトリ名',       type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリ名（例: task-queue）' },
           { key: 'github.sourceOrg',  label: '作業対象リポジトリのオーナー（組織・省略可）', type: 'text', help: '作業対象リポジトリが属する組織名。この組織を横断検索して `task-queue` ラベル付き Issue を取り込む。未指定時はタスク登録リポジトリのオーナーと同じ組織を対象にする', emptyToNull: true },
@@ -742,11 +745,49 @@ export function getLabelsConfig(cfg = loadUnifiedConfig()) {
 }
 
 /**
- * env(＋事前に applyConfigToEnv 済みの config.json)から、オーケストレーターの
- * 構造化ランタイム設定を解決する。GITHUB_TOKEN 未設定なら例外。
- * @param {string[]} [argv]
+ * gh CLI の認証済みトークンを取得する。トークン値は呼び出し側でログ出力しないこと。
+ * @param {(file: string, args: string[], options: object) => string|Buffer} [execFileSyncImpl]
+ * @returns {string}
  */
-export function loadConfig(argv = process.argv) {
+export function getGitHubTokenFromGh(execFileSyncImpl = execFileSync) {
+  return String(execFileSyncImpl('gh', ['auth', 'token'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })).trim();
+}
+
+/**
+ * GITHUB_TOKEN が未設定なら gh auth token から取得して process.env に反映する。
+ * 優先順位は、呼び出し前に dotenv / applyConfigToEnv 済みであることを前提に
+ * 環境変数 > .env > config.json > gh auth token となる。
+ * @param {{ execFileSync?: (file: string, args: string[], options: object) => string|Buffer }} [options]
+ * @returns {string|undefined} 解決できた GITHUB_TOKEN
+ */
+export function ensureGitHubToken(options = {}) {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+
+  try {
+    const token = getGitHubTokenFromGh(options.execFileSync ?? execFileSync);
+    if (token) {
+      process.env.GITHUB_TOKEN = token;
+      return token;
+    }
+  } catch {
+    // 後段の必須チェックで gh auth login への誘導を出す。
+  }
+  return process.env.GITHUB_TOKEN;
+}
+
+/**
+ * env(＋事前に applyConfigToEnv 済みの config.json)から、オーケストレーターの
+ * 構造化ランタイム設定を解決する。GITHUB_TOKEN 未設定なら gh auth token を試し、
+ * それでも解決できなければ例外。
+ * @param {string[]} [argv]
+ * @param {{ execFileSync?: (file: string, args: string[], options: object) => string|Buffer }} [options]
+ */
+export function loadConfig(argv = process.argv, options = {}) {
+  ensureGitHubToken(options);
+
   const readArg = (name) => {
     const eq = argv.find((a) => a.startsWith(`--${name}=`));
     if (eq) return eq.slice(`--${name}=`.length);
@@ -769,7 +810,7 @@ export function loadConfig(argv = process.argv) {
     assigneeFilter: readArg('assignee') ?? process.env.ASSIGNEE_FILTER ?? null,
   };
   if (!cfg.githubToken) {
-    throw new Error('[Config] GITHUB_TOKEN が未設定です。.env を確認してください。');
+    throw new Error(`[Config] ${GITHUB_TOKEN_RESOLUTION_HELP}`);
   }
   return cfg;
 }

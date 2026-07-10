@@ -82,17 +82,17 @@ node -v   # v20.x を確認
 
 ---
 
-## 3. GitHub CLI と Personal Access Token
+## 3. GitHub CLI
 
-ラベル登録や API 操作に `gh` 認証と PAT を使います。
+ラベル登録や API 操作に `gh` 認証を使います。
 
 ```bash
 sudo apt install -y gh   # または https://cli.github.com/ の手順
 gh auth login            # ブラウザ or トークンで認証
 ```
 
-PAT（`repo` スコープ）の発行手順は README「GitHub Personal Access Token の発行と設定」を参照。
-発行したトークンは後述の `config.json` の `github.token` に入れます（`config.json` は `.gitignore` 対象）。
+`GITHUB_TOKEN` が未設定の場合、orchestrator は `gh auth token` から認証済みトークンを自動取得します。
+通常は `config.json` にトークンを書く必要はありません。
 
 ---
 
@@ -119,12 +119,11 @@ npm run setup:terminals
 cp config.example.json config.json
 ```
 
-最低限、以下 3 つを自分の値に:
+最低限、以下 2 つを自分の値に:
 
 ```jsonc
 {
   "github": {
-    "token": "ghp_xxxxxxxx",   // 自分の PAT（repo スコープ）
     "owner": "your-org",       // タスク登録リポジトリのオーナー
     "repo":  "task-queue"      // タスク登録リポジトリ名
   },

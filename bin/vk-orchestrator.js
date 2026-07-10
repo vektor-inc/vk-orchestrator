@@ -27,9 +27,10 @@ try {
 
 // 統合設定(config.json)を読み込み、env に反映する（env > config.json > 既定）。
 // config.js は Node 標準モジュールのみに依存するため npm install 前でも安全。
-const { loadUnifiedConfig, applyConfigToEnv } = await import('../src/config.js');
+const { loadUnifiedConfig, applyConfigToEnv, ensureGitHubToken } = await import('../src/config.js');
 const unifiedConfig = loadUnifiedConfig();
 applyConfigToEnv(unifiedConfig);
+ensureGitHubToken();
 
 const [, , sub] = process.argv;
 

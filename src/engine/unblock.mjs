@@ -6,7 +6,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '..', '..', '.env') });
 
 import { GitHubClient } from '../github/index.js';
+import { ensureGitHubToken } from '../config.js';
 
+ensureGitHubToken();
 const GITHUB_OWNER = process.env.GITHUB_OWNER ?? 'vektor-inc';
 const GITHUB_REPO  = process.env.GITHUB_REPO  ?? 'task-queue';
 const github = new GitHubClient({ token: process.env.GITHUB_TOKEN, owner: GITHUB_OWNER, repo: GITHUB_REPO });
