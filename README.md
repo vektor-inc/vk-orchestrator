@@ -209,10 +209,12 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 | `task.commandTemplate` | `TASK_COMMAND_TEMPLATE` | タスク着手時に各ペインへ投入するコマンド。`{issueUrl}` / `{wpPort}` は自動置換 | `/vk-kore {issueUrl} wp-env-port={wpPort} headless=1` |
 | `features.coderabbit` | — | エージェント側の CodeRabbit 監視を有効化（vk-agents 設定へ投影）。OFF で `/code-review` 等での確認に切替 | `true` |
 | `features.coderabbit_ignore` | — | `features.coderabbit` が ON のとき、`/vk-pr` の PR 本文に `@coderabbitai ignore` を記載して CodeRabbit レビューをスキップ | `false` |
+| `org.review_assets_repo` | — | PR・テスト報告用の画像/GIF を保存するレビュー用アセットリポジトリ（`<owner>/<repo>`、例: `vektor-inc/review-assets`。形式が正しくない値は反映されません） | 空＝画像アップロードをスキップしてテキスト記述 |
+| `org.orchestrator_repo` | — | vk-kore が task-queue 連携ルール（`docs/agent-rules.md`）を取得するリポジトリ（`<owner>/<repo>`、例: `vektor-inc/vk-orchestrator`。形式が正しくない値は反映されません） | 空＝`vektor-inc/vk-orchestrator` |
 | `staff_wp_dev.engine` | — | staff-wp-dev（和田）の実行エンジン（`claude` / `codex`） | 空＝`claude` |
 | `multi_repo_task.default_engine` | — | vk-multi-repo-task を新規作成するときの既定エンジン（`claude` / `codex`） | 空＝`claude` |
 | `vkAgents.repoPath` | `VK_AGENTS_DIR` / `VK_AGENTS_REPO_PATH` | vk-agents リポジトリのパス。未指定は既知の private clone を優先探索し、無ければ同梱 `vendor/vk-agents-public` を使用 | 自動探索 |
 | `vkAgents.disabledSkills` | — | `npm run setup:agents` で展開しないスキル名（vk-agents config の `skills.disabled` へ投影） | `[]` |
 | `vkAgents.allowedOwners` | — | スキル実行を許可する GitHub owner（vk-agents config の `org.allowed_owners` へ投影） | `["vektor-inc"]` |
 
-`task.commandTemplate` は orchestrator 自身が消費します（`{issueUrl}` / `{wpPort}` を置換してペインへ投入）。`features.*` / `staff_wp_dev.*` / `multi_repo_task.*` は既存の vk-agents 投影ロジックが読むトップレベル設定を正とし、`vkAgents.*` は vk-agents の場所と setup 用の不足項目（無効化スキル・許可 owner）だけを持ちます。これらは `setup:agents`/`up`/`apply` 時に vk-agents の `config.json` と `~/.claude/vk-agents-settings.json` へ**投影**され、各ペインの Claude エージェントが読み取ります（orchestrator 自身の CodeRabbit 待機ゲートとは別物です）。
+`task.commandTemplate` は orchestrator 自身が消費します（`{issueUrl}` / `{wpPort}` を置換してペインへ投入）。`features.*` / `org.*` / `staff_wp_dev.*` / `multi_repo_task.*` は既存の vk-agents 投影ロジックが読むトップレベル設定を正とし、`vkAgents.*` は vk-agents の場所と setup 用の不足項目（無効化スキル・許可 owner）だけを持ちます。これらは `setup:agents`/`up`/`apply` 時に vk-agents の `config.json` と `~/.claude/vk-agents-settings.json` へ**投影**され、各ペインの Claude エージェントが読み取ります（orchestrator 自身の CodeRabbit 待機ゲートとは別物です）。

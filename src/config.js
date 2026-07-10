@@ -537,6 +537,8 @@ function firstOwnedValue(obj, paths) {
   return undefined;
 }
 
+const OWNER_REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
 function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
   const out = deepMerge({}, vkAgentsConfig);
 
@@ -578,6 +580,16 @@ function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
   ]));
   if (allowedOwners) {
     setByPath(out, 'org.allowed_owners', allowedOwners);
+  }
+
+  for (const key of ['org.review_assets_repo', 'org.orchestrator_repo']) {
+    if (!hasOwnPath(cfg, key)) continue;
+    const raw = String(getByPath(cfg, key) ?? '').trim();
+    if (raw === '') {
+      deleteByPath(out, key);
+    } else if (OWNER_REPO_RE.test(raw) && !raw.split('/').some((seg) => seg === '.' || seg === '..')) {
+      setByPath(out, key, raw);
+    }
   }
 
   if (hasOwnPath(cfg, 'staff_wp_dev.engine')) {
@@ -625,6 +637,8 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
     hasOwnPath(cfg, 'vkAgents.org.allowed_owners') ||
     hasOwnPath(cfg, 'skills.disabled') ||
     hasOwnPath(cfg, 'org.allowed_owners') ||
+    hasOwnPath(cfg, 'org.review_assets_repo') ||
+    hasOwnPath(cfg, 'org.orchestrator_repo') ||
     hasOwnPath(cfg, 'staff_wp_dev.engine') ||
     hasOwnPath(cfg, 'multi_repo_task.default_engine');
   if (!hasConfig && !hasGuiSettings && options.force !== true) return null;
@@ -704,6 +718,8 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         fields: [
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
           { key: 'features.coderabbit_ignore', label: 'CodeRabbit レビューをスキップ（PR 本文に @coderabbitai ignore を記載）', type: 'boolean', default: false, help: 'ON で /vk-pr が PR 本文に @coderabbitai ignore を記載し、CodeRabbit レビューを抑止します。features.coderabbit が OFF のときは監視自体がスキップされるため、この設定は効果がありません' },
+          { key: 'org.review_assets_repo', label: 'レビュー用アセットリポジトリ', type: 'text', placeholder: 'owner/repo', help: 'PR・テスト報告用の画像/GIF を保存するリポジトリを <owner>/<repo> 形式で指定します（例: vektor-inc/review-assets）。形式が正しくない値は反映されません。空欄時は画像アップロードをスキップし、テキスト記述にフォールバックします', emptyToNull: true },
+          { key: 'org.orchestrator_repo', label: '連携ルール取得先リポジトリ', type: 'text', placeholder: 'owner/repo', help: 'vk-kore が task-queue 連携ルール（docs/agent-rules.md）を取得するリポジトリを <owner>/<repo> 形式で指定します（例: vektor-inc/vk-orchestrator）。形式が正しくない値は反映されません。空欄時は vektor-inc/vk-orchestrator にフォールバックします', emptyToNull: true },
           { key: 'staff_wp_dev.engine', label: 'staff-wp-dev（和田）の実行エンジン', type: 'select',
             options: [
               { value: '',       label: '未設定（既定: claude）' },
