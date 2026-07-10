@@ -20,6 +20,7 @@ import { execFileSync } from 'child_process';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
+export const DEFAULT_VENDORED_VK_AGENTS_DIR = join(REPO_ROOT, 'vendor', 'vk-agents-public');
 
 export const GITHUB_TOKEN_RESOLUTION_HELP = 'GitHub トークンを解決できません。gh CLI 未導入の場合は `brew install gh`（Ubuntu: `sudo apt install gh`）でインストールし、`gh auth login` で認証してください。';
 
@@ -424,6 +425,7 @@ function detectVkAgentsRepoPath() {
     join(dirname(dirname(REPO_ROOT)), 'vk-agents'),
     join(homedir(), 'Documents', 'git', 'vk-agents'),
     join(homedir(), 'Documents', 'claude', 'vk-agents'),
+    DEFAULT_VENDORED_VK_AGENTS_DIR,
   ];
   return candidates.find((dir) => existsSync(join(dir, 'scripts', 'sync.sh'))) ?? null;
 }
@@ -474,16 +476,102 @@ export function vkAgentsGlobalSettingsPath(homeDir = homedir()) {
   return join(homeDir, '.claude', 'vk-agents-settings.json');
 }
 
+/**
+ * sync.sh --claude-global が更新するスキルマニフェストのパス。
+ * @param {string} [homeDir]
+ * @returns {string}
+ */
+export function vkAgentsSkillsManifestPath(homeDir = homedir()) {
+  return join(homeDir, '.claude', 'skills', '.agent-skills-manifest');
+}
+
+/**
+ * orchestrator が管理する、スキル展開元記録のサイドカーファイル。
+ * sync.sh は .agent-skills-manifest を毎回上書きするため、別ファイルに分離する。
+ * @param {string} [homeDir]
+ * @returns {string}
+ */
+export function vkAgentsSkillsManifestSourcePath(homeDir = homedir()) {
+  return join(homeDir, '.claude', 'skills', '.agent-skills-manifest-source');
+}
+
+/**
+ * up 起動時の未セットアップ判定。
+ * manifest があれば、展開元サイドカーの有無に関係なくセットアップ済みとみなす。
+ * @param {{ manifestPath?: string, homeDir?: string }} [options]
+ * @returns {boolean}
+ */
+export function isVkAgentsSetup(options = {}) {
+  const manifestPath = options.manifestPath ?? vkAgentsSkillsManifestPath(options.homeDir);
+  return existsSync(manifestPath);
+}
+
+/**
+ * setup:agents 実行後に、sync.sh に消されないサイドカーへ展開元を記録する。
+ * @param {string} sourcePath
+ * @param {{ sourceRecordPath?: string, homeDir?: string, now?: Date }} [options]
+ * @returns {string}
+ */
+export function writeVkAgentsManifestSource(sourcePath, options = {}) {
+  const sourceRecordPath =
+    options.sourceRecordPath ?? vkAgentsSkillsManifestSourcePath(options.homeDir);
+  const payload = {
+    sourcePath: resolve(sourcePath),
+    writtenAt: (options.now ?? new Date()).toISOString(),
+  };
+  writeJsonAtomic(sourceRecordPath, payload);
+  return sourceRecordPath;
+}
+
+function normalizedStringArray(value) {
+  if (!Array.isArray(value)) return null;
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item !== '');
+}
+
+function firstOwnedValue(obj, paths) {
+  for (const path of paths) {
+    if (hasOwnPath(obj, path)) return getByPath(obj, path);
+  }
+  return undefined;
+}
+
 function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
   const out = deepMerge({}, vkAgentsConfig);
 
+  if (hasOwnPath(cfg, 'features')) {
+    const rawFeatures = pruneEmpty(getByPath(cfg, 'features'));
+    if (rawFeatures && typeof rawFeatures === 'object' && !Array.isArray(rawFeatures)) {
+      setByPath(out, 'features', deepMerge(getByPath(out, 'features') ?? {}, rawFeatures));
+    }
+  }
+
+  // GUI の boolean 保存値が文字列になる古い設定も受け入れる。
   if (hasOwnPath(cfg, 'features.coderabbit')) {
     const raw = getByPath(cfg, 'features.coderabbit');
-    if (raw === true || raw === false) {
-      setByPath(out, 'features.coderabbit', raw);
-    } else if (raw === 'true' || raw === 'false') {
+    if (raw === 'true' || raw === 'false') {
       setByPath(out, 'features.coderabbit', raw === 'true');
     }
+  }
+
+  const disabledSkills = normalizedStringArray(firstOwnedValue(cfg, [
+    'vkAgents.disabledSkills',
+    'vkAgents.skills.disabled',
+    'skills.disabled',
+  ]));
+  if (disabledSkills) {
+    setByPath(out, 'skills.disabled', disabledSkills);
+  }
+
+  const allowedOwners = normalizedStringArray(firstOwnedValue(cfg, [
+    'vkAgents.allowedOwners',
+    'vkAgents.allowed_owners',
+    'vkAgents.org.allowed_owners',
+    'org.allowed_owners',
+  ]));
+  if (allowedOwners) {
+    setByPath(out, 'org.allowed_owners', allowedOwners);
   }
 
   if (hasOwnPath(cfg, 'staff_wp_dev.engine')) {
@@ -514,7 +602,7 @@ function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
  * そのうえで sync.sh --claude-global と同じく ~/.claude/vk-agents-settings.json へ同内容を
  * 派生ファイルとして書き出す（reader はこの派生ファイルを読むため）。
  * @param {object} cfg loadUnifiedConfig() の戻り値
- * @param {{ configPath?: string, globalSettingsPath?: string }} [options]
+ * @param {{ configPath?: string, globalSettingsPath?: string, force?: boolean }} [options]
  * @returns {{ configPath: string, globalSettingsPath: string }|null}
  */
 export function writeVkAgentsSettings(cfg = {}, options = {}) {
@@ -523,10 +611,17 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
 
   const hasConfig = existsSync(configPath);
   const hasGuiSettings =
-    hasOwnPath(cfg, 'features.coderabbit') ||
+    hasOwnPath(cfg, 'features') ||
+    hasOwnPath(cfg, 'vkAgents.disabledSkills') ||
+    hasOwnPath(cfg, 'vkAgents.skills.disabled') ||
+    hasOwnPath(cfg, 'vkAgents.allowedOwners') ||
+    hasOwnPath(cfg, 'vkAgents.allowed_owners') ||
+    hasOwnPath(cfg, 'vkAgents.org.allowed_owners') ||
+    hasOwnPath(cfg, 'skills.disabled') ||
+    hasOwnPath(cfg, 'org.allowed_owners') ||
     hasOwnPath(cfg, 'staff_wp_dev.engine') ||
     hasOwnPath(cfg, 'multi_repo_task.default_engine');
-  if (!hasConfig && !hasGuiSettings) return null;
+  if (!hasConfig && !hasGuiSettings && options.force !== true) return null;
 
   let vkAgentsConfig;
   try {

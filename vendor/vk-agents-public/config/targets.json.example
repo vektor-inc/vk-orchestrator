@@ -1,0 +1,4 @@
+{
+  "My Theme": "~/path/to/wp-content/themes/my-theme",
+  "My Plugin": "~/path/to/wp-content/plugins/my-plugin"
+}
