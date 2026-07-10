@@ -1,7 +1,9 @@
 # Changelog
 
+= 0.11.0 =
 - [ 機能追加 ] PR のマージ検知時に VK Terminals の連動ペインへ prMerged を送信し、PR ボタンをマージ済み表示（紫）へ切り替える機能を追加
 - [ 機能追加 ] タスク用ペインの起点ディレクトリを config（orchestrator.taskCwd / env TASK_CWD）で指定可能にし、未設定時の既定を専用ディレクトリ（~/vk-orchestrator-tasks・自動作成）としてホームディレクトリ／機密ディレクトリを起点にしないように変更
+- [ 仕様変更 ] vk-terminals を 1.14.0 から 1.15.0 にアップデート
 
 = 0.10.0 =
 - [ 仕様変更 ] vk-terminals を 1.13.0 から 1.14.0 にアップデート
