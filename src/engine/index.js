@@ -28,6 +28,7 @@ import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
 import { startKeepAwake } from '../power/keep-awake.js';
+import { createNotifyPaneMerged } from './notify-pane-merged.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -197,24 +198,14 @@ async function recordPRAcrossSurfaces({ termId, queueIssueHtmlUrl, prRef, prUrl,
   }
 }
 
-// マージ済み表示の通知は本流の close / cleanup を止めるほど重要ではないため warn で握る。
 // runPostMergeCleanup は finally で removeTask し termId を含む state を消すので、
 // 必ず cleanup 前に getTask から termId を取得して VK Terminals へ送る。
-async function notifyPaneMerged(issueNumber, prUrl, logTag) {
-  let termId;
-  try {
-    termId = (await getTask(issueNumber))?.termId ?? null;
-  } catch {
-    termId = null;
-  }
-  if (termId == null) return;
-
-  try {
-    await setTerminalPrUrl(VK_PORT, termId, prUrl, { prMerged: true });
-  } catch (err) {
-    console.warn(`  ${logTag} VK Terminals への prMerged 通知失敗（処理は継続）: ${err.message}`);
-  }
-}
+const notifyPaneMerged = createNotifyPaneMerged({
+  getTask,
+  setTerminalPrUrl,
+  port: VK_PORT,
+  logger: console,
+});
 
 // VK Terminals のサイドバーメニューへ「VK Orchestrator」セクションを投げる（冪等）。
 // VK Terminals は再起動で注入項目を失うため、health ゲート通過後（＝接続確立時）に
