@@ -7,6 +7,7 @@
 - [ 機能追加 ] GUI 設定パネルから CodeRabbit レビューを ignore する vk-agents 設定を変更できる機能を追加
 - [ 仕様変更 ] GitHub トークン取得を gh auth login 前提にし、config.json への平文保存導線を撤去
 - [ 不具合修正 ] PR マージ検知時に state から termId を取得できず連動ペインのマージ済み表示が更新されない不具合を修正
+- [ 不具合修正 ] scan-in-progress 経路でマージ検知した場合に連動ペインの PR ボタンがマージ済み表示にならない不具合を修正
 - [ その他 ] README の設定項目表と config.example.json を実態に合わせ、task/features/staff_wp_dev/multi_repo_task/vkAgents の各設定とテスト件数など乖離していた記述を更新
 
 = 0.11.0 =
