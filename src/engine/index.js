@@ -29,6 +29,8 @@ import { decideInProgressAction } from './in-progress-decision.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
 import { startKeepAwake } from '../power/keep-awake.js';
 import { createNotifyPaneMerged } from './notify-pane-merged.js';
+import { installPersistentConsoleLogger } from './persistent-logger.js';
+import { createStartLock } from './start-lock.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -64,6 +66,7 @@ const PANE_MISSING_TICKS = 2;
 // 無限リトライ防止が沈黙のうちに無効化されるため必ず健全化を通す。
 const PANE_RESUME_MAX    = normalizeResumeMax(process.env.PANE_RESUME_MAX ?? 3);
 const RUN_ONCE           = process.argv.includes('--once');
+installPersistentConsoleLogger();
 
 // `--flag=value` / `--flag value` の両形式から値を取り出す簡易パーサ。
 function readArgValue(name) {
@@ -203,8 +206,13 @@ async function recordPRAcrossSurfaces({ termId, queueIssueHtmlUrl, prRef, prUrl,
 const notifyPaneMerged = createNotifyPaneMerged({
   getTask,
   setTerminalPrUrl,
+  getStates,
   port: VK_PORT,
-  logger: console,
+  logger: {
+    log: (...args) => console.log(...args),
+    info: (...args) => console.log(...args),
+    warn: (...args) => console.warn(...args),
+  },
 });
 
 // VK Terminals のサイドバーメニューへ「VK Orchestrator」セクションを投げる（冪等）。
@@ -1553,55 +1561,69 @@ async function loop() {
 // エントリポイント
 // -------------------------------------------------------
 async function main() {
+  // watch だけでなく --once も state.json を読み書きするため、同時起動すると
+  // termId 取得や cleanup の state 更新が競合しうる。短命の run-once でも同じ
+  // ロックを取得し、常駐 watch と同時に走らないようにする。
+  const startLock = createStartLock({ logger: console });
+  await startLock.acquire();
+  process.on('exit', () => startLock.releaseSync());
+
   // VK Terminals 上で実行されている場合、自分のペインタイトルを「オーケストレーター」に
   // 設定して、どのペインが orchestrator か一目で分かるようにする（issue #157）。
   // TTY でない場合（ログへのリダイレクト等）は setOwnPaneTitle 側で何もしない。
-  setOwnPaneTitle('オーケストレーター');
+  try {
+    setOwnPaneTitle('オーケストレーター');
 
-  console.log(`=== task-queue orchestrator ===`);
-  console.log(`  repo         : ${GITHUB_OWNER}/${GITHUB_REPO}`);
-  console.log(`  source org   : ${SOURCE_ORG}`);
-  console.log(`  assignee     : ${formatAssigneeMode(github)}`);
-  console.log(`  terminal     : http://127.0.0.1:${VK_PORT}`);
-  console.log(`  interval     : ${POLL_INTERVAL / 1000}s`);
-  console.log(`  watchdog idle: ${WATCHDOG_IDLE / 60000}min`);
-  console.log(`  pane resume  : 最大 ${PANE_RESUME_MAX} 回（pane 消失・PR 未生成時の自動再開）`);
-  console.log(`  mode         : ${RUN_ONCE ? 'run-once' : 'watch'}`);
-  console.log('');
+    console.log(`=== task-queue orchestrator ===`);
+    console.log(`  repo         : ${GITHUB_OWNER}/${GITHUB_REPO}`);
+    console.log(`  source org   : ${SOURCE_ORG}`);
+    console.log(`  assignee     : ${formatAssigneeMode(github)}`);
+    console.log(`  terminal     : http://127.0.0.1:${VK_PORT}`);
+    console.log(`  interval     : ${POLL_INTERVAL / 1000}s`);
+    console.log(`  watchdog idle: ${WATCHDOG_IDLE / 60000}min`);
+    console.log(`  pane resume  : 最大 ${PANE_RESUME_MAX} 回（pane 消失・PR 未生成時の自動再開）`);
+    console.log(`  mode         : ${RUN_ONCE ? 'run-once' : 'watch'}`);
+    console.log('');
 
-  // 起動時リカバリーは廃止（新方針 案B）。orchestrator を再起動しても VK Terminals 側の
-  // pane は生き残っているため、in-progress / waiting-input の issue はラベルのまま残し、
-  // 通常ループのスキャナに委ねる（古い pane が生きていれば作業継続、死んでいれば
-  // scanWatchdog が wp-env クリーンアップのうえ failed に倒す）。これにより、既存 PR が
-  // あるのに ready へ戻して重複 PR を作る #40 の事故も構造的に起きない。
+    // 起動時リカバリーは廃止（新方針 案B）。orchestrator を再起動しても VK Terminals 側の
+    // pane は生き残っているため、in-progress / waiting-input の issue はラベルのまま残し、
+    // 通常ループのスキャナに委ねる（古い pane が生きていれば作業継続、死んでいれば
+    // scanWatchdog が wp-env クリーンアップのうえ failed に倒す）。これにより、既存 PR が
+    // あるのに ready へ戻して重複 PR を作る #40 の事故も構造的に起きない。
 
-  if (RUN_ONCE) {
-    // 案B（ステートレス・スキャナ方式）では起動は撃ちっぱなしで、状態は GitHub の
-    // ラベルに永続する。run-once は 1 周だけ走って終了する（進行中タスクは次回起動の
-    // スキャナが拾う）。
-    await loop();
-    return;
+    if (RUN_ONCE) {
+      // 案B（ステートレス・スキャナ方式）では起動は撃ちっぱなしで、状態は GitHub の
+      // ラベルに永続する。run-once は 1 周だけ走って終了する（進行中タスクは次回起動の
+      // スキャナが拾う）。
+      await loop();
+      await startLock.release();
+      return;
+    }
+
+    // watch 中は OS がアイドルスリープに入るとポーリングごと止まってしまうため、
+    // OS ごとの方法でシステムスリープを抑止する（run-once は短命なので不要）。
+    // macOS は caffeinate、Windows は SetThreadExecutionState。未対応 OS は警告のみ。
+    const keepAwake = startKeepAwake();
+    // graceful shutdown 時にスリープ抑止と起動ロックを即時解除する。
+    // Ctrl-C / kill 時に待たず解放する。SIGINT / SIGTERM は解除後に自前で終了する。
+    process.on('exit', () => keepAwake.stop());
+    for (const sig of ['SIGINT', 'SIGTERM']) {
+      process.on(sig, () => {
+        keepAwake.stop();
+        startLock.releaseSync();
+        process.exit(0);
+      });
+    }
+
+    // watch モード: 初回 loop を起動し、setInterval で定期実行する。
+    // setInterval 経由の呼び出しは safe wrapper を通して unhandled rejection を防ぐ。
+    const runLoopSafely = () => loop().catch(err => console.error('[Loop]', err));
+    runLoopSafely();
+    setInterval(runLoopSafely, POLL_INTERVAL);
+  } catch (err) {
+    await startLock.release();
+    throw err;
   }
-
-  // watch 中は OS がアイドルスリープに入るとポーリングごと止まってしまうため、
-  // OS ごとの方法でシステムスリープを抑止する（run-once は短命なので不要）。
-  // macOS は caffeinate、Windows は SetThreadExecutionState。未対応 OS は警告のみ。
-  const keepAwake = startKeepAwake();
-  // graceful shutdown 時にスリープ抑止を即時解除する。プロセス連動でも自動解除されるが、
-  // Ctrl-C / kill 時に待たず解放する。SIGINT / SIGTERM は解除後に自前で終了する。
-  process.on('exit', () => keepAwake.stop());
-  for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.on(sig, () => {
-      keepAwake.stop();
-      process.exit(0);
-    });
-  }
-
-  // watch モード: 初回 loop を起動し、setInterval で定期実行する。
-  // setInterval 経由の呼び出しは safe wrapper を通して unhandled rejection を防ぐ。
-  const runLoopSafely = () => loop().catch(err => console.error('[Loop]', err));
-  runLoopSafely();
-  setInterval(runLoopSafely, POLL_INTERVAL);
 }
 
 main().catch(err => {
