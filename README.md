@@ -208,8 +208,8 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 |---|---|---|---|
 | `task.commandTemplate` | `TASK_COMMAND_TEMPLATE` | タスク着手時に各ペインへ投入するコマンド。`{issueUrl}` / `{wpPort}` は自動置換 | `/vk-kore {issueUrl} wp-env-port={wpPort} headless=1` |
 | `features.coderabbit` | — | エージェント側の CodeRabbit 監視を有効化（vk-agents 設定へ投影）。OFF で `/code-review` 等での確認に切替 | `true` |
-| `org.review_assets_repo` | — | PR・テスト報告用の画像/GIF を保存するレビュー用アセットリポジトリ（`<owner>/<repo>`） | 空＝画像アップロードをスキップしてテキスト記述 |
-| `org.orchestrator_repo` | — | vk-kore が task-queue 連携ルール（`docs/agent-rules.md`）を取得するリポジトリ（`<owner>/<repo>`） | 空＝`vektor-inc/vk-orchestrator` |
+| `org.review_assets_repo` | — | PR・テスト報告用の画像/GIF を保存するレビュー用アセットリポジトリ（`<owner>/<repo>`、例: `vektor-inc/review-assets`。形式が正しくない値は反映されません） | 空＝画像アップロードをスキップしてテキスト記述 |
+| `org.orchestrator_repo` | — | vk-kore が task-queue 連携ルール（`docs/agent-rules.md`）を取得するリポジトリ（`<owner>/<repo>`、例: `vektor-inc/vk-orchestrator`。形式が正しくない値は反映されません） | 空＝`vektor-inc/vk-orchestrator` |
 | `staff_wp_dev.engine` | — | staff-wp-dev（和田）の実行エンジン（`claude` / `codex`） | 空＝`claude` |
 | `multi_repo_task.default_engine` | — | vk-multi-repo-task を新規作成するときの既定エンジン（`claude` / `codex`） | 空＝`claude` |
 | `vkAgents.repoPath` | `VK_AGENTS_DIR` / `VK_AGENTS_REPO_PATH` | vk-agents リポジトリのパス。未指定は既知の private clone を優先探索し、無ければ同梱 `vendor/vk-agents-public` を使用 | 自動探索 |
