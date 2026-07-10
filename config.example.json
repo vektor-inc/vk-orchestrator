@@ -35,5 +35,8 @@
   },
   "multi_repo_task": {
     "default_engine": ""
+  },
+  "task": {
+    "commandTemplate": ""
   }
 }

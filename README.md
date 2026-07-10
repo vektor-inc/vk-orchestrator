@@ -4,7 +4,7 @@ GitHub issues をタスクキューとして使い、[VK Terminals](https://gith
 
 これまで [task-queue](https://github.com/vektor-inc/task-queue) リポジトリに同居していたオーケストレーター部分を切り出したものです。task-queue は「実行する issue の管理（キューの実体）」に専念し、実行ロジックはこの VK Orchestrator が担います。
 
-> 実装は task-queue/orchestrator から移設済みです（ユニットテスト 135 件パス）。設計・移行の背景は [`docs/MIGRATION-PLAN.md`](docs/MIGRATION-PLAN.md) を参照してください。移設に伴う汎用化として、作業対象リポジトリの取り込みラベルを `QUEUE_LABEL` env で差し替え可能にしています。
+> 実装は task-queue/orchestrator から移設済みです（ユニットテスト 295 件パス）。設計・移行の背景は [`docs/MIGRATION-PLAN.md`](docs/MIGRATION-PLAN.md) を参照してください。移設に伴う汎用化として、作業対象リポジトリの取り込みラベルを `QUEUE_LABEL` env で差し替え可能にしています。
 
 ## 役割分担
 
@@ -185,3 +185,17 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 > 反映は次回 `up` 時。ターミナル用途では GPU アクセラの体感差はほぼ無いため、既定（`off` 相当）で十分です。
 >
 > ※ WSLg での HW アクセラ（HW OpenGL / Vulkan）は対応しません。Vulkan は HW ICD（dzn 等）が WSLg に無く、OpenGL も体感差が無いうえ Mesa/Dawn 由来の警告が出るためです。
+
+### タスク・vk-agents 連携の設定
+
+上表のオーケストレーター／VK Terminals ランタイム設定に加え、`config.json` には**タスク着手時のコマンド**と**各ペインで動く Claude エージェント（vk-agents）向けの共通設定**を持たせられます。GUI 設定パネルにも同じ項目が並びます（`config.example.json` 参照）。
+
+| セクション.キー | 対応 env | 意味 | 既定 |
+|---|---|---|---|
+| `task.commandTemplate` | `TASK_COMMAND_TEMPLATE` | タスク着手時に各ペインへ投入するコマンド。`{issueUrl}` / `{wpPort}` は自動置換 | `/vk-kore {issueUrl} wp-env-port={wpPort} headless=1` |
+| `features.coderabbit` | — | エージェント側の CodeRabbit 監視を有効化（vk-agents 設定へ投影）。OFF で `/code-review` 等での確認に切替 | `true` |
+| `staff_wp_dev.engine` | — | staff-wp-dev（和田）の実行エンジン（`claude` / `codex`） | 空＝`claude` |
+| `multi_repo_task.default_engine` | — | vk-multi-repo-task を新規作成するときの既定エンジン（`claude` / `codex`） | 空＝`claude` |
+| `vkAgents.repoPath` | `VK_AGENTS_DIR` / `VK_AGENTS_REPO_PATH` | vk-agents リポジトリのパス。未指定は既知の兄弟配置を自動探索 | 自動探索 |
+
+`task.commandTemplate` は orchestrator 自身が消費します（`{issueUrl}` / `{wpPort}` を置換してペインへ投入）。`features.*` / `staff_wp_dev.*` / `multi_repo_task.*` は orchestrator の挙動ではなく、`up`/`apply` 時に vk-agents リポジトリの `config.json` と `~/.claude/vk-agents-settings.json` へ**投影**され、各ペインの Claude エージェントが読み取ります（orchestrator 自身の CodeRabbit 待機ゲートとは別物です）。
