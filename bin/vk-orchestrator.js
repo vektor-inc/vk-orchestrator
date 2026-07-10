@@ -66,6 +66,126 @@ async function warnIfShadowedByHomeConfig() {
   }
 }
 
+const ORCHESTRATOR_REPO_URL = 'https://github.com/vektor-inc/vk-orchestrator.git';
+
+// up 起動時に vk-orchestrator 自身を最新リリースへ追従させる。
+//
+// リモートの最新 semver タグは「更新要否の判定材料」としてだけ使い、実際の更新は
+// main ブランチ上で `git pull --ff-only` に限定する。dirty / 非 main / ff 不可など、
+// 開発者の作業や履歴を壊しうる状況では警告して現行プロセスのまま起動を続行する。
+async function reconcileOrchestratorVersion() {
+  const repoRoot = resolve(__dirname, '..');
+  const alreadyUpdated = process.env.VK_ORCHESTRATOR_SELF_UPDATED === '1';
+  const optOut = process.env.VK_ORCHESTRATOR_NO_AUTO_UPDATE === '1';
+
+  if (alreadyUpdated) {
+    console.log('[up] vk-orchestrator は再起動後のため自己更新チェックをスキップします。');
+    return;
+  }
+  if (optOut) {
+    console.log('[up] VK_ORCHESTRATOR_NO_AUTO_UPDATE=1 のため vk-orchestrator の自己更新をスキップします。');
+    return;
+  }
+
+  const { readFileSync } = await import('fs');
+  let current = null;
+  try {
+    current = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8')).version;
+  } catch {
+    console.warn('[up] vk-orchestrator の package.json を読めませんでした。自己更新をスキップします。');
+    return;
+  }
+
+  console.log('[up] vk-orchestrator の自己更新を確認します...');
+
+  let latest = null;
+  try {
+    const { fetchTags, latestSemverTag } = await import('../scripts/vk-terminals-tags.mjs');
+    latest = latestSemverTag(fetchTags(ORCHESTRATOR_REPO_URL, { cwd: repoRoot }));
+  } catch {
+    console.warn('[up] vk-orchestrator のリモート照会に失敗しました（オフライン等）。現行版で起動します。');
+    return;
+  }
+
+  const { orchestratorUpdateDecision } = await import('../src/engine/self-update.js');
+  const versionDecision = orchestratorUpdateDecision({ current, latest, branch: 'main' });
+  if (versionDecision.action === 'skip') {
+    if (versionDecision.reason === 'up-to-date') {
+      console.log(`[up] vk-orchestrator は最新です（現在: ${current}, 最新: ${latest}）。`);
+    } else {
+      console.warn('[up] vk-orchestrator の更新対象タグを判定できませんでした。現行版で起動します。');
+    }
+    return;
+  }
+
+  const { spawnSync } = await import('child_process');
+  const gitOutput = (args) => {
+    const r = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    if (r.status !== 0) return null;
+    return r.stdout.trim();
+  };
+  const gitBlobHash = (path) => gitOutput(['rev-parse', `HEAD:${path}`]);
+
+  const status = gitOutput(['status', '--porcelain']);
+  if (status == null) {
+    console.warn('[up] vk-orchestrator の git 状態を確認できませんでした。自己更新をスキップします。');
+    return;
+  }
+  const branch = gitOutput(['branch', '--show-current']);
+  if (branch == null) {
+    console.warn('[up] vk-orchestrator の現在ブランチを確認できませんでした。自己更新をスキップします。');
+    return;
+  }
+
+  const decision = orchestratorUpdateDecision({
+    current,
+    latest,
+    dirty: status !== '',
+    branch,
+    optOut,
+    alreadyUpdated,
+  });
+  if (decision.action === 'skip') {
+    if (decision.reason === 'dirty') {
+      console.warn('[up] 未コミット変更を守るため vk-orchestrator の自己更新をスキップします。現行版で起動します。');
+    } else if (decision.reason === 'non-main-branch') {
+      console.warn(`[up] 現在のブランチが main ではないため vk-orchestrator の自己更新をスキップします（現在: ${branch || '(detached)'}）。`);
+    } else {
+      console.warn('[up] vk-orchestrator の自己更新条件を満たさないためスキップします。現行版で起動します。');
+    }
+    return;
+  }
+
+  const beforeLock = gitBlobHash('package-lock.json');
+  console.log(`[up] vk-orchestrator ${current} → ${latest} が見つかりました。main を ff 追従します...`);
+  const pull = spawnSync('git', ['pull', '--ff-only'], { cwd: repoRoot, stdio: 'inherit' });
+  if (pull.status !== 0) {
+    console.warn('[up] vk-orchestrator の git pull --ff-only に失敗しました。現行版で起動します。');
+    return;
+  }
+
+  const afterLock = gitBlobHash('package-lock.json');
+  if (beforeLock !== afterLock) {
+    console.log('[up] package-lock.json が更新されたため npm install を実行します...');
+    const install = spawnSync('npm', ['install'], { cwd: repoRoot, stdio: 'inherit' });
+    if (install.status !== 0) {
+      console.warn('[up] npm install に失敗しました。現行プロセスのまま起動を続行します。');
+      return;
+    }
+  }
+
+  console.log('[up] vk-orchestrator の自己更新が完了しました。新しいコードで再起動します...');
+  const child = spawnSync(process.execPath, process.argv.slice(1), {
+    stdio: 'inherit',
+    env: { ...process.env, VK_ORCHESTRATOR_SELF_UPDATED: '1' },
+  });
+  if (child.error) {
+    console.warn(`[up] vk-orchestrator の再起動に失敗しました。現行プロセスのまま起動を続行します: ${child.error.message}`);
+    return;
+  }
+  process.exit(child.status ?? 1);
+}
+
 // up 起動時に vk-terminals を最新へ追従させる。
 //
 // 既定では GitHub のリモートタグを見て最新 semver を導入対象とし、node_modules に
@@ -204,7 +324,8 @@ async function main() {
       const { waitForHealth, createNewPane, sendToTerminal } =
         await import('../src/terminals/index.js');
 
-      // GUI 起動前に、固定タグと実際に入っている版のズレを解消しておく。
+      // GUI 起動前に、orchestrator 自身と固定タグ・実際に入っている版のズレを解消しておく。
+      await reconcileOrchestratorVersion();
       await reconcileVkTerminalsVersion();
 
       const vkDir = await resolveVkDirOrExit();

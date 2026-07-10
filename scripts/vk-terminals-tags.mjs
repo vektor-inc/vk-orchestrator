@@ -12,8 +12,11 @@ export const REPO_URL = 'https://github.com/vektor-inc/vk-terminals.git';
 
 // リモートの全タグ → commit SHA のマップ。annotated タグは ^{} の
 // dereference 済み commit を優先する（lightweight タグはそのまま）。
-export function fetchTags() {
-  const out = execFileSync('git', ['ls-remote', '--tags', REPO_URL], { encoding: 'utf8' });
+export function fetchTags(repoUrl = REPO_URL, options = {}) {
+  const out = execFileSync('git', ['ls-remote', '--tags', repoUrl], {
+    encoding: 'utf8',
+    ...options,
+  });
   const map = new Map();
   for (const line of out.split('\n')) {
     const m = line.match(/^([0-9a-f]{40})\s+refs\/tags\/(.+?)(\^\{\})?$/);
