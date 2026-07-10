@@ -7,7 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '..', '..', '.env') });
 
 import { GitHubClient } from '../github/index.js';
-import { getTaskConfig } from '../config.js';
+import { getTaskConfig, getTaskCwd } from '../config.js';
 import {
   checkHealth,
   createNewPane,
@@ -243,7 +243,7 @@ async function startTask(issue) {
 
   let termId;
   try {
-    termId = await createNewPane(VK_PORT);
+    termId = await createNewPane(VK_PORT, getTaskCwd());
     console.log(`  → 新規ペイン作成 (termId: ${termId})`);
   } catch (err) {
     console.error(`  新規ペイン作成失敗: ${err.message}`);

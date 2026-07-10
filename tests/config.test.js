@@ -6,8 +6,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync, readdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, readdirSync, existsSync } from 'fs';
+import { join, dirname, isAbsolute, resolve } from 'path';
 import { tmpdir } from 'os';
 import {
   loadUnifiedConfig,
@@ -20,6 +20,7 @@ import {
   vkAgentsGlobalSettingsPath,
   writeVkAgentsSettings,
   getTaskConfig,
+  getTaskCwd,
   getProtocolConfig,
   getLabelsConfig,
   buildSettingsDescriptor,
@@ -52,13 +53,13 @@ test('loadUnifiedConfig: JSON を読み込む', () => {
 });
 
 test('applyConfigToEnv: 未設定の env に config 値を反映する', () => {
-  const keys = ['GITHUB_OWNER', 'GITHUB_REPO', 'QUEUE_LABEL', 'VK_TERMINALS_PORT', 'ASSIGNEE_FILTER'];
+  const keys = ['GITHUB_OWNER', 'GITHUB_REPO', 'QUEUE_LABEL', 'VK_TERMINALS_PORT', 'ASSIGNEE_FILTER', 'TASK_CWD'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) delete process.env[k];
   try {
     applyConfigToEnv({
       github: { owner: 'acme', repo: 'q', queueLabel: 'lbl' },
-      orchestrator: { assigneeFilter: 'alice' },
+      orchestrator: { assigneeFilter: 'alice', taskCwd: '/work/task' },
       vkTerminals: { port: 20000 },
     });
     assert.equal(process.env.GITHUB_OWNER, 'acme');
@@ -66,6 +67,7 @@ test('applyConfigToEnv: 未設定の env に config 値を反映する', () => {
     assert.equal(process.env.QUEUE_LABEL, 'lbl');
     assert.equal(process.env.VK_TERMINALS_PORT, '20000');
     assert.equal(process.env.ASSIGNEE_FILTER, 'alice');
+    assert.equal(process.env.TASK_CWD, '/work/task');
   } finally {
     for (const k of keys) {
       if (saved[k] === undefined) delete process.env[k];
@@ -351,7 +353,7 @@ test('toVkTerminalsConfig: トークンを VK Terminals 設定に絶対に含め
 // task / protocol / labels セクション（汎用化の土台。既定値は現行ハードコード値）
 // -------------------------------------------------------
 
-const TASK_ENV_KEYS = ['TASK_COMMAND_TEMPLATE', 'TASK_WP_PORT_BASE', 'TASK_WP_PORT_STRIDE', 'TASK_WP_ENV_ENABLED'];
+const TASK_ENV_KEYS = ['TASK_COMMAND_TEMPLATE', 'TASK_WP_PORT_BASE', 'TASK_WP_PORT_STRIDE', 'TASK_WP_ENV_ENABLED', 'TASK_CWD'];
 
 function withoutTaskEnv(fn) {
   const saved = Object.fromEntries(TASK_ENV_KEYS.map((k) => [k, process.env[k]]));
@@ -363,6 +365,16 @@ function withoutTaskEnv(fn) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
     }
+  }
+}
+
+function withoutConsoleWarn(fn) {
+  const saved = console.warn;
+  console.warn = () => {};
+  try {
+    return fn();
+  } finally {
+    console.warn = saved;
   }
 }
 
@@ -425,6 +437,85 @@ test('getTaskConfig: 空白のみの TASK_WP_ENV_ENABLED は未指定扱い（tr
     // 空白のみは無視され、config.json の false がそのまま採用される
     assert.equal(getTaskConfig({ task: { wpEnv: { enabled: false } } }).wpEnv.enabled, false);
     assert.equal(getTaskConfig({}).wpEnv.enabled, null); // config も無ければ既定（自動判定）
+  });
+});
+
+test('getTaskCwd: config 無しで専用ディレクトリを既定値として作成して返す', () => {
+  withoutTaskEnv(() => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'vko-task-home-'));
+    try {
+      const expected = join(tmpHome, 'vk-orchestrator-tasks');
+      const cwd = getTaskCwd({}, tmpHome);
+      assert.equal(isAbsolute(cwd), true);
+      assert.equal(cwd, expected);
+      assert.equal(existsSync(cwd), true);
+      assert.equal(getTaskCwd({}, tmpHome), expected);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+});
+
+test('getTaskCwd: config.json の絶対パス指定を返す', () => {
+  withoutTaskEnv(() => {
+    const dir = mkdtempSync(join(tmpdir(), 'vko-task-abs-'));
+    try {
+      assert.equal(getTaskCwd({ orchestrator: { taskCwd: dir } }), dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('getTaskCwd: config.json の相対パス指定を絶対パスへ解決する', () => {
+  withoutTaskEnv(() => {
+    const cwd = getTaskCwd({ orchestrator: { taskCwd: '.' } });
+    assert.equal(isAbsolute(cwd), true);
+    assert.equal(cwd, resolve('.'));
+  });
+});
+
+test('getTaskCwd: TASK_CWD env が config.json より優先される', () => {
+  withoutTaskEnv(() => {
+    const envDir = mkdtempSync(join(tmpdir(), 'vko-task-env-'));
+    const configDir = mkdtempSync(join(tmpdir(), 'vko-task-config-'));
+    try {
+      process.env.TASK_CWD = envDir;
+      assert.equal(getTaskCwd({ orchestrator: { taskCwd: configDir } }), envDir);
+    } finally {
+      rmSync(envDir, { recursive: true, force: true });
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('getTaskCwd: 空文字/空白のみの orchestrator.taskCwd は既定へフォールバックする', () => {
+  withoutTaskEnv(() => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'vko-task-home-'));
+    try {
+      const fallback = join(tmpHome, 'vk-orchestrator-tasks');
+      assert.equal(getTaskCwd({ orchestrator: { taskCwd: '' } }, tmpHome), fallback);
+      assert.equal(getTaskCwd({ orchestrator: { taskCwd: '   ' } }, tmpHome), fallback);
+      assert.equal(existsSync(fallback), true);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+});
+
+test('getTaskCwd: 明示値は存在しなくても自動作成しない', () => {
+  withoutTaskEnv(() => {
+    withoutConsoleWarn(() => {
+      const dir = mkdtempSync(join(tmpdir(), 'vko-task-explicit-'));
+      try {
+        const missing = join(dir, 'missing-task-cwd');
+        const cwd = getTaskCwd({ orchestrator: { taskCwd: missing } });
+        assert.equal(cwd, resolve(missing));
+        assert.equal(existsSync(cwd), false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
 
