@@ -197,6 +197,25 @@ async function recordPRAcrossSurfaces({ termId, queueIssueHtmlUrl, prRef, prUrl,
   }
 }
 
+// マージ済み表示の通知は本流の close / cleanup を止めるほど重要ではないため warn で握る。
+// runPostMergeCleanup は finally で removeTask し termId を含む state を消すので、
+// 必ず cleanup 前に getTask から termId を取得して VK Terminals へ送る。
+async function notifyPaneMerged(issueNumber, prUrl, logTag) {
+  let termId;
+  try {
+    termId = (await getTask(issueNumber))?.termId ?? null;
+  } catch {
+    termId = null;
+  }
+  if (termId == null) return;
+
+  try {
+    await setTerminalPrUrl(VK_PORT, termId, prUrl, { prMerged: true });
+  } catch (err) {
+    console.warn(`  ${logTag} VK Terminals への prMerged 通知失敗（処理は継続）: ${err.message}`);
+  }
+}
+
 // VK Terminals のサイドバーメニューへ「VK Orchestrator」セクションを投げる（冪等）。
 // VK Terminals は再起動で注入項目を失うため、health ゲート通過後（＝接続確立時）に
 // 毎ループ投げ直す。POST /api/menu は source 単位で丸ごと置換する冪等 API なので、
@@ -948,6 +967,7 @@ async function checkWaitingMergeIssues() {
 
     if (prState.merged) {
       console.log(`  [merge-watch] issue #${issue.number}: PR #${prRef.number} がマージ済み → 完了`);
+      await notifyPaneMerged(issue.number, prUrl, '[merge-watch]');
       // 対象 issue が open のままなら部分対応マージの可能性があるため done へ進めず、
       // waiting-merge ラベルを維持して次ループで再評価する。
       await closeSourceIssueBeforeGate(issue, '[merge-watch]');
@@ -1051,6 +1071,8 @@ async function tryAutoMerge(issue, prRef, prState, prUrl) {
     console.warn(`  ${tag}: PR #${prRef.number} の自動マージ失敗（次ループで再試行）: ${err.message}`);
     return;
   }
+
+  await notifyPaneMerged(issue.number, prUrl, tag);
 
   // run-once モードでは次回 checkWaitingMergeIssues() が来ないため、その場で close + done まで進める。
   // 通常ループでも次回の merged 判定が冪等に走るので二重処理にはならないが、こちらで先に閉じることで
