@@ -319,6 +319,17 @@ export class GitHubClient {
     });
   }
 
+  // 作業対象リポジトリ側 issue を明示 owner/repo/number で close する。
+  async closeSourceIssue({ owner, repo, number }) {
+    await this.octokit.issues.update({
+      owner,
+      repo,
+      issue_number: number,
+      state: 'closed',
+    });
+    console.log(`  [GitHub] source issue ${owner}/${repo}#${number} → closed`);
+  }
+
   // issue本文の末尾にPR URLを追記する（既に含まれている場合はスキップ）
   //
   // 一時的なAPIエラーに耐えるため、指数バックオフ（1s, 3s, 9s）で最大3回リトライする。

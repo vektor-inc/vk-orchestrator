@@ -23,6 +23,7 @@ import {
 import { recordTaskStart, updateTask, removeTask, getTask, getAllTasks } from './state.js';
 import { cleanupForIssue, formatCleanupSummary, inspectWorktreeByPort } from './cleanup.js';
 import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
+import { closeSourceIssueBeforeGate as closeSourceIssueBeforeGateImpl } from './source-close.js';
 import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
@@ -133,6 +134,20 @@ function canTransitionToDone(issue, logTag = '[done-gate]') {
     {
       extractGitHubIssueUrl,
       getIssueState: github.getIssueState.bind(github),
+    },
+    { logTag }
+  );
+}
+
+// マージ検知後、done-gate の直前に作業対象リポジトリ側 issue を close する。
+// 本体 issue が cross-repo で PR 本文に close keyword が無い場合、GitHub の自動 close が効かず
+// done-gate が open 判定で止まり続けるため、ここで先に明示 close する。
+function closeSourceIssueBeforeGate(issue, logTag = '[source-close]') {
+  return closeSourceIssueBeforeGateImpl(
+    issue,
+    {
+      extractGitHubIssueUrl,
+      closeSourceIssue: github.closeSourceIssue.bind(github),
     },
     { logTag }
   );
@@ -491,6 +506,7 @@ async function scanInProgressIssues() {
     }
 
     if (action.type === 'merged') {
+      await closeSourceIssueBeforeGate(issue, '[scan-in-progress]');
       if (!(await canTransitionToDone(issue, `[scan-in-progress #${issue.number}]`))) continue;
       try {
         await github.addComment(issue.number, `✅ 完了\n\nPR がマージされました。`);
@@ -934,6 +950,7 @@ async function checkWaitingMergeIssues() {
       console.log(`  [merge-watch] issue #${issue.number}: PR #${prRef.number} がマージ済み → 完了`);
       // 対象 issue が open のままなら部分対応マージの可能性があるため done へ進めず、
       // waiting-merge ラベルを維持して次ループで再評価する。
+      await closeSourceIssueBeforeGate(issue, '[merge-watch]');
       if (!(await canTransitionToDone(issue, '[merge-watch]'))) {
         continue;
       }
@@ -1039,6 +1056,7 @@ async function tryAutoMerge(issue, prRef, prState, prUrl) {
   // 通常ループでも次回の merged 判定が冪等に走るので二重処理にはならないが、こちらで先に閉じることで
   // ユーザーから見た「マージ→close」の体感遅延を短縮する。
   // 対象 issue（個別リポ側）が open のままの場合は部分対応の可能性があるため waiting-merge を維持する。
+  await closeSourceIssueBeforeGate(issue, '[automerge]');
   if (!(await canTransitionToDone(issue, '[automerge]'))) {
     return;
   }
@@ -1205,9 +1223,8 @@ async function recheckFailedIssues() {
 
       if (prState.merged) {
         // 対象 issue が open のままだが PR がマージ済みのルート。
-        // 対象 issue が open のうちは部分対応マージで done 化される事故を防ぐためゲートで弾く。
-        // この経路に来ている時点で対象は open のはずなので、ヘルパーは false を返して継続。
-        // 対象が closed に変わっていた場合は次ループでこの分岐ではなく後段の closed ルートへ遷移する。
+        // PR マージ済みなら gate の直前で対象 issue を明示 close し、次の状態確認で done 化できるようにする。
+        await closeSourceIssueBeforeGate(issue, '[failed-recheck]');
         if (!(await canTransitionToDone(issue, '[failed-recheck]'))) {
           continue;
         }

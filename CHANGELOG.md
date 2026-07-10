@@ -4,6 +4,7 @@
 - [ 不具合修正 ] ペインへの本文再送時に入力行をクリアせず起動コマンドが重複連結される不具合の修正
 - [ 不具合修正 ] 入力待ちマーカーが set-title 相乗り経路で VK Terminals に届かず「入力待ち」ラベルが点灯しない不具合を修正（正規の /api/set-status 経路へ変更）
 - [ 不具合修正 ] wp-env を使わないタスクで automerge 後にマージ済みブランチがリモートを含めて削除されず残る不具合を修正
+- [ 不具合修正 ] automerge/マージ後に本体 issue（クロスリポ）が close されず、メタ issue が status:waiting-merge に固着する不具合を修正
 
 = 0.9.0 =
 - [ 機能追加 ] status:waiting-input の issue 連動ペインに入力待ちマーカーを push し、定期監視で再点灯／in-progress 復帰時に消灯する機能を追加
