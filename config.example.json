@@ -29,7 +29,8 @@
     "allowedOwners": ["vektor-inc"]
   },
   "features": {
-    "coderabbit": true
+    "coderabbit": true,
+    "coderabbit_ignore": false
   },
   "staff_wp_dev": {
     "engine": ""

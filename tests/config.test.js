@@ -316,7 +316,7 @@ test('writeVkAgentsSettings: GUI の vk-agents 共通設定だけを read-merge-
 
     const result = writeVkAgentsSettings(
       {
-        features: { coderabbit: false },
+        features: { coderabbit: false, coderabbit_ignore: true },
         staff_wp_dev: { engine: 'codex' },
         multi_repo_task: { default_engine: 'codex' },
       },
@@ -327,13 +327,48 @@ test('writeVkAgentsSettings: GUI の vk-agents 共通設定だけを read-merge-
     const written = JSON.parse(readFileSync(configPath, 'utf8'));
     assert.deepEqual(written, {
       org: { allowed_owners: ['vektor-inc'] },
-      features: { task_queue: true, coderabbit: false },
+      features: { task_queue: true, coderabbit: false, coderabbit_ignore: true },
       staff_wp_dev: { engine: 'codex' },
       multi_repo_task: { default_engine: 'codex' },
     });
     assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), written);
     assert.equal(readdirSync(dir).some((name) => name.endsWith('.tmp')), false);
     assert.equal(readdirSync(dirname(globalSettingsPath)).some((name) => name.endsWith('.tmp')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeVkAgentsSettings: features.coderabbit_ignore の文字列 boolean を受け入れる', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    const globalSettingsPath = join(dir, 'settings.json');
+    writeFileSync(configPath, JSON.stringify({
+      features: { coderabbit: true, task_queue: true },
+    }));
+
+    writeVkAgentsSettings(
+      { features: { coderabbit_ignore: 'true' } },
+      { configPath, globalSettingsPath },
+    );
+
+    const written = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.deepEqual(written, {
+      features: { coderabbit: true, task_queue: true, coderabbit_ignore: true },
+    });
+    assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), written);
+
+    writeVkAgentsSettings(
+      { features: { coderabbit_ignore: 'false' } },
+      { configPath, globalSettingsPath },
+    );
+
+    const rewritten = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.deepEqual(rewritten, {
+      features: { coderabbit: true, task_queue: true, coderabbit_ignore: false },
+    });
+    assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), rewritten);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -856,6 +891,13 @@ test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () 
   assert.equal(coderabbitField.type, 'boolean');
   assert.equal(coderabbitField.default, true);
   assert.match(coderabbitField.help, /CodeRabbit/);
+
+  const coderabbitIgnoreField = group.fields.find((f) => f.key === 'features.coderabbit_ignore');
+  assert.ok(coderabbitIgnoreField);
+  assert.equal(coderabbitIgnoreField.type, 'boolean');
+  assert.equal(coderabbitIgnoreField.default, false);
+  assert.match(coderabbitIgnoreField.label, /@coderabbitai ignore/);
+  assert.match(coderabbitIgnoreField.help, /features\.coderabbit/);
 
   const engineField = group.fields.find((f) => f.key === 'staff_wp_dev.engine');
   assert.ok(engineField);
