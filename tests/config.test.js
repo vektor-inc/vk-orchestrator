@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync, readdirSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, readdirSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname, isAbsolute, resolve } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -21,6 +21,10 @@ import {
   resolveVkAgentsRepoPath,
   resolveVkAgentsConfigPath,
   vkAgentsGlobalSettingsPath,
+  vkAgentsSkillsManifestPath,
+  vkAgentsSkillsManifestSourcePath,
+  isVkAgentsSetup,
+  writeVkAgentsManifestSource,
   writeVkAgentsSettings,
   getTaskConfig,
   getTaskCwd,
@@ -253,6 +257,51 @@ test('vkAgentsGlobalSettingsPath: sync.sh と同じ Claude グローバル設定
   );
 });
 
+test('vkAgentsSkillsManifestPath: sync.sh の Claude スキルマニフェストパスを返す', () => {
+  assert.equal(
+    vkAgentsSkillsManifestPath('/tmp/home'),
+    '/tmp/home/.claude/skills/.agent-skills-manifest',
+  );
+});
+
+test('vkAgentsSkillsManifestSourcePath: orchestrator 管理の展開元サイドカーパスを返す', () => {
+  assert.equal(
+    vkAgentsSkillsManifestSourcePath('/tmp/home'),
+    '/tmp/home/.claude/skills/.agent-skills-manifest-source',
+  );
+});
+
+test('isVkAgentsSetup: マニフェストの有無だけで setup 済みを判定する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-home-'));
+  try {
+    assert.equal(isVkAgentsSetup({ homeDir: dir }), false);
+    const manifestPath = vkAgentsSkillsManifestPath(dir);
+    mkdirSync(dirname(manifestPath), { recursive: true });
+    writeFileSync(manifestPath, 'vk-kore\n');
+    assert.equal(isVkAgentsSetup({ homeDir: dir }), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeVkAgentsManifestSource: sync.sh に消されないサイドカーへ展開元を JSON で記録する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-source-'));
+  try {
+    const sourcePath = join(dir, 'vendor', 'vk-agents-public');
+    const recordPath = writeVkAgentsManifestSource(sourcePath, {
+      homeDir: dir,
+      now: new Date('2026-07-10T00:00:00.000Z'),
+    });
+    assert.equal(recordPath, vkAgentsSkillsManifestSourcePath(dir));
+    assert.deepEqual(JSON.parse(readFileSync(recordPath, 'utf8')), {
+      sourcePath: resolve(sourcePath),
+      writtenAt: '2026-07-10T00:00:00.000Z',
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('writeVkAgentsSettings: GUI の vk-agents 共通設定だけを read-merge-write し、既存キーを保持する', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-'));
   try {
@@ -337,6 +386,65 @@ test('writeVkAgentsSettings: マルチリポタスク既定エンジンの空値
       features: { coderabbit: true },
     });
     assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), written);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeVkAgentsSettings: setup:agents 用に features/skills/org/engine を vk-agents config 形式へ生成する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-setup-'));
+  try {
+    const configPath = join(dir, 'vendor', 'vk-agents-public', 'config.json');
+    const globalSettingsPath = join(dir, 'home', '.claude', 'vk-agents-settings.json');
+
+    const result = writeVkAgentsSettings(
+      {
+        features: { coderabbit: false, task_queue: true },
+        vkAgents: {
+          disabledSkills: ['vk-pr', '', '  vk-sync-skills  '],
+          allowedOwners: ['vektor-inc', '  kurudrive  '],
+        },
+        staff_wp_dev: { engine: 'codex' },
+        multi_repo_task: { default_engine: 'claude' },
+      },
+      { configPath, globalSettingsPath, force: true },
+    );
+
+    assert.deepEqual(result, { configPath, globalSettingsPath });
+    const expected = {
+      features: { coderabbit: false, task_queue: true },
+      skills: { disabled: ['vk-pr', 'vk-sync-skills'] },
+      org: { allowed_owners: ['vektor-inc', 'kurudrive'] },
+      staff_wp_dev: { engine: 'codex' },
+      multi_repo_task: { default_engine: 'claude' },
+    };
+    assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), expected);
+    assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), expected);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeVkAgentsSettings: setup:agents は allowed_owners / skills.disabled の vk-agents 形も受け入れる', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-setup-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    const globalSettingsPath = join(dir, 'settings.json');
+
+    writeVkAgentsSettings(
+      {
+        vkAgents: {
+          skills: { disabled: ['a'] },
+          org: { allowed_owners: ['owner-a'] },
+        },
+      },
+      { configPath, globalSettingsPath, force: true },
+    );
+
+    assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+      skills: { disabled: ['a'] },
+      org: { allowed_owners: ['owner-a'] },
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -24,7 +24,9 @@
     ]
   },
   "vkAgents": {
-    "repoPath": ""
+    "repoPath": "",
+    "disabledSkills": [],
+    "allowedOwners": ["vektor-inc"]
   },
   "features": {
     "coderabbit": true

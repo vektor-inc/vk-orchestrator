@@ -1,0 +1,18 @@
+{
+  "multi_repo_task": {
+    "default_engine": "codex"
+  },
+  "staff_wp_dev": {
+    "engine": "claude"
+  },
+  "features": {
+    "coderabbit": true,
+    "task_queue": true
+  },
+  "skills": {
+    "disabled": []
+  },
+  "org": {
+    "allowed_owners": ["vektor-inc"]
+  }
+}

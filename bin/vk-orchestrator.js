@@ -67,6 +67,15 @@ async function warnIfShadowedByHomeConfig() {
   }
 }
 
+async function warnIfVkAgentsNotSetup() {
+  const { isVkAgentsSetup, vkAgentsSkillsManifestPath } = await import('../src/config.js');
+  if (isVkAgentsSetup()) return;
+  console.warn(
+    `[up] vk-agents のスキル展開が見つかりません（${vkAgentsSkillsManifestPath()} がありません）。\n` +
+    '  初回セットアップとして `npm run setup:agents` を実行してください。'
+  );
+}
+
 const ORCHESTRATOR_REPO_URL = 'https://github.com/vektor-inc/vk-orchestrator.git';
 
 // up 起動時に vk-orchestrator 自身を最新リリースへ追従させる。
@@ -331,6 +340,7 @@ async function main() {
       // GUI 起動前に、orchestrator 自身と固定タグ・実際に入っている版のズレを解消しておく。
       await reconcileOrchestratorVersion();
       await reconcileVkTerminalsVersion();
+      await warnIfVkAgentsNotSetup();
 
       const vkDir = await resolveVkDirOrExit();
       const target = writeVkTerminalsConfig(unifiedConfig, vkDir);
@@ -414,6 +424,47 @@ async function main() {
       }
       break;
     }
+    case 'setup-agents': {
+      const { spawnSync } = await import('child_process');
+      const {
+        DEFAULT_VENDORED_VK_AGENTS_DIR,
+        vkAgentsGlobalSettingsPath,
+        writeVkAgentsSettings,
+        writeVkAgentsManifestSource,
+      } = await import('../src/config.js');
+
+      const agentsDir = DEFAULT_VENDORED_VK_AGENTS_DIR;
+      const syncPath = resolve(agentsDir, 'scripts', 'sync.sh');
+      const configPath = resolve(agentsDir, 'config.json');
+      const globalSettingsPath = vkAgentsGlobalSettingsPath();
+
+      const written = writeVkAgentsSettings(unifiedConfig, {
+        configPath,
+        globalSettingsPath,
+        force: true,
+      });
+      if (!written) {
+        console.error('[setup:agents] vk-agents 設定の生成先を解決できませんでした。');
+        process.exit(1);
+      }
+      console.log(`vk-agents 設定を書き出しました → ${written.configPath}`);
+      console.log(`vk-agents 派生設定を書き出しました → ${written.globalSettingsPath}`);
+
+      console.log('vk-agents の skills/rules を Claude グローバル設定へ展開します...');
+      const r = spawnSync('bash', [syncPath, '--claude-global'], {
+        cwd: agentsDir,
+        stdio: 'inherit',
+        env: process.env,
+      });
+      if (r.status !== 0) {
+        console.error(`[setup:agents] sync.sh の実行に失敗しました: ${syncPath}`);
+        process.exit(r.status ?? 1);
+      }
+
+      const sourceRecordPath = writeVkAgentsManifestSource(agentsDir);
+      console.log(`vk-agents 展開元を記録しました → ${sourceRecordPath}`);
+      break;
+    }
     case 'setup-terminals': {
       // VK Terminals を明示的に導入する。optionalDependencies はビルド失敗でも
       // npm が exit 0 を返して黙って除外するため、通常の `npm install` だと
@@ -463,6 +514,7 @@ commands:
   check-status                          現在のキュー／pane 状態を表示
   unblock                               waiting-input の issue を status:ready に戻す
   apply                                 config.json の vkTerminals 設定を VK Terminals ディレクトリ内 config.json へ反映
+  setup-agents                          同梱 vk-agents-public から skills/rules を ~/.claude へ展開
   setup-terminals                       VK Terminals を（ビルドログ付きで）明示的に導入し導入結果を検証
 `);
       process.exit(sub ? 1 : 0);
