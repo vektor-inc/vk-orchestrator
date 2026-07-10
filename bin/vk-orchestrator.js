@@ -169,7 +169,10 @@ async function reconcileOrchestratorVersion() {
     console.log('[up] package-lock.json が更新されたため npm install を実行します...');
     const install = spawnSync('npm', ['install'], { cwd: repoRoot, stdio: 'inherit' });
     if (install.status !== 0) {
-      console.warn('[up] npm install に失敗しました。現行プロセスのまま起動を続行します。');
+      console.warn(
+        '[up] npm install に失敗しました。現行プロセスのまま起動を続行します。\n' +
+        '  手動で `npm install` を実行してください。'
+      );
       return;
     }
   }
