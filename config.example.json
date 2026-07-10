@@ -31,6 +31,10 @@
   "features": {
     "coderabbit": true
   },
+  "org": {
+    "review_assets_repo": "",
+    "orchestrator_repo": ""
+  },
   "staff_wp_dev": {
     "engine": ""
   },

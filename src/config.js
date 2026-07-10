@@ -537,6 +537,8 @@ function firstOwnedValue(obj, paths) {
   return undefined;
 }
 
+const OWNER_REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
 function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
   const out = deepMerge({}, vkAgentsConfig);
 
@@ -572,6 +574,16 @@ function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
   ]));
   if (allowedOwners) {
     setByPath(out, 'org.allowed_owners', allowedOwners);
+  }
+
+  for (const key of ['org.review_assets_repo', 'org.orchestrator_repo']) {
+    if (!hasOwnPath(cfg, key)) continue;
+    const raw = String(getByPath(cfg, key) ?? '').trim();
+    if (raw === '') {
+      deleteByPath(out, key);
+    } else if (OWNER_REPO_RE.test(raw)) {
+      setByPath(out, key, raw);
+    }
   }
 
   if (hasOwnPath(cfg, 'staff_wp_dev.engine')) {
@@ -619,6 +631,8 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
     hasOwnPath(cfg, 'vkAgents.org.allowed_owners') ||
     hasOwnPath(cfg, 'skills.disabled') ||
     hasOwnPath(cfg, 'org.allowed_owners') ||
+    hasOwnPath(cfg, 'org.review_assets_repo') ||
+    hasOwnPath(cfg, 'org.orchestrator_repo') ||
     hasOwnPath(cfg, 'staff_wp_dev.engine') ||
     hasOwnPath(cfg, 'multi_repo_task.default_engine');
   if (!hasConfig && !hasGuiSettings && options.force !== true) return null;
@@ -697,6 +711,8 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         label: 'vk-agents（エージェント共通設定）',
         fields: [
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
+          { key: 'org.review_assets_repo', label: 'レビュー用アセットリポジトリ', type: 'text', help: 'PR・テスト報告用の画像/GIF を保存するリポジトリを <owner>/<repo> 形式で指定します。空欄時は画像アップロードをスキップし、テキスト記述にフォールバックします', emptyToNull: true },
+          { key: 'org.orchestrator_repo', label: 'オーケストレーター連携ルール取得先リポジトリ', type: 'text', help: 'vk-kore が task-queue 連携ルール（docs/agent-rules.md）を取得するリポジトリを <owner>/<repo> 形式で指定します。空欄時は vektor-inc/vk-orchestrator にフォールバックします', emptyToNull: true },
           { key: 'staff_wp_dev.engine', label: 'staff-wp-dev（和田）の実行エンジン', type: 'select',
             options: [
               { value: '',       label: '未設定（既定: claude）' },
