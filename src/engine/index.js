@@ -7,7 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '..', '..', '.env') });
 
 import { GitHubClient } from '../github/index.js';
-import { getTaskConfig, getTaskCwd } from '../config.js';
+import { GITHUB_TOKEN_RESOLUTION_HELP, ensureGitHubToken, getTaskConfig, getTaskCwd } from '../config.js';
 import {
   checkHealth,
   createNewPane,
@@ -43,6 +43,7 @@ import {
 import { buildOrchestratorMenu } from './menu.js';
 
 // --- 設定 ---
+ensureGitHubToken();
 const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
 const GITHUB_OWNER       = process.env.GITHUB_OWNER        ?? 'vektor-inc';
 const GITHUB_REPO        = process.env.GITHUB_REPO         ?? 'task-queue';
@@ -85,7 +86,7 @@ function readArgValue(name) {
 const ASSIGNEE_FILTER = readArgValue('assignee') ?? process.env.ASSIGNEE_FILTER ?? null;
 
 if (!GITHUB_TOKEN) {
-  console.error('[Error] GITHUB_TOKEN が設定されていません。.env ファイルを確認してください。');
+  console.error(`[Error] ${GITHUB_TOKEN_RESOLUTION_HELP}`);
   process.exit(1);
 }
 

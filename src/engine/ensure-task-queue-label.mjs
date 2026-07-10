@@ -22,9 +22,9 @@
  *   node ensure-task-queue-label.mjs --status --list # 登録するラベル一覧を表示するだけ
  *
  * 認証:
- *   gh CLI（`gh auth login` 済み）を利用する。org の private repo にもアクセスする必要が
- *   ある場合は、SETUP_TOKEN 環境変数に classic PAT（`repo` スコープ）を渡す:
- *     SETUP_TOKEN=ghp_xxx node ensure-task-queue-label.mjs
+ *   gh CLI（`gh auth login` 済み）を利用する。ラベル登録だけ別トークンで実行したい場合は
+ *   SETUP_TOKEN 環境変数を渡す:
+ *     SETUP_TOKEN=... node ensure-task-queue-label.mjs
  */
 
 import { execFileSync } from 'child_process';
@@ -86,7 +86,7 @@ if (!SETUP_TOKEN) {
   try {
     execFileSync('gh', ['auth', 'status'], { stdio: 'pipe' });
   } catch {
-    console.error('gh CLI が認証されていません。`gh auth login` を実行するか、SETUP_TOKEN=ghp_xxx を指定してください。');
+    console.error('gh CLI が認証されていません。`gh auth login` を実行するか、SETUP_TOKEN を指定してください。');
     process.exit(1);
   }
 }
