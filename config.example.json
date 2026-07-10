@@ -29,7 +29,8 @@
     "allowedOwners": ["vektor-inc"]
   },
   "features": {
-    "coderabbit": true
+    "coderabbit": true,
+    "coderabbit_ignore": false
   },
   "org": {
     "review_assets_repo": "",

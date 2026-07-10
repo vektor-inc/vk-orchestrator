@@ -26,6 +26,7 @@ import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
 import { closeSourceIssueBeforeGate as closeSourceIssueBeforeGateImpl } from './source-close.js';
 import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
+import { createScanInProgressMergedHandler } from './scan-in-progress-merged.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
 import { startKeepAwake } from '../power/keep-awake.js';
 import { createNotifyPaneMerged } from './notify-pane-merged.js';
@@ -214,6 +215,17 @@ const notifyPaneMerged = createNotifyPaneMerged({
     info: (...args) => console.log(...args),
     warn: (...args) => console.warn(...args),
   },
+});
+
+const handleScanInProgressMerged = createScanInProgressMergedHandler({
+  closeSourceIssueBeforeGate,
+  canTransitionToDone,
+  addComment: (...args) => github.addComment(...args),
+  closeIssue: (...args) => github.closeIssue(...args),
+  setStatus: (...args) => github.setStatus(...args),
+  notifyPaneMerged,
+  removeTask,
+  logger: console,
 });
 
 // VK Terminals のサイドバーメニューへ「VK Orchestrator」セクションを投げる（冪等）。
@@ -525,17 +537,7 @@ async function scanInProgressIssues() {
     }
 
     if (action.type === 'merged') {
-      await closeSourceIssueBeforeGate(issue, '[scan-in-progress]');
-      if (!(await canTransitionToDone(issue, `[scan-in-progress #${issue.number}]`))) continue;
-      try {
-        await github.addComment(issue.number, `✅ 完了\n\nPR がマージされました。`);
-        await github.closeIssue(issue.number);
-        await github.setStatus(issue.number, 'status:done');
-        await removeTask(issue.number);
-        console.log(`  [scan-in-progress] issue #${issue.number}: PR マージ済み → done`);
-      } catch (err) {
-        console.warn(`  [scan-in-progress] issue #${issue.number}: done 化失敗（次ループ再試行）: ${err.message}`);
-      }
+      await handleScanInProgressMerged(issue, pr);
       continue;
     }
 
