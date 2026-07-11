@@ -716,7 +716,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       {
         label: 'issue を処理する Claude のコマンド',
         fields: [
-          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'issue に対して仕様検討・実装・プルリク作成・レビューまで自動で処理してマージできる状態にする Claude のコマンドを指定してください。未指定の場合は /vk-kore {issueUrl} wp-env-port={wpPort} headless=1 のような形式で投げられます。{issueUrl} と {wpPort} は自動で置換します。独自のコマンドを使用する場合、オーケストレーターと円滑に連携するための決め事がいくつかあります。詳しくは docs/agent-rules.md をご確認ください。デフォルトの /vk-kore スキルは vendor/vk-agents-public/skills/vk-kore/ にありますので、必要に応じてそれを参考に独自のスキルをご利用の PC の .claude に作ってください。' },
+          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', placeholder: '/vk-kore {issueUrl} wp-env-port={wpPort} headless=1', help: 'issue に対して仕様検討・実装・プルリク作成・レビューまで自動で処理してマージできる状態にする Claude のコマンドを指定してください。未指定の場合は /vk-kore {issueUrl} wp-env-port={wpPort} headless=1 のような形式で投げられます。{issueUrl} と {wpPort} は自動で置換します。独自のコマンドを使用する場合、オーケストレーターと円滑に連携するための決め事がいくつかあります。詳しくは docs/agent-rules.md をご確認ください。デフォルトの /vk-kore スキルは vendor/vk-agents-public/skills/vk-kore/ にありますので、必要に応じてそれを参考に独自のスキルをご利用の PC の .claude に作ってください。' },
         ],
       },
       {
