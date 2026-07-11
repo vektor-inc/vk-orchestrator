@@ -714,6 +714,12 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         ],
       },
       {
+        label: 'issue を処理する Claude のコマンド',
+        fields: [
+          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', placeholder: '/vk-kore {issueUrl} wp-env-port={wpPort} headless=1', help: 'issue に対して仕様検討・実装・プルリク作成・レビューまで自動で処理してマージできる状態にする Claude のコマンドを指定してください。未指定の場合は /vk-kore {issueUrl} wp-env-port={wpPort} headless=1 のような形式で投げられます。{issueUrl} と {wpPort} は自動で置換します。独自のコマンドを使用する場合、オーケストレーターと円滑に連携するための決め事がいくつかあります。詳しくは docs/agent-rules.md をご確認ください。デフォルトの /vk-kore スキルは vendor/vk-agents-public/skills/vk-kore/ にありますので、必要に応じてそれを参考に独自のスキルをご利用の PC の .claude に作ってください。' },
+        ],
+      },
+      {
         label: 'vk-agents（エージェント共通設定）',
         fields: [
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
@@ -734,12 +740,6 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
               { value: 'codex',  label: 'codex' },
             ],
             help: 'マルチリポジトリタスク（vk-multi-repo-task）を新規作成するときの既定エンジン。未設定時は claude にフォールバックします' },
-        ],
-      },
-      {
-        label: 'タスク',
-        fields: [
-          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', help: 'タスク着手時に各ペインへ投入するコマンド。{issueUrl} と {wpPort} は自動で置換（既定: /vk-kore {issueUrl} wp-env-port={wpPort} headless=1）' },
         ],
       },
     ],
