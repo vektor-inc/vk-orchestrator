@@ -977,12 +977,23 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
   const desc = buildSettingsDescriptor('/tmp/config.json');
   const labels = desc.groups.map((g) => g.label);
   assert.ok(labels.includes('issue を処理する Claude のコマンド'));
-  assert.ok(labels.indexOf('issue を処理する Claude のコマンド') < labels.indexOf('vk-agents（エージェント共通設定）'));
+  assert.ok(!labels.includes('タスク'));
+  assert.equal(
+    labels.indexOf('issue を処理する Claude のコマンド'),
+    labels.indexOf('vk-agents（エージェント共通設定）') - 1,
+  );
   assert.ok(!labels.includes('プロトコル'));
   assert.ok(!labels.includes('ラベル'));
 
   const fieldKeys = desc.groups.flatMap((g) => (g.fields ?? []).map((f) => f.key));
   assert.ok(fieldKeys.includes('task.commandTemplate'));
+  const taskCommandGroup = desc.groups.find((g) => g.label === 'issue を処理する Claude のコマンド');
+  assert.ok(taskCommandGroup);
+  const commandTemplateField = taskCommandGroup.fields.find((f) => f.key === 'task.commandTemplate');
+  assert.ok(commandTemplateField);
+  assert.ok(commandTemplateField.placeholder.includes('/vk-kore'));
+  assert.match(commandTemplateField.help, /\{issueUrl\}/);
+  assert.match(commandTemplateField.help, /\{wpPort\}/);
   const githubGroup = desc.groups.find((g) => g.label === 'GitHub');
   assert.match(githubGroup?.note ?? '', /gh auth login/);
   assert.match(githubGroup?.note ?? '', /このパネルでの入力は廃止/);
