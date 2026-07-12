@@ -1,5 +1,7 @@
 # Changelog
 
+- [ その他 ] 対象リポ issue のクローズ責務（Closes #N・オーケストレーター・Agent の多層）と、done-gate が対象 issue の closed 状態をメタ issue の done 遷移判定に使う挙動を README・docs/agent-rules.md に明記
+
 = 0.13.0 =
 - [ 仕様変更 ] 設定パネルの「タスク」項目を「issue を処理する Claude のコマンド」に名称変更して vk-agents 共通設定の上へ移動し、用途の説明文を追加
 - [ 仕様変更 ] 設定パネルのレビュー用アセット／連携ルール取得先リポジトリ欄に owner/repo 形式の入力検証を追加し、不正な形式を保存時に弾いてエラー表示
