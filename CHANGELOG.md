@@ -1,5 +1,7 @@
 # Changelog
 
+= 0.14.0 =
+- [ 仕様変更 ] vk-terminals を 1.16.0 から 1.17.1 にアップデート
 - [ その他 ] 対象リポ issue のクローズ責務（Closes #N・オーケストレーター・Agent の多層）と、done-gate が対象 issue の closed 状態をメタ issue の done 遷移判定に使う挙動を README・docs/agent-rules.md に明記
 
 = 0.13.0 =
