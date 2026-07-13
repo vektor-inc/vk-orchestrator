@@ -36,6 +36,16 @@ VK Terminals は `npm install` 時に依存として自動導入されます（`
 
 orchestrator は「issue に対応する PR」を、**PR 本文に含まれる GitHub 標準のクローズキーワード＋issue 番号（`Closes #N` / `Fixes #N` / `Resolves #N` など）、または対象 issue の URL** で特定します。対応 PR を作成する際は **PR 本文に必ず `Closes #N` を記載してください**。記載のない PR は対応 PR として認識されず、完了判定（CodeRabbit / CI 監視）や automerge が進みません。ラベルやブランチ名規約による紐付けには対応していません（既定の vk-kore スキル経由で作成される PR はこの規約を満たします）。
 
+### 対象 issue のクローズ責務（多層）
+
+対応 PR がマージされたとき、**作業対象リポジトリ側の issue（対象 issue）** は次の多層（defense in depth）で閉じられます。いずれも「対象 issue を closed にする」方向に働くため、複数が発火しても二重クローズは冪等で無害です。
+
+1. **GitHub ネイティブ** — PR 本文の `Closes #N`（上記「対応 PR の紐付け規約」）により、デフォルトブランチへのマージ時に GitHub が対象 issue を自動クローズします（一次）。
+2. **オーケストレーター** — マージを検知すると、メタ issue を `status:done` に遷移させる**直前に対象 issue を close** します（`src/engine/source-close.js`）。`Closes #N` が不発だったケース（キーワード無しの完全 URL 参照・非デフォルトブランチへのマージ・クロスリポ）のバックストップです。
+3. **Agent（vk-kore）** — 手動マージ時に、対象 issue を冪等に close します（state を確認し OPEN のときだけ close する最終バックストップ）。
+
+さらにオーケストレーターは、メタ issue を `status:done` に遷移させる条件として **対象 issue が closed になっていること** を確認します（`src/engine/done-gate.js`）。対象 issue が open の間（部分対応 PR のみマージ等）はメタ issue を done 化せず、次ループで再評価します。これは `Closes #N` による即時クローズと競合しません（done-gate は対象 issue が closed であることを前提とするため、むしろ整合します）。
+
 ### automerge 完了マーカー規約（必須）
 
 automerge の完了ゲートはエージェント非依存の公開契約として固定されています。対象 PR に **`agent-review-passed` ラベル** と **`agent-review-passed-sha: <head SHA>` コメント** が揃い、コメント投稿者の `author_association` が信頼境界内（OWNER / MEMBER / COLLABORATOR）のときだけ、orchestrator はレビュー完了済みとみなします。
