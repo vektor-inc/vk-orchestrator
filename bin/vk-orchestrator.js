@@ -27,7 +27,13 @@ try {
 
 // 統合設定(config.json)を読み込み、env に反映する（env > config.json > 既定）。
 // config.js は Node 標準モジュールのみに依存するため npm install 前でも安全。
-const { loadUnifiedConfig, applyConfigToEnv, ensureGitHubToken } = await import('../src/config.js');
+const {
+  loadUnifiedConfig,
+  applyConfigToEnv,
+  ensureGitHubToken,
+  migrateLegacyOrchestratorConfig,
+} = await import('../src/config.js');
+migrateLegacyOrchestratorConfig();
 const unifiedConfig = loadUnifiedConfig();
 applyConfigToEnv(unifiedConfig);
 ensureGitHubToken();
@@ -47,23 +53,9 @@ async function resolveVkDirOrExit() {
         ? '  macOS では Xcode Command Line Tools が必要です → `xcode-select --install`'
         : `  現在のプラットフォームは ${process.platform} です。VK Terminals(GUI) は macOS 専用のため\n` +
           '  この環境では起動できません。別マシンの VK Terminals API を使う場合は `up` ではなく\n' +
-          '  `start` を使い、config.json の vkTerminals.host を対象マシンに向けてください。')
+          '  `start` を使い、VK_TERMINALS_HOST を対象マシンに向けてください。')
     );
     process.exit(1);
-  }
-}
-
-// ~/.vk-terminals/config.json が存在すると、VK Terminals の設定探索で
-// インストールディレクトリ内 config.json より優先され、反映が効かない。警告する。
-async function warnIfShadowedByHomeConfig() {
-  const { shadowingHomeConfigPath } = await import('../src/config.js');
-  const shadow = shadowingHomeConfigPath();
-  if (shadow) {
-    console.warn(
-      `⚠ ${shadow} が存在します。これは VK Terminals ディレクトリ内 config.json より\n` +
-      `  優先されるため、今回書き出した設定が無視されます。反映するには ${shadow} を\n` +
-      `  削除（またはリネーム）してください。`
-    );
   }
 }
 
@@ -302,12 +294,8 @@ async function main() {
       await import('../src/engine/unblock.mjs');
       break;
     case 'apply': {
-      // 統合設定の vkTerminals セクションから、VK Terminals のインストールディレクトリ内
-      // config.json を書き出す。vk-agents 共通設定も同じ apply/up タイミングで投影する。
-      const { writeVkTerminalsConfig, writeVkAgentsSettings } = await import('../src/config.js');
-      const vkDir = await resolveVkDirOrExit();
-      const target = writeVkTerminalsConfig(unifiedConfig, vkDir);
-      console.log(`VK Terminals 設定を書き出しました → ${target}`);
+      // vk-agents 共通設定は従来どおり apply/up タイミングで派生設定へ投影する。
+      const { writeVkAgentsSettings } = await import('../src/config.js');
       const vkAgents = writeVkAgentsSettings(unifiedConfig);
       if (vkAgents) {
         console.log(`vk-agents 設定を書き出しました → ${vkAgents.configPath}`);
@@ -315,7 +303,6 @@ async function main() {
       } else {
         console.warn('[apply] vk-agents 設定の投影はスキップしました（config.json 未作成、またはパス未解決）。');
       }
-      await warnIfShadowedByHomeConfig();
       break;
     }
     case 'up': {
@@ -331,8 +318,8 @@ async function main() {
       // API が listen してからでないとペイン作成もできないため、waitForHealth で疎通を待つ。
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
-      const { writeVkTerminalsConfig, writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath,
-        getVkTerminalsGpuMode, gpuLaunchOptions } =
+      const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath,
+        resolveVkTerminalsApiHost, getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
       const { waitForHealth, createNewPane, sendToTerminal } =
         await import('../src/terminals/index.js');
@@ -343,8 +330,6 @@ async function main() {
       await warnIfVkAgentsNotSetup();
 
       const vkDir = await resolveVkDirOrExit();
-      const target = writeVkTerminalsConfig(unifiedConfig, vkDir);
-      console.log(`VK Terminals 設定を反映しました → ${target}`);
       const vkAgents = writeVkAgentsSettings(unifiedConfig);
       if (vkAgents) {
         console.log(`vk-agents 設定を反映しました → ${vkAgents.configPath}`);
@@ -352,7 +337,6 @@ async function main() {
       } else {
         console.warn('[up] vk-agents 設定の投影はスキップしました（config.json 未作成、またはパス未解決）。');
       }
-      await warnIfShadowedByHomeConfig();
 
       // GUI の設定パネルから統合 config.json を直接編集できるよう、設定ディスクリプタを
       // 書き出し、env VK_TERMINALS_SETTINGS でそのパスを GUI へ渡す。
@@ -390,7 +374,8 @@ async function main() {
 
       if (startOrchestrator) {
         const port = Number(process.env.VK_TERMINALS_PORT ?? 13847);
-        const host = process.env.VK_TERMINALS_HOST ?? '127.0.0.1';
+        const host = resolveVkTerminalsApiHost();
+        if (!process.env.VK_TERMINALS_HOST) process.env.VK_TERMINALS_HOST = host;
         console.log(`VK Terminals API (${host}:${port}) の起動を待っています...`);
         const healthy = await waitForHealth(port, { timeoutMs: 60_000, intervalMs: 1_000 });
 
@@ -400,7 +385,7 @@ async function main() {
           console.warn(
             `[up] VK Terminals API (${host}:${port}) に疎通できませんでした。` +
             `orchestrator ペインは作成しません。\n` +
-            `  VK_TERMINALS_HOST / config.json の vkTerminals.host（現在: ${host}）を確認するか、` +
+            `  VK_TERMINALS_HOST / ~/.vk-terminals/config.json の apiHost（現在: ${host}）を確認するか、` +
             `GUI 内のペインで手動で \`node ${__filename} start\` を実行してください。`
           );
           break;
@@ -443,11 +428,9 @@ async function main() {
 
       const agentsDir = DEFAULT_VENDORED_VK_AGENTS_DIR;
       const syncPath = resolve(agentsDir, 'scripts', 'sync.sh');
-      const configPath = resolve(agentsDir, 'config.json');
       const globalSettingsPath = vkAgentsGlobalSettingsPath();
 
       const written = writeVkAgentsSettings(unifiedConfig, {
-        configPath,
         globalSettingsPath,
         force: true,
       });
@@ -486,7 +469,7 @@ async function main() {
         console.warn(
           `⚠ 現在のプラットフォームは ${process.platform} です。VK Terminals(GUI) は node-pty /\n` +
           `  electron のネイティブビルドを伴い macOS 専用です。macOS 以外では GUI を起動できません。\n` +
-          `  別マシンの VK Terminals API を叩く構成（vkTerminals.host 指定 + start）なら導入は不要です。\n`
+          `  別マシンの VK Terminals API を叩く構成（VK_TERMINALS_HOST 指定 + start）なら導入は不要です。\n`
         );
       }
 
@@ -521,7 +504,7 @@ commands:
   start [--once] [--assignee <login>]   キューを監視して実行（--once で 1 周のみ）
   check-status                          現在のキュー／pane 状態を表示
   unblock                               waiting-input の issue を status:ready に戻す
-  apply                                 config.json の vkTerminals 設定を VK Terminals ディレクトリ内 config.json へ反映
+  apply                                 vk-agents 共通設定を正本 config と Claude 派生設定へ反映
   setup-agents                          同梱 vk-agents-public から skills/rules を ~/.claude へ展開
   setup-terminals                       VK Terminals を（ビルドログ付きで）明示的に導入し導入結果を検証
 `);
