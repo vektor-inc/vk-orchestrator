@@ -232,7 +232,14 @@ export function migrateLegacyOrchestratorConfig(options = {}) {
   }
 
   mkdirSync(dirname(targetPath), { recursive: true });
-  writeFileSync(targetPath, readFileSync(sourcePath));
+  try {
+    // wx（排他生成）で check-then-act の TOCTOU を閉じる。併走プロセスが先に
+    // 作成していた場合は EEXIST となり、既存の正本を上書きしない。
+    writeFileSync(targetPath, readFileSync(sourcePath), { flag: 'wx' });
+  } catch (err) {
+    if (err.code === 'EEXIST') return { migrated: false, sourcePath, targetPath };
+    throw err;
+  }
   log(`[Config] 正本を ${targetPath} へ移行しました。今後リポジトリ直下 config.json は読まれません。削除して構いません。`);
   return { migrated: true, sourcePath, targetPath };
 }
@@ -428,14 +435,26 @@ export function resolveVkAgentsRepoPath(cfg = loadUnifiedConfig()) {
  * @param {{ homeDir?: string }} [options]
  * @returns {string|null}
  */
-export function resolveVkAgentsConfigPath(cfg = loadUnifiedConfig(), options = {}) {
+/**
+ * vk-agents 設定パスの「明示指定」（env / config）だけを解決する。
+ * env VK_AGENTS_CONFIG > VK_AGENTS_CONFIG_PATH > config(vkAgents.configPath)。
+ * どれも無ければ null（呼び出し側で既定のフォールバックを決める）。
+ * @param {object} cfg loadUnifiedConfig() の戻り値
+ * @returns {string|null}
+ */
+function resolveExplicitVkAgentsConfigPath(cfg) {
   const raw =
     process.env.VK_AGENTS_CONFIG ??
     process.env.VK_AGENTS_CONFIG_PATH ??
     cfg?.vkAgents?.configPath ??
     '';
   const explicit = String(raw).trim();
-  if (explicit) return resolve(explicit);
+  return explicit ? resolve(explicit) : null;
+}
+
+export function resolveVkAgentsConfigPath(cfg = loadUnifiedConfig(), options = {}) {
+  const explicit = resolveExplicitVkAgentsConfigPath(cfg);
+  if (explicit) return explicit;
   const homeConfig = join(options.homeDir ?? homedir(), '.vk-agents', 'config.json');
   if (existsSync(homeConfig)) return homeConfig;
   const repoPath = resolveVkAgentsRepoPath(cfg);
@@ -456,14 +475,8 @@ export function resolveVkAgentsConfigPath(cfg = loadUnifiedConfig(), options = {
  * @returns {string} 書き込み先の正本パス
  */
 export function resolveVkAgentsCanonicalConfigPath(cfg = loadUnifiedConfig(), options = {}) {
-  const raw =
-    process.env.VK_AGENTS_CONFIG ??
-    process.env.VK_AGENTS_CONFIG_PATH ??
-    cfg?.vkAgents?.configPath ??
-    '';
-  const explicit = String(raw).trim();
-  if (explicit) return resolve(explicit);
-  return join(options.homeDir ?? homedir(), '.vk-agents', 'config.json');
+  return resolveExplicitVkAgentsConfigPath(cfg)
+    ?? join(options.homeDir ?? homedir(), '.vk-agents', 'config.json');
 }
 
 /**
@@ -477,7 +490,16 @@ export function resolveVkTerminalsApiHost(options = {}) {
   if (envHost) return envHost;
 
   const configPath = options.configPath ?? join(options.homeDir ?? homedir(), '.vk-terminals', 'config.json');
-  const config = readJsonObject(configPath);
+  let config;
+  try {
+    config = readJsonObject(configPath);
+  } catch (err) {
+    // ~/.vk-terminals/config.json は VK Terminals(GUI) が書き込む外部ファイル。
+    // 不正 JSON や書き込み途中の読み取り競合で例外になっても、呼び出し元（up 等）を
+    // 落とさず既定ホストへフォールバックする（writeVkAgentsSettings と同じ安全側の扱い）。
+    console.warn(`[Config] ${configPath} の読み込みに失敗したため既定ホスト 127.0.0.1 を使用します: ${err.message}`);
+    return '127.0.0.1';
+  }
   const apiHost = typeof config.apiHost === 'string' ? config.apiHost.trim() : '';
   return apiHost || '127.0.0.1';
 }
@@ -698,7 +720,7 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
 export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
   return {
     title: 'VK Orchestrator 設定',
-    note: '保存後、orchestrator を再起動すると反映されます。',
+    note: '保存後の反映タイミングは項目によって異なります（各グループの説明をご確認ください）。',
     targetPath,
     groups: [
       {
@@ -723,18 +745,19 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       },
       {
         label: 'VK Terminals（本体設定）',
+        note: 'VK Terminals 本体の設定ファイル（~/.vk-terminals/config.json）に直接保存され、VK Terminals が読み込みます。',
         targetPath: '~/.vk-terminals/config.json',
         fields: [
           { key: 'apiHost',        label: 'API ホスト', type: 'text', help: 'VK Terminals の API サーバーが待ち受けるホスト（既定: 127.0.0.1）' },
           { key: 'initialCommand', label: '初期コマンド', type: 'text', help: '各ペイン起動時に自動実行するコマンド' },
           { key: 'additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
-          { key: 'newPaneAutoLaunchClaude', label: '新規ペイン作成時に Claude Code を自動起動する', type: 'boolean', default: false, help: '新規ペイン作成時に Claude Code を自動起動する' },
-          { key: 'newPaneStartupDir', label: '新規ペインの起点ディレクトリ', type: 'text', help: '新規ペインの起点ディレクトリ' },
+          { key: 'newPaneAutoLaunchClaude', label: 'Claude Code を自動的に起動する', type: 'boolean', default: false, help: 'チェックが入っている場合、新規ペインを開いた時に自動的に Claude Code が起動します。オフの場合は素のターミナルで起動します。' },
+          { key: 'newPaneStartupDir', label: '新規ペインを開く時の初期ディレクトリ', type: 'text', placeholder: '/path/to/project', help: '新規ペインを開く時の作業ディレクトリを絶対パスで指定します。「Claude Code を自動的に起動する」が有効な場合は Claude もこのディレクトリで起動します。未入力の場合、または存在しないパスの場合はホームディレクトリで起動します。' },
         ],
       },
       {
         label: 'VK Terminals 起動オプション（オーケストレーター制御）',
-        note: 'orchestrator が VK Terminals を起動する際の制御値です。',
+        note: 'orchestrator が VK Terminals を起動する際の制御値です。変更は次回の VK Terminals 起動時に反映されます。API ホストは「VK Terminals（本体設定）」で設定してください。',
         fields: [
           { key: 'vkTerminals.port', label: 'API ポート', type: 'number', help: 'orchestrator が VK Terminals を起動する際の API ポート番号（既定: 13847）' },
           { key: 'vkTerminals.gpu',             label: 'GPU モード',          type: 'select',
