@@ -376,7 +376,15 @@ async function main() {
       const gui = spawn('npm', guiArgs, {
         cwd: vkDir,
         stdio: 'inherit',
-        env: { ...process.env, ...gpuEnv, VK_TERMINALS_SETTINGS: descriptorPath },
+        // ウィンドウタイトルバー／ヘッダーの表記を 'VK Orchestrator' にする。
+        // 未指定なら vk-terminals 側の既定 'VK Terminals' が使われる。
+        // 呼び出し元が明示指定していればそれを尊重する。
+        env: {
+          ...process.env,
+          ...gpuEnv,
+          VK_TERMINALS_SETTINGS: descriptorPath,
+          VK_TERMINALS_APP_TITLE: process.env.VK_TERMINALS_APP_TITLE || 'VK Orchestrator',
+        },
       });
       gui.on('exit', (code) => process.exit(code ?? 0));
 
