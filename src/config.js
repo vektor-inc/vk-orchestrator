@@ -1,9 +1,8 @@
-// 設定の一元化。
+// 設定の解決。
 //
-// VK Orchestrator は「単一の設定ファイル(config.json)」を正とし、そこから
-//   1) 自分自身(オーケストレーター)のランタイム設定
-//   2) VK Terminals 用の設定ファイル(VK Terminals のインストールディレクトリ内 config.json)
-// の両方を賄う。秘密情報(GITHUB_TOKEN)は gh auth login または .env に置く
+// VK Orchestrator は自分自身の設定を ~/.vk-orchestrator/config.json に持ち、
+// 設定パネルは group.targetPath ごとに各ツールの永続 config へ直接読み書きする。
+// 秘密情報(GITHUB_TOKEN)は gh auth login または .env に置く
 // （config.json はコミット対象にしやすいよう秘密を含めない設計）。
 //
 // 設定の優先順位: 明示的な環境変数 / .env > config.json > gh auth token > 各既定値。
@@ -209,23 +208,33 @@ export function applyConfigToEnv(cfg = {}) {
 
   const vk = cfg.vkTerminals ?? {};
   set('VK_TERMINALS_PORT', vk.port);
+  // host は現在 ~/.vk-terminals/config.json の apiHost が正本。
+  // 旧 config.json(vkTerminals.host) を使っている環境だけ後方互換として env へ流す。
   set('VK_TERMINALS_HOST', vk.host);
 }
 
 /**
- * 統合設定の vkTerminals セクションから、VK Terminals が読む config.json の
- * オブジェクトを組み立てる。VK Terminals 側のキー名(apiHost 等)に変換する。
- * @param {object} cfg
- * @returns {object}
+ * orchestrator 自身の旧配置 config.json をユーザー固有の正本へ移行する。
+ *
+ * 既に home 側の config.json がある場合は何もしない。旧配置のみ存在する初回だけ
+ * コピーして、以後の loadUnifiedConfig() が home 側を読むようにする。
+ * @param {{ repoRoot?: string, homeDir?: string, log?: (message:string)=>void }} [options]
+ * @returns {{ migrated: boolean, sourcePath: string, targetPath: string }}
  */
-export function toVkTerminalsConfig(cfg = {}) {
-  const vk = cfg.vkTerminals ?? {};
-  const out = {};
-  if (vk.host !== undefined)           out.apiHost = vk.host;
-  if (vk.initialCommand !== undefined) out.initialCommand = vk.initialCommand;
-  if (vk.agentroom !== undefined)      out.agentroom = vk.agentroom;
-  if (Array.isArray(vk.additionalPanes)) out.additionalPanes = vk.additionalPanes;
-  return out;
+export function migrateLegacyOrchestratorConfig(options = {}) {
+  const repoRoot = options.repoRoot ?? REPO_ROOT;
+  const homeDir = options.homeDir ?? homedir();
+  const log = options.log ?? console.log;
+  const sourcePath = join(repoRoot, 'config.json');
+  const targetPath = join(homeDir, '.vk-orchestrator', 'config.json');
+  if (existsSync(targetPath) || !existsSync(sourcePath)) {
+    return { migrated: false, sourcePath, targetPath };
+  }
+
+  mkdirSync(dirname(targetPath), { recursive: true });
+  writeFileSync(targetPath, readFileSync(sourcePath));
+  log(`[Config] 正本を ${targetPath} へ移行しました。今後リポジトリ直下 config.json は読まれません。削除して構いません。`);
+  return { migrated: true, sourcePath, targetPath };
 }
 
 // -------------------------------------------------------
@@ -314,42 +323,6 @@ export function gpuLaunchOptions(mode) {
  */
 export function resolveVkTerminalsDir() {
   return dirname(require.resolve('vk-terminals/package.json'));
-}
-
-/**
- * VK Terminals が読む設定ファイルの書き出し先。
- * 以前は ~/.vk-terminals/config.json（ユーザーごとに場所が変わる）へ書いていたが、
- * VK Terminals 自身のディレクトリ内 config.json を正とするため、そこへ書き出す。
- * @param {string} [vkDir] VK Terminals のインストールディレクトリ
- * @returns {string}
- */
-export function vkTerminalsConfigPath(vkDir = resolveVkTerminalsDir()) {
-  return join(vkDir, 'config.json');
-}
-
-/**
- * ~/.vk-terminals/config.json は VK Terminals の設定探索でインストールディレクトリ内
- * config.json より優先されるため、存在すると appDir 側へ書いた設定が無視される。
- * 存在すればそのパスを、無ければ null を返す（呼び出し側で警告するため）。
- * @returns {string|null}
- */
-export function shadowingHomeConfigPath() {
-  const p = join(homedir(), '.vk-terminals', 'config.json');
-  return existsSync(p) ? p : null;
-}
-
-/**
- * 統合設定の vkTerminals セクションを、VK Terminals のインストールディレクトリ内
- * config.json へ書き出す。
- * @param {object} cfg loadUnifiedConfig() の戻り値
- * @param {string} [vkDir] VK Terminals のインストールディレクトリ
- * @returns {string} 書き出したパス
- */
-export function writeVkTerminalsConfig(cfg = {}, vkDir = resolveVkTerminalsDir()) {
-  const target = vkTerminalsConfigPath(vkDir);
-  mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, JSON.stringify(toVkTerminalsConfig(cfg), null, 2) + '\n');
-  return target;
 }
 
 function getByPath(obj, path) {
@@ -450,11 +423,12 @@ export function resolveVkAgentsRepoPath(cfg = loadUnifiedConfig()) {
 /**
  * vk-agents の個人設定 config.json パスを解決する。
  * 優先順位: env VK_AGENTS_CONFIG/VK_AGENTS_CONFIG_PATH > config(vkAgents.configPath)
- * > 解決済み vk-agents リポジトリ直下 config.json。
+ * > ~/.vk-agents/config.json（存在する場合） > 解決済み vk-agents リポジトリ直下 config.json。
  * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @param {{ homeDir?: string }} [options]
  * @returns {string|null}
  */
-export function resolveVkAgentsConfigPath(cfg = loadUnifiedConfig()) {
+export function resolveVkAgentsConfigPath(cfg = loadUnifiedConfig(), options = {}) {
   const raw =
     process.env.VK_AGENTS_CONFIG ??
     process.env.VK_AGENTS_CONFIG_PATH ??
@@ -462,8 +436,26 @@ export function resolveVkAgentsConfigPath(cfg = loadUnifiedConfig()) {
     '';
   const explicit = String(raw).trim();
   if (explicit) return resolve(explicit);
+  const homeConfig = join(options.homeDir ?? homedir(), '.vk-agents', 'config.json');
+  if (existsSync(homeConfig)) return homeConfig;
   const repoPath = resolveVkAgentsRepoPath(cfg);
   return repoPath ? join(repoPath, 'config.json') : null;
+}
+
+/**
+ * VK Terminals API の接続先 host を解決する。
+ * 優先順位: env VK_TERMINALS_HOST > ~/.vk-terminals/config.json(apiHost) > 既定値。
+ * @param {{ homeDir?: string, configPath?: string }} [options]
+ * @returns {string}
+ */
+export function resolveVkTerminalsApiHost(options = {}) {
+  const envHost = String(process.env.VK_TERMINALS_HOST ?? '').trim();
+  if (envHost) return envHost;
+
+  const configPath = options.configPath ?? join(options.homeDir ?? homedir(), '.vk-terminals', 'config.json');
+  const config = readJsonObject(configPath);
+  const apiHost = typeof config.apiHost === 'string' ? config.apiHost.trim() : '';
+  return apiHost || '127.0.0.1';
 }
 
 /**
@@ -682,7 +674,7 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
 export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
   return {
     title: 'VK Orchestrator 設定',
-    note: '保存後、orchestrator を再起動すると反映されます（vkTerminals 側の項目は次回 up/apply で反映）。',
+    note: '保存後、orchestrator を再起動すると反映されます。',
     targetPath,
     groups: [
       {
@@ -706,19 +698,28 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         ],
       },
       {
-        label: 'VK Terminals',
+        label: 'VK Terminals（本体設定）',
+        targetPath: '~/.vk-terminals/config.json',
         fields: [
-          { key: 'vkTerminals.port',            label: 'API ポート',          type: 'number', help: 'VK Terminals の API サーバーが待ち受けるポート番号（既定: 13847）' },
-          { key: 'vkTerminals.host',            label: 'API ホスト',          type: 'text', help: 'VK Terminals の API サーバーのホスト（既定: 127.0.0.1）' },
+          { key: 'apiHost',        label: 'API ホスト', type: 'text', help: 'VK Terminals の API サーバーが待ち受けるホスト（既定: 127.0.0.1）' },
+          { key: 'initialCommand', label: '初期コマンド', type: 'text', help: '各ペイン起動時に自動実行するコマンド' },
+          { key: 'additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
+          { key: 'newPaneAutoLaunchClaude', label: '新規ペイン作成時に Claude Code を自動起動する', type: 'boolean', default: false, help: '新規ペイン作成時に Claude Code を自動起動する' },
+          { key: 'newPaneStartupDir', label: '新規ペインの起点ディレクトリ', type: 'text', help: '新規ペインの起点ディレクトリ' },
+        ],
+      },
+      {
+        label: 'VK Terminals 起動オプション（オーケストレーター制御）',
+        note: 'orchestrator が VK Terminals を起動する際の制御値です。',
+        fields: [
+          { key: 'vkTerminals.port', label: 'API ポート', type: 'number', help: 'orchestrator が VK Terminals を起動する際の API ポート番号（既定: 13847）' },
           { key: 'vkTerminals.gpu',             label: 'GPU モード',          type: 'select',
             options: [
               { value: '',         label: '自動（推奨・macOS は通常起動 / その他は off）' },
               { value: 'off',      label: 'off（GPU 無効・エラーログ抑制）' },
               { value: 'default',  label: 'default（Chromium 任せ）' },
             ],
-            help: 'GUI(Electron) の GPU 利用モード（次回 up で反映）。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、default=Chromium 任せ' },
-          { key: 'vkTerminals.initialCommand',  label: '初期コマンド',        type: 'text', help: '各ペイン起動時に自動実行するコマンド（次回 up/apply で反映）' },
-          { key: 'vkTerminals.additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
+            help: 'orchestrator が VK Terminals を起動する際の GUI(Electron) GPU 利用モード。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、default=Chromium 任せ' },
         ],
       },
       {
@@ -729,6 +730,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       },
       {
         label: 'vk-agents（エージェント共通設定）',
+        targetPath: resolveVkAgentsConfigPath(),
         fields: [
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
           { key: 'features.coderabbit_ignore', label: 'CodeRabbit レビューをスキップ（PR 本文に @coderabbitai ignore を記載）', type: 'boolean', default: false, help: 'ON で /vk-pr が PR 本文に @coderabbitai ignore を記載し、CodeRabbit レビューを抑止します。features.coderabbit が OFF のときは監視自体がスキップされるため、この設定は効果がありません' },
