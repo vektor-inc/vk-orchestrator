@@ -18,6 +18,7 @@ import {
   migrateLegacyOrchestratorConfig,
   resolveVkAgentsRepoPath,
   resolveVkAgentsConfigPath,
+  resolveVkAgentsCanonicalConfigPath,
   resolveVkTerminalsApiHost,
   vkAgentsGlobalSettingsPath,
   vkAgentsSkillsManifestPath,
@@ -1300,15 +1301,47 @@ test('buildSettingsDescriptor: VK Terminals 起動オプションは orchestrato
   assert.equal(terminalKeys.includes('vkTerminals.host'), false);
 });
 
-test('buildSettingsDescriptor: vk-agents group は resolveVkAgentsConfigPath の解決結果を targetPath に持つ', () => {
+test('buildSettingsDescriptor: vk-agents group は正本リゾルバ（env 上書き）を targetPath に持つ', () => {
   withSavedEnv(['VK_AGENTS_CONFIG', 'VK_AGENTS_CONFIG_PATH'], () => {
     const configPath = join(tmpdir(), 'vk-agents-settings.json');
     process.env.VK_AGENTS_CONFIG = configPath;
     const desc = buildSettingsDescriptor('/tmp/config.json');
     const group = desc.groups.find((g) => g.label === 'vk-agents（エージェント共通設定）');
     assert.ok(group);
-    assert.equal(group.targetPath, resolveVkAgentsConfigPath());
+    assert.equal(group.targetPath, resolveVkAgentsCanonicalConfigPath());
     assert.equal(group.targetPath, configPath);
+  });
+});
+
+test('resolveVkAgentsCanonicalConfigPath: 明示・env が無ければ揮発せず ~/.vk-agents/config.json を返す（null/vendored にしない）', () => {
+  withSavedEnv(['VK_AGENTS_CONFIG', 'VK_AGENTS_CONFIG_PATH', 'VK_AGENTS_DIR', 'VK_AGENTS_REPO_PATH'], () => {
+    delete process.env.VK_AGENTS_CONFIG;
+    delete process.env.VK_AGENTS_CONFIG_PATH;
+    delete process.env.VK_AGENTS_DIR;
+    delete process.env.VK_AGENTS_REPO_PATH;
+    // home 正本が存在しない一時ディレクトリを home に見立てても、正本パスを返し続ける。
+    const fakeHome = mkdtempSync(join(tmpdir(), 'vko-home-'));
+    try {
+      const resolved = resolveVkAgentsCanonicalConfigPath({}, { homeDir: fakeHome });
+      assert.equal(resolved, join(fakeHome, '.vk-agents', 'config.json'));
+      // vendored（<repo>/vendor/vk-agents-public）へは決してフォールバックしない。
+      assert.equal(resolved.includes('vendor'), false);
+    } finally {
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+test('buildSettingsDescriptor: home 正本・repo が無くても vk-agents group の targetPath は null にならない（descriptor 無効化事故の防止）', () => {
+  withSavedEnv(['VK_AGENTS_CONFIG', 'VK_AGENTS_CONFIG_PATH'], () => {
+    delete process.env.VK_AGENTS_CONFIG;
+    delete process.env.VK_AGENTS_CONFIG_PATH;
+    const desc = buildSettingsDescriptor('/tmp/config.json');
+    const group = desc.groups.find((g) => g.label === 'vk-agents（エージェント共通設定）');
+    assert.ok(group);
+    assert.equal(typeof group.targetPath, 'string');
+    assert.ok(group.targetPath.length > 0);
+    assert.ok(group.targetPath.endsWith(join('.vk-agents', 'config.json')));
   });
 });
 

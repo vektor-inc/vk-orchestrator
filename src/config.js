@@ -443,6 +443,30 @@ export function resolveVkAgentsConfigPath(cfg = loadUnifiedConfig(), options = {
 }
 
 /**
+ * vk-agents 設定の「書き込み先」正本パスを解決する。
+ *
+ * READ 用の resolveVkAgentsConfigPath() は home 正本が無いと旧リポ／vendored 直下へ
+ * フォールバックするが、それらは re-clone / re-install で消える揮発パスであり、
+ * GUI パネル（設定ディスクリプタ）や orchestrator の投影の「書き込み先」に使うと
+ * 揮発問題を再導入してしまう。書き込み先は常に永続の正本 ~/.vk-agents/config.json
+ * とし（env / config での明示上書きのみ尊重）、存在有無に関わらず具体パスを返す
+ * （null を返さない＝ディスクリプタが無効化されて GUI から全項目が消える事故を防ぐ）。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @param {{ homeDir?: string }} [options]
+ * @returns {string} 書き込み先の正本パス
+ */
+export function resolveVkAgentsCanonicalConfigPath(cfg = loadUnifiedConfig(), options = {}) {
+  const raw =
+    process.env.VK_AGENTS_CONFIG ??
+    process.env.VK_AGENTS_CONFIG_PATH ??
+    cfg?.vkAgents?.configPath ??
+    '';
+  const explicit = String(raw).trim();
+  if (explicit) return resolve(explicit);
+  return join(options.homeDir ?? homedir(), '.vk-agents', 'config.json');
+}
+
+/**
  * VK Terminals API の接続先 host を解決する。
  * 優先順位: env VK_TERMINALS_HOST > ~/.vk-terminals/config.json(apiHost) > 既定値。
  * @param {{ homeDir?: string, configPath?: string }} [options]
@@ -624,7 +648,7 @@ function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
  * @returns {{ configPath: string, globalSettingsPath: string }|null}
  */
 export function writeVkAgentsSettings(cfg = {}, options = {}) {
-  const configPath = options.configPath ?? resolveVkAgentsConfigPath(cfg);
+  const configPath = options.configPath ?? resolveVkAgentsCanonicalConfigPath(cfg);
   if (!configPath) return null;
 
   const hasConfig = existsSync(configPath);
@@ -730,7 +754,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       },
       {
         label: 'vk-agents（エージェント共通設定）',
-        targetPath: resolveVkAgentsConfigPath(),
+        targetPath: resolveVkAgentsCanonicalConfigPath(),
         fields: [
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
           { key: 'features.coderabbit_ignore', label: 'CodeRabbit レビューをスキップ（PR 本文に @coderabbitai ignore を記載）', type: 'boolean', default: false, help: 'ON で /vk-pr が PR 本文に @coderabbitai ignore を記載し、CodeRabbit レビューを抑止します。features.coderabbit が OFF のときは監視自体がスキップされるため、この設定は効果がありません' },
