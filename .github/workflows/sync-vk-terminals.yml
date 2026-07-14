@@ -1,0 +1,77 @@
+name: Sync vk-terminals version
+
+# vk-terminals の最新リリースに、依存ピン（optionalDependencies の git+https#<タグ>）を
+# 自動追従させる。これにより「vk-terminals をリリースするたびに手で bump:terminals + commit」
+# する手作業が不要になり、plain `npm install` / `npm ci` が古い版に巻き戻る問題も解消する。
+#
+# トリガー:
+#   - repository_dispatch(vk-terminals-released): vk-terminals のリリース時に即時実行（要 PAT。
+#     vk-terminals 側 release.yml から dispatch。PAT 未設定でも下記 schedule が拾う）
+#   - schedule: 取りこぼし・PAT 未設定時のフォールバック（毎日）
+#   - workflow_dispatch: 手動実行
+#
+# 変更対象は package.json / package-lock.json のピンのみ。CHANGELOG の
+# 「vk-terminals を X から Y にアップデート」エントリは orchestrator のリリース確定時に
+# 人が記載する運用とする（bump-vk-terminals.mjs の設計に合わせ、ここでは触らない）。
+#
+# セキュリティ:
+#   - 権限は contents: write のみ。
+#   - repository_dispatch の client_payload は信用せず、常に自分で ls-remote して最新タグを
+#     解決する（外部からのバージョン注入を防ぐ）。
+#   - GITHUB_TOKEN による push は他ワークフローを再トリガーしないため、無限ループしない。
+
+on:
+  repository_dispatch:
+    types: [vk-terminals-released]
+  schedule:
+    - cron: '23 15 * * *'   # 毎日 15:23 UTC（= JST 00:23）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-vk-terminals
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bump vk-terminals pin to latest tag
+        id: bump
+        run: |
+          # 引数なし = リモートの最新 semver タグへ追従（client_payload は使わない）
+          node scripts/bump-vk-terminals.mjs latest
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "vk-terminals は既に最新です。変更はありません。"
+          else
+            new="$(node -p "require('./package.json').optionalDependencies['vk-terminals'].match(/#(.+)$/)[1]")"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "new=$new" >> "$GITHUB_OUTPUT"
+            echo "vk-terminals ピンを $new に更新しました。"
+          fi
+
+      - name: Commit & push to main
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          NEW: ${{ steps.bump.outputs.new }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "[ その他 ] vk-terminals 依存ピンを ${NEW} に自動追従（最新リリース反映）"
+          # 他のコミットと競合しても落ちないよう push 直前に rebase してから送る
+          git pull --rebase origin main
+          git push origin HEAD:main

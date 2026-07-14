@@ -2,6 +2,7 @@
 
 = 0.16.0 =
 - [ 仕様変更 ] vk-terminals を 1.18.1 から 1.19.0 にアップデート（設定パネルのタブ UI 対応・API 待受ポートを本体 config から設定可能に）
+- [ 開発環境 ] vk-terminals の最新リリースに依存ピン（optionalDependencies）を自動追従する GitHub Actions（repository_dispatch／毎日 schedule／手動）を追加
 
 = 0.15.0 =
 - [ 機能追加 ] GUI 起動時にウィンドウタイトルバーとヘッダーの表記を `VK Orchestrator` にする（`VK_TERMINALS_APP_TITLE` を付与）
