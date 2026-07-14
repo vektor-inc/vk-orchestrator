@@ -256,6 +256,37 @@ export async function setExternalWaiting(port, termId, waiting) {
 }
 
 /**
+ * 指定ペインの閉じる保護（close ロック）を設定する。
+ *
+ * `lock: { close: false }` で閉じる操作を保護し、`lock: null` で解除する。
+ * `/api/set-lock` は VK Terminals 1.21.0 で導入されたため、未対応の旧版では
+ * 404 等で throw する。ロックが必須でない呼び出し側は失敗を握りつぶし、
+ * graceful degradation で継続する想定。
+ *
+ * @param {number} port          VK Terminals API ポート
+ * @param {string|number} termId 対象ターミナル ID
+ * @param {object|null} lock     設定するロック。例: `{ close: false }` または `null`
+ * @returns {Promise<object>} VK Terminals のレスポンス JSON
+ */
+export async function setPaneLock(port, termId, lock) {
+  const res = await fetch(`${BASE_URL(port)}/api/set-lock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ termId, lock }),
+  });
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error ?? `set-lock failed: HTTP ${res.status}`);
+  }
+  return json;
+}
+
+/**
  * VK Terminals のサイドバーメニューへセクションを投稿する。
  *
  * POST /api/menu は source 単位で丸ごと置換する冪等 API のため、起動時・接続確立時・

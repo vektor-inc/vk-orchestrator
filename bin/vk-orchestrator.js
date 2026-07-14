@@ -323,7 +323,7 @@ async function main() {
       const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath,
         resolveVkTerminalsApiHost, resolveVkTerminalsApiPort, getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
-      const { waitForHealth, createNewPane, sendToTerminal } =
+      const { waitForHealth, createNewPane, sendToTerminal, setPaneLock } =
         await import('../src/terminals/index.js');
 
       // GUI 起動前に、orchestrator 自身と固定タグ・実際に入っている版のズレを解消しておく。
@@ -406,6 +406,19 @@ async function main() {
           // VK Terminals が stashed 未対応の版では未知フィールドとして無視される。
           const termId = await createNewPane(port, repoRoot, { noClaude: true, stashed: true });
           console.log(`orchestrator ペインを作成しました (termId: ${termId})`);
+
+          // 作成した orchestrator ペインを「閉じる保護」でロックする。
+          // 誤ってペインを閉じると orchestrator 本体プロセスが道連れで停止する事故
+          // （vk-orchestrator#102）を防ぐため、生成直後に閉じる操作を保護する。
+          // set-lock は vk-terminals 1.21.0 で導入されたため、未対応の旧版では失敗しうる。
+          // ロック失敗で orchestrator 起動を妨げないよう、専用の try/catch で警告して継続する
+          // （graceful degradation。ペインは従来どおり動くが保護は掛からない）。
+          try {
+            await setPaneLock(port, termId, { close: false });
+            console.log('orchestrator ペインを閉じる保護でロックしました');
+          } catch (err) {
+            console.warn(`[up] orchestrator ペインのロックに失敗しました（処理は継続）: ${err.message}`);
+          }
 
           // 素のシェルの起動を少し待ってからコマンドを流し込む（プロンプト出現前の取りこぼし対策）。
           await new Promise((r) => setTimeout(r, 1_200));
