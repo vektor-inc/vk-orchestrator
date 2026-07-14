@@ -83,3 +83,58 @@ test('setTerminalPrUrl / postMenu は no-op で {ok:true}', async () => {
   assert.deepEqual(await be.setTerminalPrUrl(0, '@3', 'http://x'), { ok: true });
   assert.deepEqual(await be.postMenu(0, {}), { ok: true });
 });
+
+test('setTerminalTitle: rename-window は -- でタイトルを保護し、空タイトルなら呼ばない', async () => {
+  const { run, calls } = fakeRunner();
+  const be = createTmuxBackend({ session: 'vk-orch', claudeCommand: 'claude', run });
+  await be.setTerminalTitle(0, '@3', '-danger');
+  const rn = calls.find(a => a.includes('rename-window'));
+  assert.deepEqual(rn, ['rename-window', '-t', '@3', '--', '-danger']);
+
+  calls.length = 0;
+  await be.setTerminalTitle(0, '@3', '');
+  assert.equal(calls.find(a => a.includes('rename-window')), undefined);
+});
+
+test('getStates: list-windows から消えた window は panes から除去され、以後も正しく振る舞う', async () => {
+  const calls = [];
+  let listWindowsOut = '@3 1000\n';
+  const run = (args) => {
+    calls.push(args);
+    const key = args.join(' ');
+    if (key.startsWith('new-window')) return { status: 0, stdout: '@3\n', stderr: '' };
+    if (key.startsWith('list-windows')) return { status: 0, stdout: listWindowsOut, stderr: '' };
+    if (key.startsWith('capture-pane')) return { status: 0, stdout: 'line1\n', stderr: '' };
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  const be = createTmuxBackend({ session: 'vk-orch', claudeCommand: 'claude', run });
+  await be.createNewPane(0, null, {});
+
+  // 1回目: window は存在する → 報告される
+  let { terminals } = await be.getStates(0);
+  assert.deepEqual(Object.keys(terminals), ['@3']);
+
+  // 2回目: list-windows から消えた → 報告されず、内部 panes からも除去される
+  listWindowsOut = '';
+  ({ terminals } = await be.getStates(0));
+  assert.deepEqual(Object.keys(terminals), []);
+
+  // 3回目: 同じ window id が再度 list-windows に現れても、panes からは既に除去されているため無視される
+  // （tmux の window id は再利用されないため、実運用では起こらないが pane リークが無いことの確認）
+  listWindowsOut = '@3 2000\n';
+  ({ terminals } = await be.getStates(0));
+  assert.deepEqual(Object.keys(terminals), []);
+});
+
+test('getStates: window_activity が 0 のとき lastOutputTime は epoch(0) ではなく現在時刻', async () => {
+  const { run } = fakeRunner({
+    'new-window': '@3\n',
+    'list-windows': '@3 0\n',
+    'capture-pane': 'line1\n',
+  });
+  const be = createTmuxBackend({ session: 'vk-orch', claudeCommand: 'claude', run });
+  await be.createNewPane(0, null, {});
+  const { terminals } = await be.getStates(0);
+  const t = terminals['@3'].lastOutputTime;
+  assert.ok(Math.abs(Date.now() - t) < 60000);
+});

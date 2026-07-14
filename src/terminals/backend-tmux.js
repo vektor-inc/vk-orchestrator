@@ -52,12 +52,18 @@ export function createTmuxBackend({ session, claudeCommand, run = defaultRun }) 
     }
     const terminals = {};
     for (const [winId, state] of panes) {
-      if (!activity.has(winId)) continue; // 窓が消えた → 報告しない（pane-missing 検知に乗る）
+      if (!activity.has(winId)) {
+        // 窓が消えた → 報告しない（pane-missing 検知に乗る）＋ 内部 Map からも除去（tmux の window id は再利用されないため安全）
+        panes.delete(winId);
+        continue;
+      }
       const cap = run(['capture-pane', '-p', '-t', winId, '-S', `-${CAPTURE_LINES}`]);
+      const sec = activity.get(winId);
       terminals[winId] = {
         termId: winId,
         waiting: state.waiting,
-        lastOutputTime: activity.get(winId) * 1000, // 秒→ms（VK Terminals は Date.now() ms）
+        // 秒→ms（VK Terminals は Date.now() ms）。activity が 0/欠損なら「今」を使う（0 だと watchdog が巨大な idle 時間を計算してしまう）
+        lastOutputTime: sec > 0 ? sec * 1000 : Date.now(),
         lastLines: cap.stdout,
       };
     }
@@ -65,13 +71,13 @@ export function createTmuxBackend({ session, claudeCommand, run = defaultRun }) 
   }
 
   async function setExternalWaiting(_port, termId, waiting) {
-    const p = panes.get(String(termId)) ?? panes.get(termId);
+    const p = panes.get(String(termId));
     if (p) p.waiting = !!waiting;
     return { ok: true };
   }
 
   async function setTerminalTitle(_port, termId, title) {
-    if (title) run(['rename-window', '-t', termId, String(title)]);
+    if (title) run(['rename-window', '-t', termId, '--', String(title)]);
     return { ok: true };
   }
 
