@@ -1,8 +1,24 @@
 import { stripControlChars } from '../engine/build-command.js';
 import * as vkBackend from './backend-vk-terminals.js';
+import { createTmuxBackend } from './backend-tmux.js';
+import { resolveTerminalsMode, resolveTmuxSession, resolveTmuxClaudeCommand } from '../config.js';
 
-// Task 4 で resolveTerminalsMode による分岐に差し替える。現段階は常に VK バックエンド。
-function backend() { return vkBackend; }
+// terminals.mode に応じて実行面バックエンドを選択する。実行中に mode は変わらない前提のため、
+// 初回解決時に一度だけ生成してモジュールスコープでメモ化する（getStates のポーリングループが
+// 約 2 秒おきに呼ぶため、毎回 config を読み直さないようにする）。
+let _backend = null;
+function backend() {
+  if (_backend) return _backend;
+  if (resolveTerminalsMode() === 'tmux') {
+    _backend = createTmuxBackend({
+      session: resolveTmuxSession(),
+      claudeCommand: resolveTmuxClaudeCommand(),
+    });
+  } else {
+    _backend = vkBackend;
+  }
+  return _backend;
+}
 
 export const checkHealth        = (...a) => backend().checkHealth(...a);
 export const getStates          = (...a) => backend().getStates(...a);
