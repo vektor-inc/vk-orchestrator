@@ -33,9 +33,11 @@ const {
   ensureGitHubToken,
   migrateLegacyOrchestratorConfig,
   migrateVkTerminalsLaunchOptions,
+  migrateLegacyVkAgentsGuiKeys,
 } = await import('../src/config.js');
 migrateLegacyOrchestratorConfig();
 migrateVkTerminalsLaunchOptions();
+migrateLegacyVkAgentsGuiKeys();
 const unifiedConfig = loadUnifiedConfig();
 applyConfigToEnv(unifiedConfig);
 ensureGitHubToken();

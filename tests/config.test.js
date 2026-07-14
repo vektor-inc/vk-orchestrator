@@ -6,9 +6,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync, readdirSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, readdirSync, existsSync, mkdirSync, statSync } from 'fs';
 import { join, dirname, isAbsolute, resolve } from 'path';
 import { tmpdir } from 'os';
+import { setTimeout as sleep } from 'timers/promises';
 import {
   loadUnifiedConfig,
   applyConfigToEnv,
@@ -17,6 +18,7 @@ import {
   loadConfig,
   migrateLegacyOrchestratorConfig,
   migrateVkTerminalsLaunchOptions,
+  migrateLegacyVkAgentsGuiKeys,
   resolveVkAgentsRepoPath,
   resolveVkAgentsConfigPath,
   resolveVkAgentsCanonicalConfigPath,
@@ -507,6 +509,155 @@ test('migrateVkTerminalsLaunchOptions: gpu は本体 config へ移行しない',
   }
 });
 
+test('migrateLegacyVkAgentsGuiKeys: 旧 GUI キーを canonical へ移送し orchestrator config から削除する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-migrate-'));
+  try {
+    const sourcePath = join(dir, 'orchestrator.json');
+    const targetPath = join(dir, '.vk-agents', 'config.json');
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(sourcePath, JSON.stringify({
+      github: { owner: 'vektor-inc' },
+      features: { coderabbit: false, coderabbit_ignore: true },
+      staff_wp_dev: { engine: 'codex' },
+      multi_repo_task: { default_engine: 'claude' },
+      org: {
+        allowed_owners: ['vektor-inc'],
+        review_assets_repo: 'vektor-inc/review-assets',
+        orchestrator_repo: 'vektor-inc/vk-orchestrator',
+      },
+      vkTerminals: { gpu: 'off' },
+    }));
+    writeFileSync(targetPath, JSON.stringify({
+      features: { task_queue: true },
+      org: { allowed_owners: ['existing-owner'] },
+    }));
+    const logs = [];
+
+    const result = migrateLegacyVkAgentsGuiKeys({
+      orchestratorConfigPath: sourcePath,
+      canonicalConfigPath: targetPath,
+      log: (message) => logs.push(message),
+    });
+
+    assert.deepEqual(result, { migrated: true, sourcePath, targetPath });
+    assert.deepEqual(JSON.parse(readFileSync(sourcePath, 'utf8')), {
+      github: { owner: 'vektor-inc' },
+      org: { allowed_owners: ['vektor-inc'] },
+      vkTerminals: { gpu: 'off' },
+    });
+    assert.deepEqual(JSON.parse(readFileSync(targetPath, 'utf8')), {
+      features: { task_queue: true, coderabbit: false, coderabbit_ignore: true },
+      org: {
+        allowed_owners: ['existing-owner'],
+        review_assets_repo: 'vektor-inc/review-assets',
+        orchestrator_repo: 'vektor-inc/vk-orchestrator',
+      },
+      staff_wp_dev: { engine: 'codex' },
+      multi_repo_task: { default_engine: 'claude' },
+    });
+    assert.equal(logs.length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('migrateLegacyVkAgentsGuiKeys: canonical に既存値がある場合は上書きせず旧キーだけ削除する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-migrate-'));
+  try {
+    const sourcePath = join(dir, 'orchestrator.json');
+    const targetPath = join(dir, '.vk-agents', 'config.json');
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(sourcePath, JSON.stringify({
+      features: { coderabbit: false },
+      org: { review_assets_repo: 'vektor-inc/old-assets' },
+    }));
+    writeFileSync(targetPath, JSON.stringify({
+      features: { coderabbit: true },
+      org: { review_assets_repo: 'vektor-inc/new-assets' },
+    }));
+
+    const result = migrateLegacyVkAgentsGuiKeys({
+      orchestratorConfigPath: sourcePath,
+      canonicalConfigPath: targetPath,
+      log: () => {},
+    });
+
+    assert.equal(result.migrated, true);
+    assert.deepEqual(JSON.parse(readFileSync(sourcePath, 'utf8')), {});
+    assert.deepEqual(JSON.parse(readFileSync(targetPath, 'utf8')), {
+      features: { coderabbit: true },
+      org: { review_assets_repo: 'vektor-inc/new-assets' },
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('migrateLegacyVkAgentsGuiKeys: 2 回目は冪等に書き込まない', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-migrate-'));
+  try {
+    const sourcePath = join(dir, 'orchestrator.json');
+    const targetPath = join(dir, '.vk-agents', 'config.json');
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(sourcePath, JSON.stringify({ features: { coderabbit: false } }));
+
+    migrateLegacyVkAgentsGuiKeys({
+      orchestratorConfigPath: sourcePath,
+      canonicalConfigPath: targetPath,
+      log: () => {},
+    });
+    const sourceMtimeNs = statSync(sourcePath).mtimeNs;
+    const targetMtimeNs = statSync(targetPath).mtimeNs;
+    await sleep(10);
+
+    const second = migrateLegacyVkAgentsGuiKeys({
+      orchestratorConfigPath: sourcePath,
+      canonicalConfigPath: targetPath,
+      log: () => {},
+    });
+
+    assert.equal(second.migrated, false);
+    assert.equal(statSync(sourcePath).mtimeNs, sourceMtimeNs);
+    assert.equal(statSync(targetPath).mtimeNs, targetMtimeNs);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('migrateLegacyVkAgentsGuiKeys: orchestrator config が無い・不正 JSON の場合は安全に no-op', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-migrate-'));
+  const savedWarn = console.warn;
+  const warnings = [];
+  try {
+    const missingSourcePath = join(dir, 'missing.json');
+    const invalidSourcePath = join(dir, 'invalid.json');
+    const targetPath = join(dir, '.vk-agents', 'config.json');
+    writeFileSync(invalidSourcePath, '{ "features": {');
+    console.warn = (message) => warnings.push(message);
+
+    const missing = migrateLegacyVkAgentsGuiKeys({
+      orchestratorConfigPath: missingSourcePath,
+      canonicalConfigPath: targetPath,
+      log: () => {},
+    });
+    const invalid = migrateLegacyVkAgentsGuiKeys({
+      orchestratorConfigPath: invalidSourcePath,
+      canonicalConfigPath: targetPath,
+      log: () => {},
+    });
+
+    assert.equal(missing.migrated, false);
+    assert.equal(invalid.migrated, false);
+    assert.equal(existsSync(targetPath), false);
+    assert.equal(readFileSync(invalidSourcePath, 'utf8'), '{ "features": {');
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /移行をスキップ/);
+  } finally {
+    console.warn = savedWarn;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('vkAgentsGlobalSettingsPath: sync.sh と同じ Claude グローバル設定パスを返す', () => {
   assert.equal(
     vkAgentsGlobalSettingsPath('/tmp/home'),
@@ -599,6 +750,37 @@ test('writeVkAgentsSettings: GUI の vk-agents 共通設定だけを read-merge-
     assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), written);
     assert.equal(readdirSync(dir).some((name) => name.endsWith('.tmp')), false);
     assert.equal(readdirSync(dirname(globalSettingsPath)).some((name) => name.endsWith('.tmp')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeVkAgentsSettings: up/apply 投影時に canonical の CodeRabbit 設定を stale な orchestrator config で上書きしない', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-reset-'));
+  try {
+    const orchestratorConfigPath = join(dir, 'orchestrator.json');
+    const canonicalConfigPath = join(dir, '.vk-agents', 'config.json');
+    const globalSettingsPath = join(dir, '.claude', 'vk-agents-settings.json');
+    mkdirSync(dirname(canonicalConfigPath), { recursive: true });
+    writeFileSync(orchestratorConfigPath, JSON.stringify({
+      features: { coderabbit: false },
+    }));
+    writeFileSync(canonicalConfigPath, JSON.stringify({
+      features: { coderabbit: true },
+    }));
+
+    migrateLegacyVkAgentsGuiKeys({
+      orchestratorConfigPath,
+      canonicalConfigPath,
+      log: () => {},
+    });
+    writeVkAgentsSettings(
+      loadUnifiedConfig(orchestratorConfigPath),
+      { configPath: canonicalConfigPath, globalSettingsPath },
+    );
+
+    assert.equal(JSON.parse(readFileSync(canonicalConfigPath, 'utf8')).features.coderabbit, true);
+    assert.equal(JSON.parse(readFileSync(globalSettingsPath, 'utf8')).features.coderabbit, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
