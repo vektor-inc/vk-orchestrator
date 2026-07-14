@@ -20,6 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
 export const DEFAULT_VENDORED_VK_AGENTS_DIR = join(REPO_ROOT, 'vendor', 'vk-agents-public');
+const DEFAULT_VK_TERMINALS_PORT = 13847;
 
 export const GITHUB_TOKEN_RESOLUTION_HELP = 'GitHub トークンを解決できません。gh CLI 未導入の場合は `brew install gh`（Ubuntu: `sudo apt install gh`）でインストールし、`gh auth login` で認証してください。';
 
@@ -207,7 +208,8 @@ export function applyConfigToEnv(cfg = {}) {
   set('TASK_CWD', o.taskCwd);
 
   const vk = cfg.vkTerminals ?? {};
-  set('VK_TERMINALS_PORT', vk.port);
+  // port は ~/.vk-terminals/config.json の `port` が正本。旧 vkTerminals.port は
+  // migrateVkTerminalsLaunchOptions() で初回だけ本体 config へ移し、env へは流さない。
   // host は現在 ~/.vk-terminals/config.json の apiHost が正本。
   // 旧 config.json(vkTerminals.host) を使っている環境だけ後方互換として env へ流す。
   set('VK_TERMINALS_HOST', vk.host);
@@ -241,6 +243,55 @@ export function migrateLegacyOrchestratorConfig(options = {}) {
     throw err;
   }
   log(`[Config] 正本を ${targetPath} へ移行しました。今後リポジトリ直下 config.json は読まれません。削除して構いません。`);
+  return { migrated: true, sourcePath, targetPath };
+}
+
+/**
+ * 旧 orchestrator config の VK Terminals 起動オプションを、本体 config へ初回移行する。
+ *
+ * port は VK Terminals 本体 config（~/.vk-terminals/config.json）の `port` が正本。
+ * 既に本体 config に port がある場合はユーザー設定を尊重して上書きしない。
+ * GPU は orchestrator が GUI を spawn する際のオプションなので移行しない。
+ * @param {{ orchestratorConfigPath?: string, vkTerminalsConfigPath?: string, homeDir?: string, log?: (message:string)=>void }} [options]
+ * @returns {{ migrated: boolean, sourcePath: string, targetPath: string }}
+ */
+export function migrateVkTerminalsLaunchOptions(options = {}) {
+  const homeDir = options.homeDir ?? homedir();
+  const log = options.log ?? console.log;
+  const sourcePath = options.orchestratorConfigPath ?? resolveConfigPath();
+  const targetPath = options.vkTerminalsConfigPath ?? join(homeDir, '.vk-terminals', 'config.json');
+
+  let orchestratorConfig;
+  try {
+    orchestratorConfig = readJsonObject(sourcePath);
+  } catch (err) {
+    console.warn(`[Config] ${sourcePath} の読み込みに失敗したため VK Terminals port 移行をスキップしました: ${err.message}`);
+    return { migrated: false, sourcePath, targetPath };
+  }
+
+  // TODO(remove-after: #104 でレガシーキー撤去)
+  if (!hasOwnPath(orchestratorConfig, 'vkTerminals.port')) {
+    return { migrated: false, sourcePath, targetPath };
+  }
+  const legacyPort = getByPath(orchestratorConfig, 'vkTerminals.port');
+  if (legacyPort === undefined || legacyPort === null || legacyPort === '') {
+    return { migrated: false, sourcePath, targetPath };
+  }
+
+  let vkTerminalsConfig;
+  try {
+    vkTerminalsConfig = readJsonObject(targetPath);
+  } catch (err) {
+    console.warn(`[Config] ${targetPath} の読み込みに失敗したため VK Terminals port 移行をスキップしました: ${err.message}`);
+    return { migrated: false, sourcePath, targetPath };
+  }
+  if (hasOwnPath(vkTerminalsConfig, 'port')) {
+    return { migrated: false, sourcePath, targetPath };
+  }
+
+  setByPath(vkTerminalsConfig, 'port', legacyPort);
+  writeJsonAtomic(targetPath, vkTerminalsConfig);
+  log(`[Config] 旧 vkTerminals.port を ${targetPath} の port へ移行しました。`);
   return { migrated: true, sourcePath, targetPath };
 }
 
@@ -504,6 +555,35 @@ export function resolveVkTerminalsApiHost(options = {}) {
   return apiHost || '127.0.0.1';
 }
 
+function normalizeApiPort(raw) {
+  const port = Number(raw);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
+/**
+ * VK Terminals API の接続先 port を解決する。
+ * 優先順位: env VK_TERMINALS_PORT > ~/.vk-terminals/config.json(port) > 既定値。
+ * @param {{ homeDir?: string, configPath?: string }} [options]
+ * @returns {number}
+ */
+export function resolveVkTerminalsApiPort(options = {}) {
+  const envPort = normalizeApiPort(process.env.VK_TERMINALS_PORT);
+  if (envPort !== null) return envPort;
+
+  const configPath = options.configPath ?? join(options.homeDir ?? homedir(), '.vk-terminals', 'config.json');
+  let config;
+  try {
+    config = readJsonObject(configPath);
+  } catch (err) {
+    // ~/.vk-terminals/config.json は VK Terminals(GUI) が書き込む外部ファイル。
+    // 不正 JSON や書き込み途中の読み取り競合で例外になっても、呼び出し元（up 等）を
+    // 落とさず既定ポートへフォールバックする。
+    console.warn(`[Config] ${configPath} の読み込みに失敗したため既定ポート ${DEFAULT_VK_TERMINALS_PORT} を使用します: ${err.message}`);
+    return DEFAULT_VK_TERMINALS_PORT;
+  }
+  return normalizeApiPort(config.port) ?? DEFAULT_VK_TERMINALS_PORT;
+}
+
 /**
  * vk-agents の Claude グローバル派生設定パス。
  * sync.sh --claude-global と同じ場所へ、vk-agents config.json の投影として書く。
@@ -722,9 +802,15 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
     title: 'VK Orchestrator 設定',
     note: '保存後の反映タイミングは項目によって異なります（各グループの説明をご確認ください）。',
     targetPath,
+    tabs: [
+      { id: 'orchestrator', label: 'Orchestrator' },
+      { id: 'terminals', label: 'Terminals' },
+      { id: 'agents', label: 'Agents' },
+    ],
     groups: [
       {
         label: 'GitHub',
+        tab: 'orchestrator',
         note: 'GitHub トークンは `gh auth login` で管理します（このパネルでの入力は廃止）。',
         fields: [
           { key: 'github.owner',      label: 'タスク登録リポジトリのオーナー', type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリのオーナー名（ユーザー名または組織名。例: vektor-inc）' },
@@ -735,6 +821,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       },
       {
         label: 'オーケストレーター',
+        tab: 'orchestrator',
         fields: [
           { key: 'orchestrator.pollIntervalMs',  label: 'ポーリング間隔 (ms)',  type: 'number', help: 'GitHub をポーリングして新しいタスクを確認する間隔（ミリ秒。例: 60000 = 1 分）' },
           { key: 'orchestrator.watchdogIdleMs',  label: 'ウォッチドッグ idle (ms)', type: 'number', help: 'この時間ターミナルが無活動だと停滞とみなす閾値（ミリ秒。例: 10800000 = 3 時間）' },
@@ -745,10 +832,12 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       },
       {
         label: 'VK Terminals（本体設定）',
+        tab: 'terminals',
         note: 'VK Terminals 本体の設定ファイル（~/.vk-terminals/config.json）に直接保存され、VK Terminals が読み込みます。',
         targetPath: '~/.vk-terminals/config.json',
         fields: [
           { key: 'apiHost',        label: 'API ホスト', type: 'text', help: 'VK Terminals の API サーバーが待ち受けるホスト（既定: 127.0.0.1）' },
+          { key: 'port',           label: 'API ポート', type: 'number', help: `VK Terminals 本体の API サーバーが待ち受けるポート番号（既定: ${DEFAULT_VK_TERMINALS_PORT}）` },
           { key: 'initialCommand', label: '初期コマンド', type: 'text', help: '各ペイン起動時に自動実行するコマンド' },
           { key: 'additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
           { key: 'newPaneAutoLaunchClaude', label: 'Claude Code を自動的に起動する', type: 'boolean', default: false, help: 'チェックが入っている場合、新規ペインを開いた時に自動的に Claude Code が起動します。オフの場合は素のターミナルで起動します。' },
@@ -757,9 +846,9 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       },
       {
         label: 'VK Terminals 起動オプション（オーケストレーター制御）',
-        note: 'orchestrator が VK Terminals を起動する際の制御値です。変更は次回の VK Terminals 起動時に反映されます。API ホストは「VK Terminals（本体設定）」で設定してください。',
+        tab: 'terminals',
+        note: 'orchestrator が VK Terminals を起動する際の制御値です。変更は次回の VK Terminals 起動時に反映されます。API ホストと API ポートは「VK Terminals（本体設定）」で設定してください。',
         fields: [
-          { key: 'vkTerminals.port', label: 'API ポート', type: 'number', help: 'orchestrator が VK Terminals を起動する際の API ポート番号（既定: 13847）' },
           { key: 'vkTerminals.gpu',             label: 'GPU モード',          type: 'select',
             options: [
               { value: '',         label: '自動（推奨・macOS は通常起動 / その他は off）' },
@@ -771,12 +860,15 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       },
       {
         label: 'issue を処理する Claude のコマンド',
+        tab: 'orchestrator',
         fields: [
           { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', placeholder: '/vk-kore {issueUrl} wp-env-port={wpPort} headless=1', help: 'issue に対して仕様検討・実装・プルリク作成・レビューまで自動で処理してマージできる状態にする Claude のコマンドを指定してください。未指定の場合は /vk-kore {issueUrl} wp-env-port={wpPort} headless=1 のような形式で投げられます。{issueUrl} と {wpPort} は自動で置換します。独自のコマンドを使用する場合、オーケストレーターと円滑に連携するための決め事がいくつかあります。詳しくは docs/agent-rules.md をご確認ください。デフォルトの /vk-kore スキルは vendor/vk-agents-public/skills/vk-kore/ にありますので、必要に応じてそれを参考に独自のスキルをご利用の PC の .claude に作ってください。' },
         ],
       },
       {
         label: 'vk-agents（エージェント共通設定）',
+        tab: 'agents',
+        note: 'エージェント共通設定は vk-agents の config に保存され、各スキル／エージェントが読み込みます。',
         targetPath: resolveVkAgentsCanonicalConfigPath(),
         fields: [
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
@@ -978,7 +1070,10 @@ export function loadConfig(argv = process.argv, options = {}) {
     repo:           process.env.GITHUB_REPO ?? 'task-queue',
     sourceOrg:      process.env.SOURCE_ORG ?? owner,
     queueLabel:     process.env.QUEUE_LABEL ?? 'task-queue',
-    vkPort:         Number(process.env.VK_TERMINALS_PORT ?? 13847),
+    vkPort:         resolveVkTerminalsApiPort({
+      configPath: options.vkTerminalsConfigPath,
+      homeDir: options.homeDir,
+    }),
     vkHost:         process.env.VK_TERMINALS_HOST ?? '127.0.0.1',
     pollInterval:   Number(process.env.POLL_INTERVAL_MS ?? 60_000),
     watchdogIdle:   Number(process.env.WATCHDOG_IDLE_MS ?? 3 * 60 * 60 * 1000),

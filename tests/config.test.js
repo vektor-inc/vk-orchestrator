@@ -16,10 +16,12 @@ import {
   getGitHubTokenFromGh,
   loadConfig,
   migrateLegacyOrchestratorConfig,
+  migrateVkTerminalsLaunchOptions,
   resolveVkAgentsRepoPath,
   resolveVkAgentsConfigPath,
   resolveVkAgentsCanonicalConfigPath,
   resolveVkTerminalsApiHost,
+  resolveVkTerminalsApiPort,
   vkAgentsGlobalSettingsPath,
   vkAgentsSkillsManifestPath,
   vkAgentsSkillsManifestSourcePath,
@@ -84,7 +86,7 @@ test('applyConfigToEnv: 未設定の env に config 値を反映する', () => {
     assert.equal(process.env.GITHUB_OWNER, 'acme');
     assert.equal(process.env.GITHUB_REPO, 'q');
     assert.equal(process.env.QUEUE_LABEL, 'lbl');
-    assert.equal(process.env.VK_TERMINALS_PORT, '20000');
+    assert.equal(process.env.VK_TERMINALS_PORT, undefined);
     assert.equal(process.env.ASSIGNEE_FILTER, 'alice');
     assert.equal(process.env.TASK_CWD, '/work/task');
   } finally {
@@ -318,6 +320,63 @@ test('resolveVkTerminalsApiHost: apiHost 未設定なら既定 127.0.0.1 を返�
   });
 });
 
+test('resolveVkTerminalsApiPort: env VK_TERMINALS_PORT を最優先する', () => {
+  withSavedEnv(['VK_TERMINALS_PORT'], () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-port-'));
+    try {
+      const configPath = join(dir, 'config.json');
+      writeFileSync(configPath, JSON.stringify({ port: 20000 }));
+      process.env.VK_TERMINALS_PORT = '21000';
+      assert.equal(resolveVkTerminalsApiPort({ configPath }), 21000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('resolveVkTerminalsApiPort: ~/.vk-terminals/config.json の port を読む', () => {
+  withSavedEnv(['VK_TERMINALS_PORT'], () => {
+    delete process.env.VK_TERMINALS_PORT;
+    const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-home-'));
+    try {
+      const configPath = join(dir, '.vk-terminals', 'config.json');
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, JSON.stringify({ port: '22000' }));
+      assert.equal(resolveVkTerminalsApiPort({ homeDir: dir }), 22000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('resolveVkTerminalsApiPort: port 未設定なら既定 13847 を返す', () => {
+  withSavedEnv(['VK_TERMINALS_PORT'], () => {
+    delete process.env.VK_TERMINALS_PORT;
+    const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-home-'));
+    try {
+      assert.equal(resolveVkTerminalsApiPort({ homeDir: dir }), 13847);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('resolveVkTerminalsApiPort: 不正 JSON でも例外を投げず既定 13847 へフォールバックする', () => {
+  withSavedEnv(['VK_TERMINALS_PORT'], () => {
+    delete process.env.VK_TERMINALS_PORT;
+    const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-home-'));
+    try {
+      const configPath = join(dir, '.vk-terminals', 'config.json');
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, '{ this is not valid json');
+      assert.doesNotThrow(() => resolveVkTerminalsApiPort({ homeDir: dir }));
+      assert.equal(resolveVkTerminalsApiPort({ homeDir: dir }), 13847);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 test('migrateLegacyOrchestratorConfig: repo 直下 config.json を home 正本へ初回コピーする', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vko-migrate-'));
   try {
@@ -365,6 +424,84 @@ test('migrateLegacyOrchestratorConfig: home 正本があれば旧配置を上書
     assert.equal(result.migrated, false);
     assert.deepEqual(JSON.parse(readFileSync(targetPath, 'utf8')), { github: { owner: 'home' } });
     assert.equal(logs.length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('migrateVkTerminalsLaunchOptions: 旧 vkTerminals.port を本体 config の port へ移行する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-migrate-'));
+  try {
+    const sourcePath = join(dir, 'orchestrator.json');
+    const targetPath = join(dir, '.vk-terminals', 'config.json');
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(sourcePath, JSON.stringify({ vkTerminals: { port: 23000, gpu: 'off' } }));
+    writeFileSync(targetPath, JSON.stringify({ apiHost: '127.0.0.1' }) + '\n');
+    const logs = [];
+
+    const result = migrateVkTerminalsLaunchOptions({
+      orchestratorConfigPath: sourcePath,
+      vkTerminalsConfigPath: targetPath,
+      log: (message) => logs.push(message),
+    });
+
+    assert.deepEqual(result, { migrated: true, sourcePath, targetPath });
+    assert.deepEqual(JSON.parse(readFileSync(targetPath, 'utf8')), {
+      apiHost: '127.0.0.1',
+      port: 23000,
+    });
+    assert.equal(logs.length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('migrateVkTerminalsLaunchOptions: 本体 config に port があれば上書きせず冪等に何もしない', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-migrate-'));
+  try {
+    const sourcePath = join(dir, 'orchestrator.json');
+    const targetPath = join(dir, '.vk-terminals', 'config.json');
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(sourcePath, JSON.stringify({ vkTerminals: { port: 23000, gpu: 'default' } }));
+    writeFileSync(targetPath, JSON.stringify({ port: 24000, apiHost: '127.0.0.1' }) + '\n');
+
+    const first = migrateVkTerminalsLaunchOptions({
+      orchestratorConfigPath: sourcePath,
+      vkTerminalsConfigPath: targetPath,
+      log: () => {},
+    });
+    const second = migrateVkTerminalsLaunchOptions({
+      orchestratorConfigPath: sourcePath,
+      vkTerminalsConfigPath: targetPath,
+      log: () => {},
+    });
+
+    assert.equal(first.migrated, false);
+    assert.equal(second.migrated, false);
+    assert.deepEqual(JSON.parse(readFileSync(targetPath, 'utf8')), {
+      port: 24000,
+      apiHost: '127.0.0.1',
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('migrateVkTerminalsLaunchOptions: gpu は本体 config へ移行しない', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-migrate-'));
+  try {
+    const sourcePath = join(dir, 'orchestrator.json');
+    const targetPath = join(dir, '.vk-terminals', 'config.json');
+    writeFileSync(sourcePath, JSON.stringify({ vkTerminals: { gpu: 'off' } }));
+
+    const result = migrateVkTerminalsLaunchOptions({
+      orchestratorConfigPath: sourcePath,
+      vkTerminalsConfigPath: targetPath,
+      log: () => {},
+    });
+
+    assert.equal(result.migrated, false);
+    assert.equal(existsSync(targetPath), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1218,10 +1355,27 @@ test('buildSettingsDescriptor: sourceOrg は空欄保存時に未指定として
   assert.equal(sourceOrgField.emptyToNull, true);
 });
 
+test('buildSettingsDescriptor: tabs と各 group の tab 割り当てを持つ', () => {
+  const desc = buildSettingsDescriptor('/tmp/config.json');
+  assert.deepEqual(desc.tabs, [
+    { id: 'orchestrator', label: 'Orchestrator' },
+    { id: 'terminals', label: 'Terminals' },
+    { id: 'agents', label: 'Agents' },
+  ]);
+  const tabsByLabel = Object.fromEntries(desc.groups.map((group) => [group.label, group.tab]));
+  assert.equal(tabsByLabel.GitHub, 'orchestrator');
+  assert.equal(tabsByLabel['オーケストレーター'], 'orchestrator');
+  assert.equal(tabsByLabel['VK Terminals（本体設定）'], 'terminals');
+  assert.equal(tabsByLabel['VK Terminals 起動オプション（オーケストレーター制御）'], 'terminals');
+  assert.equal(tabsByLabel['issue を処理する Claude のコマンド'], 'orchestrator');
+  assert.equal(tabsByLabel['vk-agents（エージェント共通設定）'], 'agents');
+});
+
 test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () => {
   const desc = buildSettingsDescriptor('/tmp/config.json');
   const group = desc.groups.find((g) => g.label === 'vk-agents（エージェント共通設定）');
   assert.ok(group);
+  assert.match(group.note, /vk-agents の config に保存/);
 
   const coderabbitField = group.fields.find((f) => f.key === 'features.coderabbit');
   assert.ok(coderabbitField);
@@ -1290,19 +1444,22 @@ test('buildSettingsDescriptor: VK Terminals 本体設定 group は ~/.vk-termina
     group.fields.map((field) => field.key),
     [
       'apiHost',
+      'port',
       'initialCommand',
       'additionalPanes',
       'newPaneAutoLaunchClaude',
       'newPaneStartupDir',
     ],
   );
+  assert.equal(group.fields.find((field) => field.key === 'port').type, 'number');
+  assert.match(group.fields.find((field) => field.key === 'port').help, /本体/);
   assert.equal(group.fields.find((field) => field.key === 'additionalPanes').type, 'json');
   assert.equal(group.fields.find((field) => field.key === 'newPaneAutoLaunchClaude').type, 'boolean');
   assert.equal(group.fields.find((field) => field.key === 'newPaneAutoLaunchClaude').default, false);
   assert.equal(group.fields.find((field) => field.key === 'newPaneStartupDir').type, 'text');
 });
 
-test('buildSettingsDescriptor: VK Terminals 起動オプションは orchestrator config 側に残す', () => {
+test('buildSettingsDescriptor: VK Terminals 起動オプションは GPU だけ orchestrator config 側に残す', () => {
   const desc = buildSettingsDescriptor('/tmp/orchestrator-config.json');
   const terminalConfigGroup = desc.groups.find((g) => g.targetPath === '~/.vk-terminals/config.json');
   const launchGroup = desc.groups.find((g) => g.label === 'VK Terminals 起動オプション（オーケストレーター制御）');
@@ -1310,9 +1467,11 @@ test('buildSettingsDescriptor: VK Terminals 起動オプションは orchestrato
   assert.ok(launchGroup);
   assert.equal(launchGroup.targetPath, undefined);
   assert.match(launchGroup.note, /orchestrator が VK Terminals を起動する際/);
+  assert.match(launchGroup.note, /API ホストと API ポート/);
   const terminalKeys = terminalConfigGroup.fields.map((field) => field.key);
   const launchKeys = launchGroup.fields.map((field) => field.key);
-  assert.deepEqual(launchKeys, ['vkTerminals.port', 'vkTerminals.gpu']);
+  assert.deepEqual(launchKeys, ['vkTerminals.gpu']);
+  assert.equal(terminalKeys.includes('port'), true);
   assert.equal(terminalKeys.includes('vkTerminals.port'), false);
   assert.equal(terminalKeys.includes('vkTerminals.gpu'), false);
   assert.equal(terminalKeys.includes('vkTerminals.host'), false);

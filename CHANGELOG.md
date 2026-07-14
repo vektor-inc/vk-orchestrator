@@ -2,6 +2,9 @@
 
 = 0.16.0 =
 - [ 仕様変更 ] vk-terminals を 1.18.1 から 1.19.0 にアップデート（設定パネルのタブ UI 対応・API 待受ポートを本体 config から設定可能に）
+- [ 仕様変更 ] 設定パネルを Orchestrator / Terminals / Agents の 3 タブ構成に変更
+- [ 仕様変更 ] VK Terminals の API ポート設定を本体 config（`~/.vk-terminals/config.json`）へ一本化
+- [ 仕様変更 ] 旧 orchestrator config の `vkTerminals.port` を VK Terminals 本体 config へ初回移行する処理を追加
 - [ 開発環境 ] vk-terminals の最新リリースに依存ピン（optionalDependencies）を自動追従する GitHub Actions（repository_dispatch／毎日 schedule／手動）を追加
 
 = 0.15.0 =
