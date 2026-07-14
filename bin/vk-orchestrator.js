@@ -306,6 +306,34 @@ async function main() {
       break;
     }
     case 'up': {
+      // --- tmux モード分岐 ---
+      // 実行面が tmux のときは Electron(VK Terminals) を一切起動しない。
+      // 対象 tmux セッションを用意し、orchestrator ループ（= start と同じ）を
+      // このプロセスのフォアグラウンドで回す。ワーカーペインは engine が
+      // tmux new-window で作り、利用者は `tmux attach -t <session>` で覗く。
+      {
+        const { resolveTerminalsMode, resolveTmuxSession } = await import('../src/config.js');
+        if (resolveTerminalsMode(unifiedConfig) === 'tmux') {
+          const { spawnSync } = await import('child_process');
+          const session = resolveTmuxSession(unifiedConfig);
+          const has = spawnSync('tmux', ['has-session', '-t', session], { stdio: 'ignore' });
+          if (has.status !== 0) {
+            const created = spawnSync('tmux', ['new-session', '-d', '-s', session], { stdio: 'inherit' });
+            if (created.status !== 0) {
+              console.error(`[up] tmux セッション "${session}" を作成できませんでした（tmux は入っていますか？）。`);
+              process.exit(1);
+            }
+            console.log(`tmux セッション "${session}" を作成しました。`);
+          } else {
+            console.log(`tmux セッション "${session}" に接続します。`);
+          }
+          console.log(`各ワーカーは \`tmux attach -t ${session}\` で覗けます。orchestrator を起動します...`);
+          await reconcileOrchestratorVersion();
+          await import('../src/engine/index.js'); // start と同じくループを起動
+          break;
+        }
+      }
+      // --- 以降は従来の VK Terminals(Electron) 起動フロー（不変） ---
       // 設定を反映したうえで、同梱の VK Terminals(GUI) を起動し、その GUI の中に
       // orchestrator 用ペインを1つ開いて `vk-orchestrator start` を走らせる。
       //
