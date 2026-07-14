@@ -317,15 +317,16 @@ export function migrateLegacyVkAgentsGuiKeys(options = {}) {
   const homeDir = options.homeDir ?? homedir();
   const log = options.log ?? console.log;
   const sourcePath = options.orchestratorConfigPath ?? resolveConfigPath();
-  const targetPath = options.canonicalConfigPath ?? resolveVkAgentsCanonicalConfigPath({}, { homeDir });
 
   let orchestratorConfig;
   try {
     orchestratorConfig = readJsonObject(sourcePath);
   } catch (err) {
+    const targetPath = options.canonicalConfigPath ?? resolveVkAgentsCanonicalConfigPath({}, { homeDir });
     console.warn(`[Config] ${sourcePath} の読み込みに失敗したため vk-agents GUI 設定の移行をスキップしました: ${err.message}`);
     return { migrated: false, sourcePath, targetPath };
   }
+  const targetPath = options.canonicalConfigPath ?? resolveVkAgentsCanonicalConfigPath(orchestratorConfig, { homeDir });
 
   const legacyKeys = LEGACY_VK_AGENTS_GUI_KEYS.filter((path) => hasOwnPath(orchestratorConfig, path));
   if (legacyKeys.length === 0) {

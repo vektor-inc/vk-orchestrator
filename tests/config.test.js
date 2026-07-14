@@ -593,6 +593,40 @@ test('migrateLegacyVkAgentsGuiKeys: canonical に既存値がある場合は上�
   }
 });
 
+test('migrateLegacyVkAgentsGuiKeys: orchestrator config の vkAgents.configPath を canonical 移行先に使う', () => {
+  withSavedEnv(['VK_AGENTS_CONFIG', 'VK_AGENTS_CONFIG_PATH'], () => {
+    delete process.env.VK_AGENTS_CONFIG;
+    delete process.env.VK_AGENTS_CONFIG_PATH;
+    const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-migrate-'));
+    try {
+      const sourcePath = join(dir, 'orchestrator.json');
+      const configuredTargetPath = join(dir, 'custom-vk-agents', 'config.json');
+      const defaultTargetPath = join(dir, '.vk-agents', 'config.json');
+      writeFileSync(sourcePath, JSON.stringify({
+        vkAgents: { configPath: configuredTargetPath },
+        features: { coderabbit: false },
+      }));
+
+      const result = migrateLegacyVkAgentsGuiKeys({
+        orchestratorConfigPath: sourcePath,
+        homeDir: dir,
+        log: () => {},
+      });
+
+      assert.deepEqual(result, { migrated: true, sourcePath, targetPath: configuredTargetPath });
+      assert.deepEqual(JSON.parse(readFileSync(sourcePath, 'utf8')), {
+        vkAgents: { configPath: configuredTargetPath },
+      });
+      assert.deepEqual(JSON.parse(readFileSync(configuredTargetPath, 'utf8')), {
+        features: { coderabbit: false },
+      });
+      assert.equal(existsSync(defaultTargetPath), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 test('migrateLegacyVkAgentsGuiKeys: 2 回目は冪等に書き込まない', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-migrate-'));
   try {
