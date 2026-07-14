@@ -131,7 +131,8 @@ function getTargetRepoKey(issue) {
 // -------------------------------------------------------
 // done 遷移ゲート（薄いラッパー）
 // -------------------------------------------------------
-// 実体は `done-gate.js`。`extractGitHubIssueUrl` と `github.getIssueState` を
+// 実体は `done-gate.js`。`extractGitHubIssueUrl`、`github.getIssueState`、
+// `github.listSubIssueStates` を
 // 依存注入することでユニットテスト可能にしている。
 //
 // 背景: 作業対象リポジトリの issue (= タスク登録リポジトリ issue 本文に含まれる他リポジトリの issue URL) が
@@ -147,6 +148,7 @@ function canTransitionToDone(issue, logTag = '[done-gate]') {
     {
       extractGitHubIssueUrl,
       getIssueState: github.getIssueState.bind(github),
+      getSubIssueStates: github.listSubIssueStates.bind(github),
     },
     { logTag }
   );
@@ -161,6 +163,7 @@ function closeSourceIssueBeforeGate(issue, logTag = '[source-close]') {
     {
       extractGitHubIssueUrl,
       closeSourceIssue: github.closeSourceIssue.bind(github),
+      getSubIssueStates: github.listSubIssueStates.bind(github),
     },
     { logTag }
   );
