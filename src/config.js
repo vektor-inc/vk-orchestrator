@@ -295,6 +295,70 @@ export function migrateVkTerminalsLaunchOptions(options = {}) {
   return { migrated: true, sourcePath, targetPath };
 }
 
+const LEGACY_VK_AGENTS_GUI_KEYS = [
+  'features.coderabbit',
+  'features.coderabbit_ignore',
+  'staff_wp_dev.engine',
+  'multi_repo_task.default_engine',
+  'org.review_assets_repo',
+  'org.orchestrator_repo',
+];
+
+/**
+ * 旧 orchestrator config に残った vk-agents GUI 設定を、vk-agents 正本 config へ初回移行する。
+ *
+ * #100 以降、設定パネルの Agents グループは ~/.vk-agents/config.json を直接編集する。
+ * ただし旧 orchestrator config に同じ leaf が残っていると、up/apply の投影時に古い値で
+ * 正本を上書きしてしまう。起動前に旧 leaf を削除し、正本が未設定の値だけを保全移送する。
+ * @param {{ orchestratorConfigPath?: string, canonicalConfigPath?: string, homeDir?: string, log?: (message:string)=>void }} [options]
+ * @returns {{ migrated: boolean, sourcePath: string, targetPath: string }}
+ */
+export function migrateLegacyVkAgentsGuiKeys(options = {}) {
+  const homeDir = options.homeDir ?? homedir();
+  const log = options.log ?? console.log;
+  const sourcePath = options.orchestratorConfigPath ?? resolveConfigPath();
+
+  let orchestratorConfig;
+  try {
+    orchestratorConfig = readJsonObject(sourcePath);
+  } catch (err) {
+    const targetPath = options.canonicalConfigPath ?? resolveVkAgentsCanonicalConfigPath({}, { homeDir });
+    console.warn(`[Config] ${sourcePath} の読み込みに失敗したため vk-agents GUI 設定の移行をスキップしました: ${err.message}`);
+    return { migrated: false, sourcePath, targetPath };
+  }
+  const targetPath = options.canonicalConfigPath ?? resolveVkAgentsCanonicalConfigPath(orchestratorConfig, { homeDir });
+
+  const legacyKeys = LEGACY_VK_AGENTS_GUI_KEYS.filter((path) => hasOwnPath(orchestratorConfig, path));
+  if (legacyKeys.length === 0) {
+    return { migrated: false, sourcePath, targetPath };
+  }
+
+  let canonicalConfig;
+  try {
+    canonicalConfig = readJsonObject(targetPath);
+  } catch (err) {
+    console.warn(`[Config] ${targetPath} の読み込みに失敗したため vk-agents GUI 設定の移行をスキップしました: ${err.message}`);
+    return { migrated: false, sourcePath, targetPath };
+  }
+
+  let canonicalChanged = false;
+  for (const path of legacyKeys) {
+    if (!hasOwnPath(canonicalConfig, path)) {
+      setByPath(canonicalConfig, path, getByPath(orchestratorConfig, path));
+      canonicalChanged = true;
+    }
+    deleteByPath(orchestratorConfig, path);
+    pruneEmptyParents(orchestratorConfig, path);
+  }
+
+  if (canonicalChanged) {
+    writeJsonAtomic(targetPath, canonicalConfig);
+  }
+  writeJsonAtomic(sourcePath, orchestratorConfig);
+  log(`[Config] 旧 vk-agents GUI 設定を ${sourcePath} から削除し、未設定項目だけ ${targetPath} へ移行しました。`);
+  return { migrated: true, sourcePath, targetPath };
+}
+
 // -------------------------------------------------------
 // GUI(Electron) の GPU 起動モード。
 //
@@ -418,6 +482,22 @@ function deleteByPath(obj, path) {
     cur = cur[key];
   }
   if (cur != null && typeof cur === 'object') delete cur[keys.at(-1)];
+}
+
+function pruneEmptyParents(obj, path) {
+  const keys = path.split('.').slice(0, -1);
+  for (let i = keys.length; i >= 1; i--) {
+    const parentPath = keys.slice(0, i).join('.');
+    const parent = getByPath(obj, parentPath);
+    if (
+      parent &&
+      typeof parent === 'object' &&
+      !Array.isArray(parent) &&
+      Object.keys(parent).length === 0
+    ) {
+      deleteByPath(obj, parentPath);
+    }
+  }
 }
 
 function readJsonObject(path) {

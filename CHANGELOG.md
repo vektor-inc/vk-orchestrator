@@ -9,6 +9,7 @@
 - [ 仕様変更 ] 旧 orchestrator config の `vkTerminals.port` を VK Terminals 本体 config へ初回移行する処理を追加
 - [ 不具合修正 ] 複数の VK Terminals 起動時に `up` が既存ウィンドウへ orchestrator ペインを作成する不具合を修正
 - [ 不具合修正 ] 実働中や別状態への遷移後にペインの「入力待ち」バッジが消えず点きっぱなしになる不具合を修正
+- [ 不具合修正 ] GUI で設定した CodeRabbit 監視などの vk-agents 設定が Orchestrator 起動のたびにリセットされる不具合を修正
 - [ 開発環境 ] vk-terminals の最新リリースに依存ピン（optionalDependencies）を自動追従する GitHub Actions（repository_dispatch／毎日 schedule／手動）を追加
 
 = 0.15.0 =
