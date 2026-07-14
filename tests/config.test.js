@@ -1375,6 +1375,7 @@ test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () 
   const desc = buildSettingsDescriptor('/tmp/config.json');
   const group = desc.groups.find((g) => g.label === 'vk-agents（エージェント共通設定）');
   assert.ok(group);
+  assert.match(group.note, /vk-agents の config に保存/);
 
   const coderabbitField = group.fields.find((f) => f.key === 'features.coderabbit');
   assert.ok(coderabbitField);

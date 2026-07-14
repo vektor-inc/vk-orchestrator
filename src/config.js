@@ -20,6 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
 export const DEFAULT_VENDORED_VK_AGENTS_DIR = join(REPO_ROOT, 'vendor', 'vk-agents-public');
+const DEFAULT_VK_TERMINALS_PORT = 13847;
 
 export const GITHUB_TOKEN_RESOLUTION_HELP = 'GitHub トークンを解決できません。gh CLI 未導入の場合は `brew install gh`（Ubuntu: `sudo apt install gh`）でインストールし、`gh auth login` で認証してください。';
 
@@ -577,10 +578,10 @@ export function resolveVkTerminalsApiPort(options = {}) {
     // ~/.vk-terminals/config.json は VK Terminals(GUI) が書き込む外部ファイル。
     // 不正 JSON や書き込み途中の読み取り競合で例外になっても、呼び出し元（up 等）を
     // 落とさず既定ポートへフォールバックする。
-    console.warn(`[Config] ${configPath} の読み込みに失敗したため既定ポート 13847 を使用します: ${err.message}`);
-    return 13847;
+    console.warn(`[Config] ${configPath} の読み込みに失敗したため既定ポート ${DEFAULT_VK_TERMINALS_PORT} を使用します: ${err.message}`);
+    return DEFAULT_VK_TERMINALS_PORT;
   }
-  return normalizeApiPort(config.port) ?? 13847;
+  return normalizeApiPort(config.port) ?? DEFAULT_VK_TERMINALS_PORT;
 }
 
 /**
@@ -836,7 +837,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         targetPath: '~/.vk-terminals/config.json',
         fields: [
           { key: 'apiHost',        label: 'API ホスト', type: 'text', help: 'VK Terminals の API サーバーが待ち受けるホスト（既定: 127.0.0.1）' },
-          { key: 'port',           label: 'API ポート', type: 'number', help: 'VK Terminals 本体の API サーバーが待ち受けるポート番号（既定: 13847）' },
+          { key: 'port',           label: 'API ポート', type: 'number', help: `VK Terminals 本体の API サーバーが待ち受けるポート番号（既定: ${DEFAULT_VK_TERMINALS_PORT}）` },
           { key: 'initialCommand', label: '初期コマンド', type: 'text', help: '各ペイン起動時に自動実行するコマンド' },
           { key: 'additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
           { key: 'newPaneAutoLaunchClaude', label: 'Claude Code を自動的に起動する', type: 'boolean', default: false, help: 'チェックが入っている場合、新規ペインを開いた時に自動的に Claude Code が起動します。オフの場合は素のターミナルで起動します。' },
@@ -867,6 +868,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
       {
         label: 'vk-agents（エージェント共通設定）',
         tab: 'agents',
+        note: 'エージェント共通設定は vk-agents の config に保存され、各スキル／エージェントが読み込みます。',
         targetPath: resolveVkAgentsCanonicalConfigPath(),
         fields: [
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },
