@@ -16,15 +16,20 @@ export function createWaitingMarkerScanner({
     }
 
     const waitingTermIds = [];
+    let hadResolveFailure = false;
     for (const issue of waitingIssues) {
       let saved = null;
       try {
         saved = await getTask(issue.number);
       } catch (err) {
         logger.warn?.(`  [scan-waiting-markers] issue #${issue.number}: state 取得失敗: ${err.message}`);
+        hadResolveFailure = true;
         continue;
       }
-      if (saved?.termId == null) continue;
+      if (saved?.termId == null) {
+        hadResolveFailure = true;
+        continue;
+      }
       waitingTermIds.push(saved.termId);
 
       try {
@@ -33,6 +38,7 @@ export function createWaitingMarkerScanner({
         logger.warn?.(`  [scan-waiting-markers] issue #${issue.number}: 入力待ちマーカー点灯失敗: ${err.message}`);
       }
     }
+    if (hadResolveFailure) return;
 
     let states;
     try {
@@ -56,6 +62,7 @@ export function createWaitingMarkerScanner({
 
 export function decideWaitingMarkers({ waitingTermIds = [], liveTermIds = [] } = {}) {
   const waitingSet = new Set(waitingTermIds.filter((termId) => termId != null).map((termId) => String(termId)));
+  // スキャナ本体は点灯をインラインで送信し、ここでは off 判定だけを消費する。
   const on = uniqueTermIds(waitingTermIds);
   const off = uniqueTermIds(liveTermIds).filter((termId) => !waitingSet.has(String(termId)));
   return { on, off };
