@@ -320,11 +320,20 @@ async function main() {
       // API が listen してからでないとペイン作成もできないため、waitForHealth で疎通を待つ。
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
+      const { randomUUID } = await import('crypto');
       const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath,
         resolveVkTerminalsApiHost, resolveVkTerminalsApiPort, getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
-      const { waitForHealth, createNewPane, sendToTerminal, setPaneLock } =
-        await import('../src/terminals/index.js');
+      const {
+        checkHealth,
+        waitForHealth,
+        fetchHealth,
+        findFreePort,
+        evaluateHealthInstance,
+        createNewPane,
+        sendToTerminal,
+        setPaneLock,
+      } = await import('../src/terminals/index.js');
 
       // GUI 起動前に、orchestrator 自身と固定タグ・実際に入っている版のズレを解消しておく。
       await reconcileOrchestratorVersion();
@@ -357,9 +366,34 @@ async function main() {
       const gpuMode = getVkTerminalsGpuMode(unifiedConfig);
       const { args: gpuArgs, env: gpuEnv } = gpuLaunchOptions(gpuMode);
       const guiArgs = gpuArgs.length ? ['start', '--', ...gpuArgs] : ['start'];
-      const apiPort = resolveVkTerminalsApiPort();
+      const preferredPort = resolveVkTerminalsApiPort();
+      const host = resolveVkTerminalsApiHost();
+      if (!process.env.VK_TERMINALS_HOST) process.env.VK_TERMINALS_HOST = host;
 
-      console.log(`VK Terminals(GUI) を起動します（${vkDir}, gpu=${gpuMode}）...`);
+      let apiPort = preferredPort;
+      const instanceId = randomUUID();
+      const preferredPortInUse = await checkHealth(preferredPort, { timeoutMs: 1_500 });
+      if (preferredPortInUse) {
+        try {
+          apiPort = await findFreePort(host);
+          console.warn(
+            `[up] VK Terminals API (${host}:${preferredPort}) は既に応答しています。\n` +
+            `  既存ウィンドウへの誤接続を避けるため、新しい VK Terminals は空きポート ${apiPort} で起動します。\n` +
+            '  このポートは今回の起動用に自動確保したランダムポートです。tailscale serve やモバイルページからは通常どおり接続できません。\n' +
+            '  それらを使う場合は、既存の VK Terminals を終了してから `npm start` を実行してください。'
+          );
+        } catch (err) {
+          console.warn(
+            `[up] VK Terminals API (${host}:${preferredPort}) は既に応答していますが、代替ポートを確保できませんでした。\n` +
+            `  orchestrator ペインは作成しません（要求ポート: ${preferredPort}、host: ${host}）。\n` +
+            `  既存の VK Terminals を終了してから \`npm start\` を実行するか、apiHost 設定を確認してください。\n` +
+            `  詳細: ${err.message}`
+          );
+          break;
+        }
+      }
+
+      console.log(`VK Terminals(GUI) を起動します（${vkDir}, gpu=${gpuMode}, api=${host}:${apiPort}）...`);
       const gui = spawn('npm', guiArgs, {
         cwd: vkDir,
         stdio: 'inherit',
@@ -371,7 +405,9 @@ async function main() {
           ...gpuEnv,
           // orchestrator 側の互換 env は VK_TERMINALS_PORT、本体側の env は
           // VK_TERMINALS_API_PORT。up で同時起動する場合だけ、待受ポートと接続ポートを揃える。
-          ...(process.env.VK_TERMINALS_PORT ? { VK_TERMINALS_API_PORT: String(apiPort) } : {}),
+          VK_TERMINALS_PORT: String(apiPort),
+          VK_TERMINALS_API_PORT: String(apiPort),
+          VK_TERMINALS_INSTANCE_ID: instanceId,
           VK_TERMINALS_SETTINGS: descriptorPath,
           VK_TERMINALS_APP_TITLE: process.env.VK_TERMINALS_APP_TITLE || 'VK Orchestrator',
         },
@@ -380,10 +416,16 @@ async function main() {
 
       if (startOrchestrator) {
         const port = apiPort;
-        const host = resolveVkTerminalsApiHost();
-        if (!process.env.VK_TERMINALS_HOST) process.env.VK_TERMINALS_HOST = host;
         console.log(`VK Terminals API (${host}:${port}) の起動を待っています...`);
-        const healthy = await waitForHealth(port, { timeoutMs: 60_000, intervalMs: 1_000 });
+        let latestHealth = null;
+        const healthy = await waitForHealth(port, {
+          timeoutMs: 60_000,
+          intervalMs: 1_000,
+          check: async (p) => {
+            latestHealth = await fetchHealth(p, { timeoutMs: 3_000 });
+            return latestHealth?.ok === true;
+          },
+        });
 
         if (gui.exitCode !== null) break; // 疎通待ちの間に GUI が閉じられた
 
@@ -394,6 +436,25 @@ async function main() {
             `  VK_TERMINALS_HOST / ~/.vk-terminals/config.json の apiHost（現在: ${host}）を確認するか、` +
             `GUI 内のペインで手動で \`node ${__filename} start\` を実行してください。`
           );
+          break;
+        }
+
+        const instanceCheck = evaluateHealthInstance(latestHealth, instanceId);
+        if (!instanceCheck.ok) {
+          if (instanceCheck.reason === 'instance-mismatch') {
+            console.warn(
+              `[up] VK Terminals API (${host}:${port}) は別インスタンスとして応答しました。\n` +
+              `  今回起動した instanceId は ${instanceId} ですが、応答した instanceId は ${instanceCheck.instanceId} です。\n` +
+              '  既存ウィンドウに orchestrator ペインを作らないため中断します。\n' +
+              '  既存の VK Terminals を終了してから `npm start` を実行してください。'
+            );
+          } else {
+            console.warn(
+              `[up] VK Terminals API (${host}:${port}) に疎通できましたが、health 応答を確認できませんでした。\n` +
+              '  orchestrator ペインは作成しません。\n' +
+              `  GUI 内のペインで手動で \`node ${__filename} start\` を実行してください。`
+            );
+          }
           break;
         }
 
