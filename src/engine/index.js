@@ -7,7 +7,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '..', '..', '.env') });
 
 import { GitHubClient } from '../github/index.js';
-import { GITHUB_TOKEN_RESOLUTION_HELP, ensureGitHubToken, getTaskConfig, getTaskCwd } from '../config.js';
+import {
+  GITHUB_TOKEN_RESOLUTION_HELP,
+  ensureGitHubToken,
+  getTaskConfig,
+  getTaskCwd,
+  resolveVkTerminalsApiPort,
+} from '../config.js';
 import {
   checkHealth,
   createNewPane,
@@ -53,7 +59,7 @@ const SOURCE_ORG         = process.env.SOURCE_ORG          ?? GITHUB_OWNER;
 // 作業対象リポジトリの取り込みラベル名。汎用化のため env 化（既定は従来の 'task-queue'）。
 // 他組織は QUEUE_LABEL を自組織の取り込みラベルに変えれば、そのラベルで運用できる。
 const QUEUE_LABEL        = process.env.QUEUE_LABEL         ?? 'task-queue';
-const VK_PORT            = Number(process.env.VK_TERMINALS_PORT   ?? 13847);
+const VK_PORT            = resolveVkTerminalsApiPort();
 const POLL_INTERVAL      = Number(process.env.POLL_INTERVAL_MS    ?? 60_000);
 // ウォッチドッグ: in-progress なのに PR も無く pane も無反応な時間がこれを超えたら
 // 「自動進行できない異常」とみなして status:failed に倒す（通常遷移には使わない安全網）。

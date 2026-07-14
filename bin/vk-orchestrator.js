@@ -32,8 +32,10 @@ const {
   applyConfigToEnv,
   ensureGitHubToken,
   migrateLegacyOrchestratorConfig,
+  migrateVkTerminalsLaunchOptions,
 } = await import('../src/config.js');
 migrateLegacyOrchestratorConfig();
+migrateVkTerminalsLaunchOptions();
 const unifiedConfig = loadUnifiedConfig();
 applyConfigToEnv(unifiedConfig);
 ensureGitHubToken();
@@ -319,7 +321,7 @@ async function main() {
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
       const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath,
-        resolveVkTerminalsApiHost, getVkTerminalsGpuMode, gpuLaunchOptions } =
+        resolveVkTerminalsApiHost, resolveVkTerminalsApiPort, getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
       const { waitForHealth, createNewPane, sendToTerminal } =
         await import('../src/terminals/index.js');
@@ -355,6 +357,7 @@ async function main() {
       const gpuMode = getVkTerminalsGpuMode(unifiedConfig);
       const { args: gpuArgs, env: gpuEnv } = gpuLaunchOptions(gpuMode);
       const guiArgs = gpuArgs.length ? ['start', '--', ...gpuArgs] : ['start'];
+      const apiPort = resolveVkTerminalsApiPort();
 
       console.log(`VK Terminals(GUI) を起動します（${vkDir}, gpu=${gpuMode}）...`);
       const gui = spawn('npm', guiArgs, {
@@ -366,6 +369,9 @@ async function main() {
         env: {
           ...process.env,
           ...gpuEnv,
+          // orchestrator 側の互換 env は VK_TERMINALS_PORT、本体側の env は
+          // VK_TERMINALS_API_PORT。up で同時起動する場合だけ、待受ポートと接続ポートを揃える。
+          ...(process.env.VK_TERMINALS_PORT ? { VK_TERMINALS_API_PORT: String(apiPort) } : {}),
           VK_TERMINALS_SETTINGS: descriptorPath,
           VK_TERMINALS_APP_TITLE: process.env.VK_TERMINALS_APP_TITLE || 'VK Orchestrator',
         },
@@ -373,7 +379,7 @@ async function main() {
       gui.on('exit', (code) => process.exit(code ?? 0));
 
       if (startOrchestrator) {
-        const port = Number(process.env.VK_TERMINALS_PORT ?? 13847);
+        const port = apiPort;
         const host = resolveVkTerminalsApiHost();
         if (!process.env.VK_TERMINALS_HOST) process.env.VK_TERMINALS_HOST = host;
         console.log(`VK Terminals API (${host}:${port}) の起動を待っています...`);
