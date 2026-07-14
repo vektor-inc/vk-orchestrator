@@ -1,7 +1,8 @@
 # Changelog
 
 = 0.16.0 =
-- [ 仕様変更 ] vk-terminals を 1.18.1 から 1.19.0 にアップデート（設定パネルのタブ UI 対応・API 待受ポートを本体 config から設定可能に）
+- [ 機能追加 ] up 起動時に作成する orchestrator 用ペインを閉じる保護（ロック）で保護し、誤ってペインを閉じて本体プロセスが停止する事故を防止
+- [ 仕様変更 ] vk-terminals を 1.18.1 から 1.21.0 にアップデート（設定パネルのタブ UI 対応・API 待受ポートを本体 config から設定可能に・ペインの閉じる保護 API 対応）
 - [ 仕様変更 ] 設定パネルを Orchestrator / Terminals / Agents の 3 タブ構成に変更
 - [ 仕様変更 ] VK Terminals の API ポート設定を本体 config（`~/.vk-terminals/config.json`）へ一本化
 - [ 仕様変更 ] 旧 orchestrator config の `vkTerminals.port` を VK Terminals 本体 config へ初回移行する処理を追加
