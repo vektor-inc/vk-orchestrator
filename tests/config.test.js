@@ -789,6 +789,30 @@ test('writeVkAgentsSettings: GUI の vk-agents 共通設定だけを read-merge-
   }
 });
 
+test('writeVkAgentsSettings: ホワイトリスト対象外の workspace.search_paths を canonical から globalSettingsPath へパススルー同期する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-passthrough-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    const globalSettingsPath = join(dir, 'home', '.claude', 'vk-agents-settings.json');
+    writeFileSync(configPath, JSON.stringify({
+      org: { allowed_owners: ['vektor-inc'] },
+      workspace: { search_paths: ['/Users/foo/git', '/Users/foo/projects'] },
+    }));
+
+    const result = writeVkAgentsSettings(
+      { features: { coderabbit: false } },
+      { configPath, globalSettingsPath },
+    );
+
+    assert.deepEqual(result, { configPath, globalSettingsPath });
+    const written = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.deepEqual(written.workspace.search_paths, ['/Users/foo/git', '/Users/foo/projects']);
+    assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), written);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('writeVkAgentsSettings: up/apply 投影時に canonical の CodeRabbit 設定を stale な orchestrator config で上書きしない', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-reset-'));
   try {
@@ -1649,6 +1673,34 @@ test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () 
   assert.equal(multiRepoEngineField.options.find((o) => o.value === 'codex').label, 'codex');
   assert.match(multiRepoEngineField.help, /vk-multi-repo-task/);
   assert.match(multiRepoEngineField.help, /claude/);
+});
+
+test('buildSettingsDescriptor: Agents グループは workspace.search_paths（lines）を先頭に、CodeRabbit 2項目を末尾に持つ', () => {
+  const desc = buildSettingsDescriptor('/tmp/config.json');
+  const group = desc.groups.find((g) => g.label === 'vk-agents（エージェント共通設定）');
+  assert.ok(group);
+
+  // 先頭が workspace.search_paths（lines 型）
+  const first = group.fields[0];
+  assert.equal(first.key, 'workspace.search_paths');
+  assert.equal(first.type, 'lines');
+  assert.match(first.help, /優先/);
+  assert.match(first.help, /絶対パス/);
+
+  // CodeRabbit 2項目が末尾（順序も固定）
+  const keys = group.fields.map((f) => f.key);
+  assert.deepEqual(keys.slice(-2), ['features.coderabbit', 'features.coderabbit_ignore']);
+
+  // 全体の並び順
+  assert.deepEqual(keys, [
+    'workspace.search_paths',
+    'org.review_assets_repo',
+    'org.orchestrator_repo',
+    'staff_wp_dev.engine',
+    'multi_repo_task.default_engine',
+    'features.coderabbit',
+    'features.coderabbit_ignore',
+  ]);
 });
 
 test('buildSettingsDescriptor: VK Terminals 本体設定 group は ~/.vk-terminals/config.json を直接指す', () => {
