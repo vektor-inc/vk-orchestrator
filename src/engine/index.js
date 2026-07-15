@@ -7,7 +7,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '..', '..', '.env') });
 
 import { GitHubClient } from '../github/index.js';
-import { GITHUB_TOKEN_RESOLUTION_HELP, ensureGitHubToken, getTaskConfig, getTaskCwd } from '../config.js';
+import {
+  GITHUB_TOKEN_RESOLUTION_HELP,
+  ensureGitHubToken,
+  getTaskConfig,
+  getTaskCwd,
+  resolveVkTerminalsApiPort,
+} from '../config.js';
 import {
   checkHealth,
   createNewPane,
@@ -30,6 +36,7 @@ import { createScanInProgressMergedHandler } from './scan-in-progress-merged.js'
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
 import { startKeepAwake } from '../power/keep-awake.js';
 import { createNotifyPaneMerged } from './notify-pane-merged.js';
+import { createWaitingMarkerScanner } from './waiting-marker-scanner.js';
 import { installPersistentConsoleLogger } from './persistent-logger.js';
 import { createStartLock } from './start-lock.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
@@ -53,7 +60,7 @@ const SOURCE_ORG         = process.env.SOURCE_ORG          ?? GITHUB_OWNER;
 // 作業対象リポジトリの取り込みラベル名。汎用化のため env 化（既定は従来の 'task-queue'）。
 // 他組織は QUEUE_LABEL を自組織の取り込みラベルに変えれば、そのラベルで運用できる。
 const QUEUE_LABEL        = process.env.QUEUE_LABEL         ?? 'task-queue';
-const VK_PORT            = Number(process.env.VK_TERMINALS_PORT   ?? 13847);
+const VK_PORT            = resolveVkTerminalsApiPort();
 const POLL_INTERVAL      = Number(process.env.POLL_INTERVAL_MS    ?? 60_000);
 // ウォッチドッグ: in-progress なのに PR も無く pane も無反応な時間がこれを超えたら
 // 「自動進行できない異常」とみなして status:failed に倒す（通常遷移には使わない安全網）。
@@ -124,7 +131,8 @@ function getTargetRepoKey(issue) {
 // -------------------------------------------------------
 // done 遷移ゲート（薄いラッパー）
 // -------------------------------------------------------
-// 実体は `done-gate.js`。`extractGitHubIssueUrl` と `github.getIssueState` を
+// 実体は `done-gate.js`。`extractGitHubIssueUrl`、`github.getIssueState`、
+// `github.listSubIssueStates` を
 // 依存注入することでユニットテスト可能にしている。
 //
 // 背景: 作業対象リポジトリの issue (= タスク登録リポジトリ issue 本文に含まれる他リポジトリの issue URL) が
@@ -140,6 +148,7 @@ function canTransitionToDone(issue, logTag = '[done-gate]') {
     {
       extractGitHubIssueUrl,
       getIssueState: github.getIssueState.bind(github),
+      getSubIssueStates: github.listSubIssueStates.bind(github),
     },
     { logTag }
   );
@@ -154,6 +163,7 @@ function closeSourceIssueBeforeGate(issue, logTag = '[source-close]') {
     {
       extractGitHubIssueUrl,
       closeSourceIssue: github.closeSourceIssue.bind(github),
+      getSubIssueStates: github.listSubIssueStates.bind(github),
     },
     { logTag }
   );
@@ -225,6 +235,15 @@ const handleScanInProgressMerged = createScanInProgressMergedHandler({
   setStatus: (...args) => github.setStatus(...args),
   notifyPaneMerged,
   removeTask,
+  logger: console,
+});
+
+const scanWaitingMarkers = createWaitingMarkerScanner({
+  fetchWaitingInputIssues: () => github.fetchWaitingInputIssues(),
+  getStates,
+  getTask,
+  setExternalWaiting,
+  port: VK_PORT,
   logger: console,
 });
 
@@ -702,66 +721,6 @@ async function scanWaitingInputIssues() {
       console.log(`  [scan-waiting-input] issue #${issue.number}: 返信(id:${reply.id})を転送 → in-progress`);
     } catch (err) {
       console.warn(`  [scan-waiting-input] issue #${issue.number}: in-progress 復帰失敗（次ループ再試行）: ${err.message}`);
-    }
-  }
-}
-
-// -------------------------------------------------------
-// 入力待ちマーカー push スキャン: issue 連動ペインの入力待ち表示を
-// status ラベルの権威情報から VK Terminals へ冪等に push する。
-//
-// waiting-input は毎ループ点灯を投げ直すことで、ペイン側で一時的に誤解除されても
-// 再点灯できる。in-progress は明示的に消灯する。VK Terminals への副作用なので
-// loop() の checkHealth() ゲート通過後に呼ぶ。
-// -------------------------------------------------------
-async function scanWaitingMarkers() {
-  let waitingIssues;
-  try {
-    waitingIssues = await github.fetchWaitingInputIssues();
-  } catch (err) {
-    console.warn(`[scan-waiting-markers] waiting-input issue 取得失敗: ${err.message}`);
-    return;
-  }
-
-  for (const issue of waitingIssues) {
-    let saved = null;
-    try {
-      saved = await getTask(issue.number);
-    } catch (err) {
-      console.warn(`  [scan-waiting-markers] issue #${issue.number}: state 取得失敗: ${err.message}`);
-      continue;
-    }
-    if (saved?.termId == null) continue;
-
-    try {
-      await setExternalWaiting(VK_PORT, saved.termId, true);
-    } catch (err) {
-      console.warn(`  [scan-waiting-markers] issue #${issue.number}: 入力待ちマーカー点灯失敗: ${err.message}`);
-    }
-  }
-
-  let inProgressIssues;
-  try {
-    inProgressIssues = await github.fetchInProgressIssues();
-  } catch (err) {
-    console.warn(`[scan-waiting-markers] in-progress issue 取得失敗: ${err.message}`);
-    return;
-  }
-
-  for (const issue of inProgressIssues) {
-    let saved = null;
-    try {
-      saved = await getTask(issue.number);
-    } catch (err) {
-      console.warn(`  [scan-waiting-markers] issue #${issue.number}: state 取得失敗: ${err.message}`);
-      continue;
-    }
-    if (saved?.termId == null) continue;
-
-    try {
-      await setExternalWaiting(VK_PORT, saved.termId, false);
-    } catch (err) {
-      console.warn(`  [scan-waiting-markers] issue #${issue.number}: 入力待ちマーカー消灯失敗: ${err.message}`);
     }
   }
 }
@@ -1507,8 +1466,8 @@ async function loop() {
   // 8. 指示待ちスキャン: ユーザー返信を pane に転送して in-progress に戻す
   await scanWaitingInputIssues();
 
-  // 9. issue 連動ペインの入力待ちマーカーを push（waiting-input→点灯 / in-progress→消灯）。
-  //    VK Terminals が要るので checkHealth 後ろ
+  // 9. issue 連動ペインの入力待ちマーカーを push（waiting-input ラベルへの完全鏡写し）。
+  //    VK Terminals states の生存ペインへ反映するため checkHealth 後ろ
   await scanWaitingMarkers();
 
   // 10. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す

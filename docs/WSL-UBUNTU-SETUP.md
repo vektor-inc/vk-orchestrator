@@ -23,7 +23,8 @@ Windows の WSL2（WSLg）上の Ubuntu で VK Orchestrator + VK Terminals(GUI) 
 - GUI が出るかの簡易確認（Ubuntu 側で `echo $WAYLAND_DISPLAY` が `wayland-0` 等を返せば WSLg 有効）。
 
 > WSLg が無い環境では GUI は起動できません。その場合は別マシンの VK Terminals API を使い、
-> `up` ではなく `start` を使って `vkTerminals.host` を対象マシンに向けてください（README 参照）。
+> `up` ではなく `start` を使って `~/.vk-terminals/config.json` の `apiHost` または
+> `VK_TERMINALS_HOST` を対象マシンに向けてください（README 参照）。
 
 ---
 
@@ -206,7 +207,7 @@ GUI だけ起動したいときは `npm run up -- --no-orchestrator`。
 | 起動時に `Exiting GPU process` / `kTransientFailure` 等の GPU 警告 | WSLg では Electron の GPU 初期化が失敗するため（Vulkan の HW ドライバ無し等）。`vkTerminals.gpu` を空（自動）または `off` に（既定で抑制済み）。無害 |
 | GUI が即クラッシュ（`Cannot read properties of undefined (reading 'whenReady')`） | 環境変数 `ELECTRON_RUN_AS_NODE=1` が設定されていると Electron が Node として動き落ちる。`unset ELECTRON_RUN_AS_NODE` してから起動 |
 | orchestrator が起動するがタスクを拾わない／起動しない | `config.json` の `task` / `protocol` / `labels` に空値（`""` / `[]` / `null`）が入っていないか確認。空値は既定にフォールバックされるが、GUI 設定パネルで意図せず保存した場合は該当セクションを削除すると確実 |
-| API (`127.0.0.1:13847`) に疎通できない | GUI が起動しているか、`vkTerminals.host` / `port` の設定を確認 |
+| API (`127.0.0.1:13847`) に疎通できない | GUI が起動しているか、`~/.vk-terminals/config.json` の `apiHost` / `port` 設定を確認 |
 
 ---
 

@@ -22,8 +22,13 @@ export function createTmuxBackend({ session, claudeCommand, run = defaultRun }) 
   // 生成したペインのみ追跡する（orchestrator ペインやユーザーが開いたものは対象外）。
   const panes = new Map(); // paneId -> { waiting: boolean }
 
+  async function fetchHealth() {
+    // tmux には instanceId の概念が無いので ok のみ返す。
+    return { ok: run(['has-session', '-t', session]).status === 0 };
+  }
+
   async function checkHealth() {
-    return run(['has-session', '-t', session]).status === 0;
+    return (await fetchHealth()).ok === true;
   }
 
   async function createNewPane(_port, cwd = null, options = {}) {
@@ -93,12 +98,13 @@ export function createTmuxBackend({ session, claudeCommand, run = defaultRun }) 
     return { ok: true };
   }
 
-  // 飾り系。tmux では表示対象が無いので no-op。
+  // 飾り系。tmux では表示対象・保護対象が無いので no-op。
   async function setTerminalPrUrl() { return { ok: true }; }
+  async function setPaneLock() { return { ok: true }; }
   async function postMenu() { return { ok: true }; }
 
   return {
-    checkHealth, getStates, createNewPane, sendToTerminal,
-    setTerminalTitle, setTerminalPrUrl, setExternalWaiting, postMenu,
+    checkHealth, fetchHealth, getStates, createNewPane, sendToTerminal,
+    setTerminalTitle, setTerminalPrUrl, setExternalWaiting, setPaneLock, postMenu,
   };
 }

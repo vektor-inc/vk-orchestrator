@@ -22,6 +22,7 @@ const REVIEW_SHA_RE = new RegExp(
 // 取り込み時 createTaskQueueIssueFromSource が body 先頭に source URL を入れているため、
 // 最初にマッチしたものが source とみなせる（後から追記される PR URL は /pull/ なのでマッチしない）。
 const SOURCE_ISSUE_URL_RE = /https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/issues\/(\d+)/;
+const REPOSITORY_URL_RE = /repos\/([^/]+)\/([^/]+)$/;
 
 // 本文中の GitHub issue URL を全て列挙するパターン。owner/repo/number は抽出せず、
 // URL 文字列単位で厳密一致比較するために使う（`.../issues/12` が `.../issues/127` に
@@ -256,12 +257,35 @@ export class GitHubClient {
   // 作業対象リポジトリの Issue の repository_url（"https://api.github.com/repos/{owner}/{repo}" 形式）から
   // owner / repo を取り出す。取り込み系メソッド共通のヘルパー。
   parseSourceRepo(sourceIssue) {
-    const m = sourceIssue.repository_url.match(/repos\/([^/]+)\/([^/]+)$/);
+    const m = sourceIssue.repository_url.match(REPOSITORY_URL_RE);
     if (!m) {
       throw new Error(`作業対象リポジトリの Issue の repository_url を解釈できません: ${sourceIssue.repository_url}`);
     }
     const [, owner, repo] = m;
     return { owner, repo };
+  }
+
+  // GitHub ネイティブ sub-issue の直下 issue 状態を全ページ取得する。
+  // repository_url から owner/repo を読むことで、親と別リポジトリの sub-issue も判定できる。
+  async listSubIssueStates(owner, repo, issueNumber) {
+    const subIssues = await this.octokit.paginate(
+      this.octokit.issues.listSubIssues,
+      { owner, repo, issue_number: issueNumber, per_page: 100 }
+    );
+
+    return subIssues.map(subIssue => {
+      const m = subIssue.repository_url.match(REPOSITORY_URL_RE);
+      if (!m) {
+        throw new Error(`sub-issue の repository_url を解釈できません: ${subIssue.repository_url}`);
+      }
+      const [, subOwner, subRepo] = m;
+      return {
+        owner: subOwner,
+        repo: subRepo,
+        number: subIssue.number,
+        state: subIssue.state,
+      };
+    });
   }
 
   // 作業対象リポジトリ側 issue に「オーケストレーターが取り込みました」通知コメントを投稿する。

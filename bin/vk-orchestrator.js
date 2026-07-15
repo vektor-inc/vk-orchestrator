@@ -32,8 +32,12 @@ const {
   applyConfigToEnv,
   ensureGitHubToken,
   migrateLegacyOrchestratorConfig,
+  migrateVkTerminalsLaunchOptions,
+  migrateLegacyVkAgentsGuiKeys,
 } = await import('../src/config.js');
 migrateLegacyOrchestratorConfig();
+migrateVkTerminalsLaunchOptions();
+migrateLegacyVkAgentsGuiKeys();
 const unifiedConfig = loadUnifiedConfig();
 applyConfigToEnv(unifiedConfig);
 ensureGitHubToken();
@@ -346,11 +350,20 @@ async function main() {
       // API が listen してからでないとペイン作成もできないため、waitForHealth で疎通を待つ。
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
+      const { randomUUID } = await import('crypto');
       const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath,
-        resolveVkTerminalsApiHost, getVkTerminalsGpuMode, gpuLaunchOptions } =
+        resolveVkTerminalsApiHost, resolveVkTerminalsApiPort, getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
-      const { waitForHealth, createNewPane, sendToTerminal } =
-        await import('../src/terminals/index.js');
+      const {
+        checkHealth,
+        waitForHealth,
+        fetchHealth,
+        findFreePort,
+        evaluateHealthInstance,
+        createNewPane,
+        sendToTerminal,
+        setPaneLock,
+      } = await import('../src/terminals/index.js');
 
       // GUI 起動前に、orchestrator 自身と固定タグ・実際に入っている版のズレを解消しておく。
       await reconcileOrchestratorVersion();
@@ -383,8 +396,34 @@ async function main() {
       const gpuMode = getVkTerminalsGpuMode(unifiedConfig);
       const { args: gpuArgs, env: gpuEnv } = gpuLaunchOptions(gpuMode);
       const guiArgs = gpuArgs.length ? ['start', '--', ...gpuArgs] : ['start'];
+      const preferredPort = resolveVkTerminalsApiPort();
+      const host = resolveVkTerminalsApiHost();
+      if (!process.env.VK_TERMINALS_HOST) process.env.VK_TERMINALS_HOST = host;
 
-      console.log(`VK Terminals(GUI) を起動します（${vkDir}, gpu=${gpuMode}）...`);
+      let apiPort = preferredPort;
+      const instanceId = randomUUID();
+      const preferredPortInUse = await checkHealth(preferredPort, { timeoutMs: 1_500 });
+      if (preferredPortInUse) {
+        try {
+          apiPort = await findFreePort(host);
+          console.warn(
+            `[up] VK Terminals API (${host}:${preferredPort}) は既に応答しています。\n` +
+            `  既存ウィンドウへの誤接続を避けるため、新しい VK Terminals は空きポート ${apiPort} で起動します。\n` +
+            '  このポートは今回の起動用に自動確保したランダムポートです。tailscale serve やモバイルページからは通常どおり接続できません。\n' +
+            '  それらを使う場合は、既存の VK Terminals を終了してから `npm start` を実行してください。'
+          );
+        } catch (err) {
+          console.warn(
+            `[up] VK Terminals API (${host}:${preferredPort}) は既に応答していますが、代替ポートを確保できませんでした。\n` +
+            `  orchestrator ペインは作成しません（要求ポート: ${preferredPort}、host: ${host}）。\n` +
+            `  既存の VK Terminals を終了してから \`npm start\` を実行するか、apiHost 設定を確認してください。\n` +
+            `  詳細: ${err.message}`
+          );
+          break;
+        }
+      }
+
+      console.log(`VK Terminals(GUI) を起動します（${vkDir}, gpu=${gpuMode}, api=${host}:${apiPort}）...`);
       const gui = spawn('npm', guiArgs, {
         cwd: vkDir,
         stdio: 'inherit',
@@ -394,6 +433,11 @@ async function main() {
         env: {
           ...process.env,
           ...gpuEnv,
+          // orchestrator 側の互換 env は VK_TERMINALS_PORT、本体側の env は
+          // VK_TERMINALS_API_PORT。up で同時起動する場合だけ、待受ポートと接続ポートを揃える。
+          VK_TERMINALS_PORT: String(apiPort),
+          VK_TERMINALS_API_PORT: String(apiPort),
+          VK_TERMINALS_INSTANCE_ID: instanceId,
           VK_TERMINALS_SETTINGS: descriptorPath,
           VK_TERMINALS_APP_TITLE: process.env.VK_TERMINALS_APP_TITLE || 'VK Orchestrator',
         },
@@ -401,11 +445,17 @@ async function main() {
       gui.on('exit', (code) => process.exit(code ?? 0));
 
       if (startOrchestrator) {
-        const port = Number(process.env.VK_TERMINALS_PORT ?? 13847);
-        const host = resolveVkTerminalsApiHost();
-        if (!process.env.VK_TERMINALS_HOST) process.env.VK_TERMINALS_HOST = host;
+        const port = apiPort;
         console.log(`VK Terminals API (${host}:${port}) の起動を待っています...`);
-        const healthy = await waitForHealth(port, { timeoutMs: 60_000, intervalMs: 1_000 });
+        let latestHealth = null;
+        const healthy = await waitForHealth(port, {
+          timeoutMs: 60_000,
+          intervalMs: 1_000,
+          check: async (p) => {
+            latestHealth = await fetchHealth(p, { timeoutMs: 3_000 });
+            return latestHealth?.ok === true;
+          },
+        });
 
         if (gui.exitCode !== null) break; // 疎通待ちの間に GUI が閉じられた
 
@@ -419,6 +469,25 @@ async function main() {
           break;
         }
 
+        const instanceCheck = evaluateHealthInstance(latestHealth, instanceId);
+        if (!instanceCheck.ok) {
+          if (instanceCheck.reason === 'instance-mismatch') {
+            console.warn(
+              `[up] VK Terminals API (${host}:${port}) は別インスタンスとして応答しました。\n` +
+              `  今回起動した instanceId は ${instanceId} ですが、応答した instanceId は ${instanceCheck.instanceId} です。\n` +
+              '  既存ウィンドウに orchestrator ペインを作らないため中断します。\n' +
+              '  既存の VK Terminals を終了してから `npm start` を実行してください。'
+            );
+          } else {
+            console.warn(
+              `[up] VK Terminals API (${host}:${port}) に疎通できましたが、health 応答を確認できませんでした。\n` +
+              '  orchestrator ペインは作成しません。\n' +
+              `  GUI 内のペインで手動で \`node ${__filename} start\` を実行してください。`
+            );
+          }
+          break;
+        }
+
         // GUI 内に「claude を起動しない素のシェルペイン」を開き、そこで orchestrator を走らせる。
         // `up` に付いた自前フラグ(--no-orchestrator)以外の引数は start へ引き継ぐ（--assignee 等）。
         const forwarded = process.argv.slice(3).filter((a) => a !== '--no-orchestrator');
@@ -428,6 +497,19 @@ async function main() {
           // VK Terminals が stashed 未対応の版では未知フィールドとして無視される。
           const termId = await createNewPane(port, repoRoot, { noClaude: true, stashed: true });
           console.log(`orchestrator ペインを作成しました (termId: ${termId})`);
+
+          // 作成した orchestrator ペインを「閉じる保護」でロックする。
+          // 誤ってペインを閉じると orchestrator 本体プロセスが道連れで停止する事故
+          // （vk-orchestrator#102）を防ぐため、生成直後に閉じる操作を保護する。
+          // set-lock は vk-terminals 1.21.0 で導入されたため、未対応の旧版では失敗しうる。
+          // ロック失敗で orchestrator 起動を妨げないよう、専用の try/catch で警告して継続する
+          // （graceful degradation。ペインは従来どおり動くが保護は掛からない）。
+          try {
+            await setPaneLock(port, termId, { close: false });
+            console.log('orchestrator ペインを閉じる保護でロックしました');
+          } catch (err) {
+            console.warn(`[up] orchestrator ペインのロックに失敗しました（処理は継続）: ${err.message}`);
+          }
 
           // 素のシェルの起動を少し待ってからコマンドを流し込む（プロンプト出現前の取りこぼし対策）。
           await new Promise((r) => setTimeout(r, 1_200));

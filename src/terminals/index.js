@@ -1,3 +1,5 @@
+import { createServer } from 'net';
+
 import { stripControlChars } from '../engine/build-command.js';
 import * as vkBackend from './backend-vk-terminals.js';
 import { createTmuxBackend } from './backend-tmux.js';
@@ -21,13 +23,85 @@ function backend() {
 }
 
 export const checkHealth        = (...a) => backend().checkHealth(...a);
+export const fetchHealth        = (...a) => backend().fetchHealth(...a);
 export const getStates          = (...a) => backend().getStates(...a);
 export const createNewPane      = (...a) => backend().createNewPane(...a);
 export const sendToTerminal     = (...a) => backend().sendToTerminal(...a);
 export const setTerminalTitle   = (...a) => backend().setTerminalTitle(...a);
 export const setTerminalPrUrl   = (...a) => backend().setTerminalPrUrl(...a);
 export const setExternalWaiting = (...a) => backend().setExternalWaiting(...a);
+export const setPaneLock        = (...a) => backend().setPaneLock(...a);
 export const postMenu           = (...a) => backend().postMenu(...a);
+
+/**
+ * OS に空きポートを割り当てさせ、その番号を返す。
+ *
+ * 戻り値のポートは close 後に再利用されるため、呼び出し元は速やかに対象プロセスへ渡す。
+ * timeoutMs は listen/close のコールバックが返らない異常時に Promise が永久 pending となり
+ * `up` 全体がハングするのを防ぐ打ち切り時間（fetchHealth 等の timeoutMs と同方針）。
+ * バックエンドに依存しない純ヘルパのためここに置く（VK Terminals(GUI) の起動フローで使用）。
+ * @param {string} [host='127.0.0.1'] listen するホスト
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs=3000] ポート確保の打ち切り時間
+ * @returns {Promise<number>} 使用可能な TCP ポート番号
+ */
+export function findFreePort(host = '127.0.0.1', { timeoutMs = 3_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    let settled = false;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(arg);
+    };
+    const timer = setTimeout(() => {
+      server.close(() => {});
+      finish(reject, new Error(`findFreePort timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timer.unref?.();
+    server.once('error', (err) => finish(reject, err));
+    server.listen(0, host, () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : null;
+      server.close((err) => {
+        if (err) {
+          finish(reject, err);
+          return;
+        }
+        if (typeof port === 'number') {
+          finish(resolve, port);
+          return;
+        }
+        finish(reject, new Error('failed to allocate a free port'));
+      });
+    });
+  });
+}
+
+/**
+ * VK Terminals health の instanceId が今回起動した GUI のものか判定する。
+ *
+ * 旧 vk-terminals は instanceId を返さないため、その場合は後方互換として通す。
+ * 既知の残存リスク: プリフライト検知〜起動後ポーリングの間に instanceId 非対応の
+ * 旧版が同ポートを掴んだ場合、legacy 判定で素通りし誤接続し得る（狭い TOCTOU 窓）。
+ * ロールアウトで vk-terminals が id 対応版に揃えば解消する想定。
+ * @param {{ ok: boolean, instanceId?: string } | null} health /api/health の結果
+ * @param {string} expectedInstanceId 今回起動した GUI に渡した instance id
+ * @returns {{ ok: true, mode: 'matched'|'legacy', instanceId?: string } | { ok: false, reason: 'unhealthy'|'instance-mismatch', instanceId?: string }}
+ */
+export function evaluateHealthInstance(health, expectedInstanceId) {
+  if (health?.ok !== true) {
+    return { ok: false, reason: 'unhealthy' };
+  }
+  if (!health.instanceId) {
+    return { ok: true, mode: 'legacy' };
+  }
+  if (health.instanceId !== expectedInstanceId) {
+    return { ok: false, reason: 'instance-mismatch', instanceId: health.instanceId };
+  }
+  return { ok: true, mode: 'matched', instanceId: health.instanceId };
+}
 
 const CLEAR_INPUT_SEQUENCE = '\x01\x0b';
 

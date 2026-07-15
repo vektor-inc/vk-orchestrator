@@ -14,16 +14,28 @@ const BASE_URL = (port) => `http://${apiHost()}:${port}`;
 // VK Terminals が起動しているか確認
 // timeoutMs: 応答しないホスト（Tailscale IP 未接続など）で fetch が無限にハングして
 // 呼び出し側（waitForHealth のポーリング等）が固まるのを防ぐための打ち切り時間。
-export async function checkHealth(port, { timeoutMs = 3_000 } = {}) {
+export async function fetchHealth(port, { timeoutMs = 3_000 } = {}) {
   try {
     const res = await fetch(`${BASE_URL(port)}/api/health`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
     const json = await res.json();
-    return json.ok === true;
+    if (!json || typeof json !== 'object') return null;
+    const health = { ok: json.ok === true };
+    if (typeof json.instanceId === 'string' && json.instanceId !== '') {
+      health.instanceId = json.instanceId;
+    }
+    return health;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// VK Terminals が起動しているか確認
+// 既存呼び出しとの互換性のため boolean 契約を維持する。
+export async function checkHealth(port, { timeoutMs = 3_000 } = {}) {
+  const health = await fetchHealth(port, { timeoutMs });
+  return health?.ok === true;
 }
 
 // 全ターミナルの状態を取得
@@ -170,6 +182,37 @@ export async function setExternalWaiting(port, termId, waiting) {
   }
   if (!res.ok || !json?.ok) {
     throw new Error(json?.error ?? `set-status failed: HTTP ${res.status}`);
+  }
+  return json;
+}
+
+/**
+ * 指定ペインの閉じる保護（close ロック）を設定する。
+ *
+ * `lock: { close: false }` で閉じる操作を保護し、`lock: null` で解除する。
+ * `/api/set-lock` は VK Terminals 1.21.0 で導入されたため、未対応の旧版では
+ * 404 等で throw する。ロックが必須でない呼び出し側は失敗を握りつぶし、
+ * graceful degradation で継続する想定。
+ *
+ * @param {number} port          VK Terminals API ポート
+ * @param {string|number} termId 対象ターミナル ID
+ * @param {object|null} lock     設定するロック。例: `{ close: false }` または `null`
+ * @returns {Promise<object>} VK Terminals のレスポンス JSON
+ */
+export async function setPaneLock(port, termId, lock) {
+  const res = await fetch(`${BASE_URL(port)}/api/set-lock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ termId, lock }),
+  });
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error ?? `set-lock failed: HTTP ${res.status}`);
   }
   return json;
 }
