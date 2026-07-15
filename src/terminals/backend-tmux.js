@@ -3,6 +3,13 @@
 // 「複数ペインを並べて表示」する（VK Terminals の並列表示に相当）。orchestrator の
 // ペインと同じ画面に分割表示されるので、attach した瞬間に分割が見える。termId は pane_id。
 // VK Terminals の getStates 形（{terminals:{id:{termId,waiting,lastOutputTime,lastLines}}}）に合わせる。
+//
+// idle 判定について:
+//   tmux の #{window_activity} は window 単位でしか持てず、同じ window に並ぶ全ペイン
+//   （orchestrator ＋ 各タスク）で共有されるため、常時ログを吐く orchestrator により
+//   全ペインが「活動中」扱いになり、止まったタスクを idle 判定できない。そこで window
+//   活動時刻には頼らず、ペインごとに capture-pane の内容変化を自前で追い、内容が変わった
+//   ときだけ lastOutputTime を更新する（内容が止まればそのペインだけ idle に落ちる）。
 import { spawnSync } from 'node:child_process';
 
 const CAPTURE_LINES = 40; // capture-pane で取る末尾行数（lastLines のエコー確認に十分な長さ）
@@ -17,10 +24,12 @@ function defaultRun(args) {
  * @param {string} opts.session       対象 tmux セッション名
  * @param {string} opts.claudeCommand 新規ペインで起動する Claude コマンド
  * @param {(args:string[])=>{status:number,stdout:string,stderr:string}} [opts.run] tmux ランナー（テスト差し替え用）
+ * @param {()=>number} [opts.now] 現在時刻(ms)を返す関数（テストで時間を制御するため差し替え可能）
  */
-export function createTmuxBackend({ session, claudeCommand, run = defaultRun }) {
+export function createTmuxBackend({ session, claudeCommand, run = defaultRun, now = () => Date.now() }) {
   // 生成したペインのみ追跡する（orchestrator ペインやユーザーが開いたものは対象外）。
-  const panes = new Map(); // paneId -> { waiting: boolean }
+  // paneId -> { waiting, lastLines, lastChangeMs } を保持し、内容変化で lastChangeMs を更新する。
+  const panes = new Map();
 
   async function fetchHealth() {
     // tmux には instanceId の概念が無いので ok のみ返す。
@@ -44,44 +53,56 @@ export function createTmuxBackend({ session, claudeCommand, run = defaultRun }) 
     // 各ペインの上部にタイトル（タスク名）を出せるようにする（冪等）。
     run(['set-window-option', '-t', session, 'pane-border-status', 'top']);
 
-    panes.set(paneId, { waiting: false });
+    panes.set(paneId, { waiting: false, lastLines: '', lastChangeMs: now() });
     return paneId;
   }
 
   async function sendToTerminal(_port, termId, input) {
-    if (input === '\r' || input === '\n') {
-      run(['send-keys', '-t', termId, 'Enter']);
-    } else {
-      run(['send-keys', '-t', termId, '-l', '--', input]);
-    }
+    const args = (input === '\r' || input === '\n')
+      ? ['send-keys', '-t', termId, 'Enter']
+      : ['send-keys', '-t', termId, '-l', '--', input];
+    const r = run(args);
+    // 失敗を握りつぶすと本文が届かないまま進んでしまうため、status を見て例外化し、
+    // 呼び出し側（submitToClaude の再送やポーリング）に再試行させる。
+    if (r.status !== 0) throw new Error(`tmux send-keys failed (status ${r.status}): ${r.stderr || ''}`);
     return { ok: true };
   }
 
   async function getStates() {
-    // セッション内の全ペインの最終活動時刻を集める（活動は window 単位のため、
-    // 同じ tasks window のペインは値を共有する＝どれか動いていれば全体が活きている扱い）。
-    const r = run(['list-panes', '-s', '-t', session, '-F', '#{pane_id} #{window_activity}']);
-    const activity = new Map();
-    for (const line of r.stdout.split('\n')) {
-      const [id, sec] = line.trim().split(/\s+/);
-      if (id) activity.set(id, Number(sec) || 0);
+    // セッション内の現存ペイン一覧を取る。取得失敗（tmux 一時エラー等）は throw して
+    // 呼び出し側のポーリングで再試行させる。ここで空扱いにすると追跡中ペインを
+    // 全部「消えた」と誤検知してしまうため、prune は list-panes 成功時のみ行う。
+    const list = run(['list-panes', '-s', '-t', session, '-F', '#{pane_id}']);
+    if (list.status !== 0) {
+      throw new Error(`tmux list-panes failed (status ${list.status}): ${list.stderr || ''}`);
     }
+    const present = new Set(
+      list.stdout.split('\n').map((l) => l.trim().split(/\s+/)[0]).filter(Boolean)
+    );
+
     const terminals = {};
+    const t = now();
     for (const [paneId, state] of panes) {
-      if (!activity.has(paneId)) {
+      if (!present.has(paneId)) {
         // ペインが消えた → 報告しない（pane-missing 検知に乗る）＋ 内部 Map からも除去
         //（tmux の pane id は再利用されないため安全）。
         panes.delete(paneId);
         continue;
       }
       const cap = run(['capture-pane', '-p', '-t', paneId, '-S', `-${CAPTURE_LINES}`]);
-      const sec = activity.get(paneId);
+      if (cap.status === 0) {
+        // 内容が前回から変化したときだけ活動時刻を更新する（ペイン単位の idle 判定）。
+        if (cap.stdout !== state.lastLines) {
+          state.lastLines = cap.stdout;
+          state.lastChangeMs = t;
+        }
+      }
+      // capture 失敗時は前回値を維持する（空にすると「画面がクリアされた」と誤認するため）。
       terminals[paneId] = {
         termId: paneId,
         waiting: state.waiting,
-        // 秒→ms（VK Terminals は Date.now() ms）。activity が 0/欠損なら「今」を使う（0 だと watchdog が巨大な idle 時間を計算してしまう）
-        lastOutputTime: sec > 0 ? sec * 1000 : Date.now(),
-        lastLines: cap.stdout,
+        lastOutputTime: state.lastChangeMs,
+        lastLines: state.lastLines,
       };
     }
     return { terminals };

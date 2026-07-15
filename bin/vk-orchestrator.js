@@ -312,28 +312,76 @@ async function main() {
     case 'up': {
       // --- tmux モード分岐 ---
       // 実行面が tmux のときは Electron(VK Terminals) を一切起動しない。
-      // 対象 tmux セッションを用意し、orchestrator ループ（= start と同じ）を
-      // このプロセスのフォアグラウンドで回す。ワーカーペインは engine が
-      // tmux new-window で作り、利用者は `tmux attach -t <session>` で覗く。
+      // orchestrator 本体(engine)も tmux セッションの window 内で常駐させる（親プロセスで
+      // 動かすと端末切断で止まるため）。ワーカーペインは engine が同 window を split して
+      // 並べ、利用者は `tmux attach -t <session>` で覗く（Ctrl-b d で離脱しても動作継続）。
       {
-        const { resolveTerminalsMode, resolveTmuxSession } = await import('../src/config.js');
+        const { resolveTerminalsMode, resolveTmuxSession, writeVkAgentsSettings } =
+          await import('../src/config.js');
         if (resolveTerminalsMode(unifiedConfig) === 'tmux') {
           const { spawnSync } = await import('child_process');
           const session = resolveTmuxSession(unifiedConfig);
+
+          // vk-agents 派生設定を投影（VK Terminals モードと同じ。tmux で起動する Claude が
+          // GUI 経由と同じ最新設定を使えるようにする）。
+          const vkAgents = writeVkAgentsSettings(unifiedConfig);
+          if (vkAgents) {
+            console.log(`vk-agents 設定を反映しました → ${vkAgents.configPath}`);
+            console.log(`vk-agents 派生設定を反映しました → ${vkAgents.globalSettingsPath}`);
+          } else {
+            console.warn('[up] vk-agents 設定の投影はスキップしました（config.json 未作成、またはパス未解決）。');
+          }
+          await warnIfVkAgentsNotSetup();
+          await reconcileOrchestratorVersion();
+
+          // engine を起動する start コマンドを tmux window 内で実行する。tmux server が
+          // 既存だと server の古い env を引くため、必要な env はコマンド文字列へ焼き込む。
+          const repoRoot = resolve(__dirname, '..');
+          const forwarded = process.argv.slice(3).filter((a) => a !== '--no-orchestrator' && a !== '--no-attach');
+          const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+          const envKeys = ['VK_TERMINALS_MODE', 'VK_TMUX_SESSION', 'VK_TMUX_CLAUDE_CMD',
+            'TASK_WP_ENV_ENABLED', 'TASK_CWD', 'VK_TERMINALS_HOST', 'VK_TERMINALS_PORT'];
+          const envAssignments = envKeys
+            .filter((k) => process.env[k] != null && process.env[k] !== '')
+            .map((k) => `${k}=${shq(process.env[k])}`);
+          // config で tmux を選び env 未設定でも、子 start が確実に tmux モードになるよう固定。
+          if (!process.env.VK_TERMINALS_MODE) envAssignments.unshift('VK_TERMINALS_MODE=tmux');
+          const startCmd =
+            `env ${envAssignments.join(' ')} node ${shq(__filename)} start ${forwarded.map(shq).join(' ')}`.trim();
+
           const has = spawnSync('tmux', ['has-session', '-t', session], { stdio: 'ignore' });
           if (has.status !== 0) {
-            const created = spawnSync('tmux', ['new-session', '-d', '-s', session], { stdio: 'inherit' });
+            const created = spawnSync(
+              'tmux',
+              ['new-session', '-d', '-s', session, '-n', 'orchestrator', '-c', repoRoot, startCmd],
+              { stdio: 'inherit' }
+            );
             if (created.status !== 0) {
               console.error(`[up] tmux セッション "${session}" を作成できませんでした（tmux は入っていますか？）。`);
               process.exit(1);
             }
-            console.log(`tmux セッション "${session}" を作成しました。`);
+            console.log(`tmux セッション "${session}" を作成し、orchestrator を起動しました。`);
           } else {
-            console.log(`tmux セッション "${session}" に接続します。`);
+            // 既存セッションに orchestrator window が無ければ起動（start-lock が二重起動を防ぐ）。
+            const wins = spawnSync('tmux', ['list-windows', '-t', session, '-F', '#{window_name}'],
+              { encoding: 'utf8' });
+            const hasOrch = (wins.stdout || '').split('\n').some((n) => n.trim() === 'orchestrator');
+            if (!hasOrch) {
+              spawnSync('tmux', ['new-window', '-t', session, '-n', 'orchestrator', '-c', repoRoot, startCmd],
+                { stdio: 'inherit' });
+              console.log(`既存セッション "${session}" に orchestrator を起動しました。`);
+            } else {
+              console.log(`セッション "${session}" で orchestrator は起動済みです。`);
+            }
           }
-          console.log(`各ワーカーは \`tmux attach -t ${session}\` で覗けます。orchestrator を起動します...`);
-          await reconcileOrchestratorVersion();
-          await import('../src/engine/index.js'); // start と同じくループを起動
+
+          // 対話端末ならそのまま attach して見せる。非対話（ログリダイレクト等）や
+          // --no-attach 指定時は案内だけ出して抜ける（セッションは動き続ける）。
+          if (process.stdout.isTTY && !process.argv.includes('--no-attach')) {
+            spawnSync('tmux', ['attach', '-t', session], { stdio: 'inherit' });
+          } else {
+            console.log(`\`tmux attach -t ${session}\` で入れます（Ctrl-b d で離脱、切断されても動作継続）。`);
+          }
           break;
         }
       }
