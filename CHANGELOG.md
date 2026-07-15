@@ -1,6 +1,7 @@
 # Changelog
 
 = 0.16.0 =
+- [ 機能追加 ] 実行面として tmux を選べる tmux モードを追加（`terminals.mode=tmux`。Electron/GUI 不要でコンテナ環境でも動作し、各タスクを tmux ペインに並べて表示）
 - [ 仕様変更 ] vk-terminals を 1.18.1 から 1.19.0 にアップデート（設定パネルのタブ UI 対応・API 待受ポートを本体 config から設定可能に）
 
 = 0.15.0 =
