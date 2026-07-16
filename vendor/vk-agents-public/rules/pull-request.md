@@ -42,7 +42,7 @@ PR に PHP の関数・メソッドの追加が含まれる場合、対応する
 
 ## 元 issue の参照
 
-PR 本文には、対応する元 issue を orchestrator が紐付けられる形式で参照する行を必ず 1 行含めてください。orchestrator（vk-orchestrator）が PR を issue に紐付ける形式は **完全 URL**（例: `関連 issue: https://github.com/vektor-inc/vk-agents/issues/203`）、または **クローズキーワード（close/fix/resolve 系）+ `#N`** のいずれかで、裸の `#N` だけでは紐付かず PR リンク表示・PR URL 追記・done ゲート・automerge が機能しません。ただしクローズキーワードは GitHub の自動クローズを誘発し、task-queue 経由で orchestrator が issue クローズ責務を持つ構成と競合しうるため、**自動クローズを誘発しない完全 URL 参照（`関連 issue: <完全 URL>` の 1 行）を推奨します**。
+PR 本文には、対応する元 issue を orchestrator が紐付けられる形式で参照する行を必ず 1 行含めてください。orchestrator（vk-orchestrator）が PR を issue に紐付ける形式は **完全 URL**（例: `関連 issue: https://github.com/vektor-inc/vk-agents/issues/203`）、または **クローズキーワード（close/fix/resolve 系）+ `#N`** のいずれかで、裸の `#N` だけでは紐付かず PR リンク表示・PR URL 追記・done ゲート・automerge が機能しません。ただしクローズキーワードは GitHub の自動クローズを誘発し、オーケストレーター経由で orchestrator が issue クローズ責務を持つ構成と競合しうるため、**自動クローズを誘発しない完全 URL 参照（`関連 issue: <完全 URL>` の 1 行）を推奨します**。
 
 ## changelog の確認と記載
 

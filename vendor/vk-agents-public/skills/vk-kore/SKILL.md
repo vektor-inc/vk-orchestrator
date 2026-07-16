@@ -247,7 +247,7 @@ Status: no-action
 
 #### 4-8b. エージェントレビュー完了マーカーの付与（automerge タスクのみ）
 
-このステップは **task-queue 経由かつメタ issue に `automerge` ラベルが付いているタスクのみ** 対象。automerge でないタスク（メタ issue が無い／`automerge` ラベルが付いていない）はマーカー不要（ステップ5でユーザーがマージ判断するため）。automerge かどうかは `vektor-inc/task-queue` 側の **メタ issue** を確認して判定する（`automerge` ラベルはメタ issue 側にのみ付く。詳細は `vektor-inc/vk-orchestrator` の `docs/agent-rules.md` を参照）。
+このステップは **オーケストレーター経由かつメタ issue に `automerge` ラベルが付いているタスクのみ** 対象。automerge でないタスク（メタ issue が無い／`automerge` ラベルが付いていない）はマーカー不要（ステップ5でユーザーがマージ判断するため）。automerge かどうかは `vektor-inc/task-queue` 側の **メタ issue** を確認して判定する（`automerge` ラベルはメタ issue 側にのみ付く。詳細は `vektor-inc/vk-orchestrator` の `docs/agent-rules.md` を参照）。
 
 前提として 4-8 のサマリー投稿まで完了していること（= 安藤・植草・麗美の各レビューが **実施 PASS または正当スキップ** で完了している）。これは「e2e 実施 PASS **または** 正当なスキップ」を含む **最終レビュー・e2e ゲートの通過** を意味する。このマーカーは「vk-kore の最終ゲートを通過した」という事実を、現在の PR head SHA に紐づけて記録するものである。
 
@@ -286,7 +286,7 @@ orchestrator 側の詳細仕様は `vektor-inc/vk-orchestrator` の `docs/agent-
 
 マージ判断はユーザーに委ねる。司は勝手にマージしない。
 
-**例外:** task-queue 経由のタスクで、メタ issue に `automerge` ラベルが付いている場合は、ユーザー応答待ちで停止せず `vektor-inc/vk-orchestrator` リポジトリの `docs/agent-rules.md`「automerge ラベル付きタスクではマージ判断で停止しない」に従う（停止すると自動マージプロセスが詰まる）。この場合、**ステップ 4-8b でエージェントレビュー完了マーカー（`agent-review-passed` ラベル + 現 head SHA の `agent-review-passed-sha:` コメント）を付与済みであること** を前提に、司はマージせず orchestrator のマージに委ねる。マーカーを付けないと orchestrator の e2e ゲートが通らず automerge が永久に保留されるため、4-8b の付与漏れに注意する。
+**例外:** オーケストレーター経由のタスクで、メタ issue に `automerge` ラベルが付いている場合は、ユーザー応答待ちで停止せず `vektor-inc/vk-orchestrator` リポジトリの `docs/agent-rules.md`「automerge ラベル付きタスクではマージ判断で停止しない」に従う（停止すると自動マージプロセスが詰まる）。この場合、**ステップ 4-8b でエージェントレビュー完了マーカー（`agent-review-passed` ラベル + 現 head SHA の `agent-review-passed-sha:` コメント）を付与済みであること** を前提に、司はマージせず orchestrator のマージに委ねる。マーカーを付けないと orchestrator の e2e ゲートが通らず automerge が永久に保留されるため、4-8b の付与漏れに注意する。
 
 ### 6. マージ後の cleanup
 
@@ -296,7 +296,7 @@ orchestrator 側の詳細仕様は `vektor-inc/vk-orchestrator` の `docs/agent-
 2. 「作業中」ラベルが issue に残っていれば外す: `gh issue edit <issue> --remove-label "作業中"`
 3. メインリポジトリのローカルメインブランチを更新: `cd <repo_root> && git pull --ff-only`
 4. `Skill` ツールで `vk-clean-repo` を呼び出す。Skill 呼び出し時のカレントディレクトリが保証されないため、引数に `<repo_root>` を **明示渡し** すること（例: `Skill: vk-clean-repo` を args=`<repo_root>` で起動）。マージ済みブランチと安全な worktree は無確認で削除される
-5. task-queue 経由のタスクの場合、`vektor-inc/vk-orchestrator` リポジトリの `docs/agent-rules.md`「メタ issue のクローズまで責任を持つ」に従い、メタ issue への PR URL 追記 → `status:done` → 完了コメント → close まで実施する
+5. オーケストレーター経由のタスクの場合、`vektor-inc/vk-orchestrator` リポジトリの `docs/agent-rules.md`「メタ issue のクローズまで責任を持つ」に従い、メタ issue への PR URL 追記 → `status:done` → 完了コメント → close まで実施する
 6. cleanup 結果（削除された worktree / ブランチ、または「要確認項目あり」）をユーザーに報告する
 
 ユーザーが GitHub UI 等で外部でマージした場合や、マージ指示がない場合はこのステップを実行しない。
