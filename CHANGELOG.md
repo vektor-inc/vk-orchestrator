@@ -1,7 +1,9 @@
 # Changelog
 
+= 0.17.0 =
+
 - [ 機能追加 ] 設定パネルの Agents タブに、エージェントの作業ディレクトリ（複数指定・優先順）を設定する欄を追加
-- [ 仕様変更 ] vk-terminals を 1.22.0 から 1.23.0 にアップデート（設定 descriptor の配列入力型 lines に対応）
+- [ 仕様変更 ] vk-terminals を 1.22.0 から 1.24.0 にアップデート（設定 descriptor の配列入力型 lines に対応・モバイル版ターミナル下部の未使用クイック入力コントロールを削除）
 - [ 仕様変更 ] `org.orchestrator_repo` 設定を撤去し、連携ルールのパスを handoff file（`~/.vk-agents/runtime/orchestrator-rules.path`）で agent へ渡す方式に変更
 - [ 不具合修正 ] メタ issue の PR マージ完了コメントの文言が投稿経路で食い違い、完了コメントが二重投稿される不具合を修正
 
