@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import {
-  AGENT_RULES_HANDOFF_RELATIVE_PATH,
+  ORCHESTRATOR_RULES_HANDOFF_RELATIVE_PATH,
   defaultAgentRulesPath,
   writeAgentRulesHandoff,
 } from '../src/engine/agentRulesHandoff.js';
@@ -17,7 +17,7 @@ test('writeAgentRulesHandoff: runtime ディレクトリを作成して rulesPat
   try {
     const rulesPath = resolve(homeDir, 'repo', 'docs', 'agent-rules.md');
     const writtenPath = writeAgentRulesHandoff({ homeDir, rulesPath });
-    const handoffPath = join(homeDir, AGENT_RULES_HANDOFF_RELATIVE_PATH);
+    const handoffPath = join(homeDir, ORCHESTRATOR_RULES_HANDOFF_RELATIVE_PATH);
 
     assert.equal(writtenPath, rulesPath);
     assert.equal(existsSync(dirname(handoffPath)), true);
@@ -33,7 +33,7 @@ test('writeAgentRulesHandoff: rulesPath 省略時は docs/agent-rules.md の絶�
   try {
     const expectedRulesPath = resolve(__dirname, '..', 'docs', 'agent-rules.md');
     const writtenPath = writeAgentRulesHandoff({ homeDir });
-    const handoffPath = join(homeDir, AGENT_RULES_HANDOFF_RELATIVE_PATH);
+    const handoffPath = join(homeDir, ORCHESTRATOR_RULES_HANDOFF_RELATIVE_PATH);
 
     assert.equal(defaultAgentRulesPath(), expectedRulesPath);
     assert.equal(writtenPath, expectedRulesPath);
@@ -46,7 +46,7 @@ test('writeAgentRulesHandoff: rulesPath 省略時は docs/agent-rules.md の絶�
 test('writeAgentRulesHandoff: 毎回上書きする', () => {
   const homeDir = mkdtempSync(join(tmpdir(), 'vko-agent-rules-'));
   try {
-    const handoffPath = join(homeDir, AGENT_RULES_HANDOFF_RELATIVE_PATH);
+    const handoffPath = join(homeDir, ORCHESTRATOR_RULES_HANDOFF_RELATIVE_PATH);
     writeAgentRulesHandoff({ homeDir, rulesPath: resolve(homeDir, 'first.md') });
     writeFileSync(handoffPath, '/tmp/stale.md\n', 'utf8');
 
