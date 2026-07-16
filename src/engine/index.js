@@ -39,6 +39,7 @@ import { createNotifyPaneMerged } from './notify-pane-merged.js';
 import { createWaitingMarkerScanner } from './waiting-marker-scanner.js';
 import { installPersistentConsoleLogger } from './persistent-logger.js';
 import { createStartLock } from './start-lock.js';
+import { writeAgentRulesHandoff } from './agentRulesHandoff.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -1429,6 +1430,12 @@ async function importNewTasks() {
 // メインループ
 // -------------------------------------------------------
 async function loop() {
+  try {
+    writeAgentRulesHandoff();
+  } catch (err) {
+    console.warn(`[warn] agent rules handoff file の書き出しに失敗しました: ${err.message}`);
+  }
+
   // 1. 作業対象リポジトリから新規タスクを取り込む（VK Terminals 不要）
   //    assignee 未設定時は安全側として何も拾わず、"all" 明示時のみすべての作業対象リポジトリの Issue を取り込む。
   //    ログイン名指定時は「自分にアサインされた作業対象リポジトリの Issue だけ」を取り込み、
