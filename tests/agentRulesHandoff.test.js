@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -22,6 +22,7 @@ test('writeAgentRulesHandoff: runtime ディレクトリを作成して rulesPat
     assert.equal(writtenPath, rulesPath);
     assert.equal(existsSync(dirname(handoffPath)), true);
     assert.equal(readFileSync(handoffPath, 'utf8'), `${rulesPath}\n`);
+    assert.deepEqual(readdirSync(dirname(handoffPath)).filter((name) => name.endsWith('.tmp')), []);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }

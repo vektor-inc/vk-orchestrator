@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { dirname, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -14,7 +14,26 @@ export function defaultAgentRulesPath() {
 export function writeAgentRulesHandoff({ homeDir = homedir(), rulesPath = defaultAgentRulesPath() } = {}) {
   const resolvedRulesPath = resolve(rulesPath);
   const handoffPath = resolve(homeDir, AGENT_RULES_HANDOFF_RELATIVE_PATH);
-  mkdirSync(dirname(handoffPath), { recursive: true });
-  writeFileSync(handoffPath, `${resolvedRulesPath}\n`, 'utf8');
+  writeTextAtomic(handoffPath, `${resolvedRulesPath}\n`);
   return resolvedRulesPath;
+}
+
+function writeTextAtomic(path, text) {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const tmpPath = join(
+    dir,
+    `.${basename(path)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
+  );
+  try {
+    writeFileSync(tmpPath, text, { encoding: 'utf8', flag: 'wx' });
+    renameSync(tmpPath, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // temp が作られる前の失敗、または rename 済みなら削除不要。
+    }
+    throw err;
+  }
 }
