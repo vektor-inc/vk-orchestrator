@@ -30,7 +30,7 @@ GitHub issue の URL を渡すと、司（staff-director）が内容を確認し
 7. `gh issue view <URL> --json title,body,labels,assignees,comments` で issue の内容を取得する
 8. **既存対応の確認**: issue 取得の直後に、その issue が既に別経路で対応中でないかを確認する。以下のいずれかに該当する場合は、新規実装に入る前にユーザーへ「既に対応が進行中の可能性があります（PR #NNN / task-queue 取り込み済み）。統合・レビュー参加・別対応のどれにしますか？」と確認する:
    - `gh pr list -R <owner/repo> --state open --search "<issue番号>"` で既存の open PR がヒットする
-   - issue に「🤖 task-queue で取り込みました」コメントがある（task-queue 連携時の振る舞いは `vektor-inc/vk-orchestrator` リポジトリの `docs/agent-rules.md` を参照）
+   - issue に「🤖 オーケストレーターが取り込みました」コメントがある（task-queue 連携時の振る舞いは `vektor-inc/vk-orchestrator` リポジトリの `docs/agent-rules.md` を参照）
    - issue が他のメンバーに assign 済み
 9. **意見調整待ちゲート**: 取得済みの labels に「意見調整」を **部分一致で含むラベル**（`意見調整待ち` / `【意見調整待ち】` プレフィックス等）があるかを確認する。ただし「済」「完了」「done」「不要」を含む **完了系・否定系ラベルは除外**する（例: `意見調整済` / `意見調整不要` は発火しない）。該当ラベルが無ければ次のステップへ進む。該当ラベルがあれば、実装委任（4-0 / 4-1 以降）に入る前に以下を実施する:
    1. **未決の論点を抽出**: issue 本文から意見調整が必要な点（「意見調整したい点」節など）を抽出する。
