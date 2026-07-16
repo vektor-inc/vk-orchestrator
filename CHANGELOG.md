@@ -1,5 +1,8 @@
 # Changelog
 
+- [ 機能追加 ] 設定パネルの Agents タブに、エージェントの作業ディレクトリ（複数指定・優先順）を設定する欄を追加
+- [ 仕様変更 ] vk-terminals を 1.22.0 から 1.23.0 にアップデート（設定 descriptor の配列入力型 lines に対応）
+
 = 0.16.0 =
 - [ 機能追加 ] 実行面として tmux を選べる tmux モードを追加（`terminals.mode=tmux`。Electron/GUI 不要でコンテナ環境でも動作し、各タスクを tmux ペインに並べて表示）
 - [ 機能追加 ] done-gate を sub-issue 対応にし、親 issue の全 sub-issue が closed になるまでメタ issue を done 化しないことで、複数 PR にまたがるタスクで一部マージ時に起きる早期完了・孤児化を防止
