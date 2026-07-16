@@ -301,7 +301,6 @@ const LEGACY_VK_AGENTS_GUI_KEYS = [
   'staff_wp_dev.engine',
   'multi_repo_task.default_engine',
   'org.review_assets_repo',
-  'org.orchestrator_repo',
 ];
 
 /**
@@ -787,7 +786,7 @@ function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
     setByPath(out, 'org.allowed_owners', allowedOwners);
   }
 
-  for (const key of ['org.review_assets_repo', 'org.orchestrator_repo']) {
+  for (const key of ['org.review_assets_repo']) {
     if (!hasOwnPath(cfg, key)) continue;
     const raw = String(getByPath(cfg, key) ?? '').trim();
     if (raw === '') {
@@ -844,7 +843,6 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
     hasOwnPath(cfg, 'skills.disabled') ||
     hasOwnPath(cfg, 'org.allowed_owners') ||
     hasOwnPath(cfg, 'org.review_assets_repo') ||
-    hasOwnPath(cfg, 'org.orchestrator_repo') ||
     hasOwnPath(cfg, 'staff_wp_dev.engine') ||
     hasOwnPath(cfg, 'multi_repo_task.default_engine');
   if (!hasConfig && !hasGuiSettings && options.force !== true) return null;
@@ -953,7 +951,6 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         fields: [
           { key: 'workspace.search_paths', label: '作業ディレクトリ（複数指定可・優先順）', type: 'lines', placeholder: '/Users/you/Documents/git\n/Users/you/ghq', help: 'エージェント（vk-kore 等）が作業対象リポジトリのローカルクローンを探す起点ディレクトリを、1 行に 1 つ・絶対パスで指定します（上の行ほど優先）。上から順に走査し、origin が対象リポジトリと一致する既存クローンを最大 4 階層まで自動検出して使います。どのパスにも見つからない場合は 1 行目のディレクトリへクローンします。未設定の場合はクローンの場所を都度確認します。' },
           { key: 'org.review_assets_repo', label: 'レビュー用アセットリポジトリ', type: 'text', placeholder: 'owner/repo', pattern: OWNER_REPO_PATTERN, invalidMessage: 'owner/repo の形式で入力してください（例: vektor-inc/task-queue）', help: 'PR・テスト報告用の画像/GIF を保存するリポジトリを <owner>/<repo> 形式で指定します（例: vektor-inc/review-assets）。形式が正しくない値は反映されません。空欄時は画像アップロードをスキップし、テキスト記述にフォールバックします', emptyToNull: true },
-          { key: 'org.orchestrator_repo', label: '連携ルール取得先リポジトリ', type: 'text', placeholder: 'owner/repo', pattern: OWNER_REPO_PATTERN, invalidMessage: 'owner/repo の形式で入力してください（例: vektor-inc/task-queue）', help: 'vk-kore が task-queue 連携ルール（docs/agent-rules.md）を取得するリポジトリを <owner>/<repo> 形式で指定します（例: vektor-inc/vk-orchestrator）。形式が正しくない値は反映されません。空欄時は vektor-inc/vk-orchestrator にフォールバックします', emptyToNull: true },
           { key: 'staff_wp_dev.engine', label: 'staff-wp-dev（和田）の実行エンジン', type: 'select',
             options: [
               { value: '',       label: '未設定（既定: claude）' },
