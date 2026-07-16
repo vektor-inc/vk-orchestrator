@@ -353,7 +353,7 @@ async function main() {
           if (has.status !== 0) {
             const created = spawnSync(
               'tmux',
-              ['new-session', '-d', '-s', session, '-n', 'orchestrator', '-c', repoRoot, startCmd],
+              ['-u', 'new-session', '-d', '-s', session, '-n', 'orchestrator', '-c', repoRoot, startCmd],
               { stdio: 'inherit' }
             );
             if (created.status !== 0) {
@@ -367,7 +367,7 @@ async function main() {
               { encoding: 'utf8' });
             const hasOrch = (wins.stdout || '').split('\n').some((n) => n.trim() === 'orchestrator');
             if (!hasOrch) {
-              spawnSync('tmux', ['new-window', '-t', session, '-n', 'orchestrator', '-c', repoRoot, startCmd],
+              spawnSync('tmux', ['-u', 'new-window', '-t', session, '-n', 'orchestrator', '-c', repoRoot, startCmd],
                 { stdio: 'inherit' });
               console.log(`既存セッション "${session}" に orchestrator を起動しました。`);
             } else {
@@ -378,7 +378,7 @@ async function main() {
           // 対話端末ならそのまま attach して見せる。非対話（ログリダイレクト等）や
           // --no-attach 指定時は案内だけ出して抜ける（セッションは動き続ける）。
           if (process.stdout.isTTY && !process.argv.includes('--no-attach')) {
-            spawnSync('tmux', ['attach', '-t', session], { stdio: 'inherit' });
+            spawnSync('tmux', ['-u', 'attach', '-t', session], { stdio: 'inherit' });
           } else {
             console.log(`\`tmux attach -t ${session}\` で入れます（Ctrl-b d で離脱、切断されても動作継続）。`);
           }
