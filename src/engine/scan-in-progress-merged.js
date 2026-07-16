@@ -15,7 +15,10 @@ export function createScanInProgressMergedHandler({
     }
 
     try {
-      await addComment(issue.number, `✅ 完了\n\nPR がマージされました。`);
+      const completionComment = pr?.html_url
+        ? `✅ 完了\n\nPR: ${pr.html_url} がマージされました。`
+        : `✅ 完了\n\nPR がマージされました。`;
+      await addComment(issue.number, completionComment);
       await closeIssue(issue.number);
       await setStatus(issue.number, 'status:done');
       // removeTask は termId を含む state を消すので、必ず消込前に VK Terminals へ送る。
