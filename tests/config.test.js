@@ -1588,7 +1588,7 @@ test('buildSettingsDescriptor: tabs と各 group の tab 割り当てを持つ',
   assert.deepEqual(desc.tabs, [
     { id: 'orchestrator', label: 'Orchestrator' },
     { id: 'terminals', label: 'Terminals' },
-    { id: 'agents', label: 'Agents' },
+    { id: 'agents', label: 'VK Agents' },
   ]);
   const tabsByLabel = Object.fromEntries(desc.groups.map((group) => [group.label, group.tab]));
   assert.equal(tabsByLabel.GitHub, 'orchestrator');

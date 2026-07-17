@@ -883,7 +883,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
     tabs: [
       { id: 'orchestrator', label: 'Orchestrator' },
       { id: 'terminals', label: 'Terminals' },
-      { id: 'agents', label: 'Agents' },
+      { id: 'agents', label: 'VK Agents' },
     ],
     groups: [
       {
