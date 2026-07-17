@@ -33,6 +33,7 @@ import { closeSourceIssueBeforeGate as closeSourceIssueBeforeGateImpl } from './
 import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { createScanInProgressMergedHandler } from './scan-in-progress-merged.js';
+import { createReconcileOrphanedMergedTasks } from './reconcile-orphaned-merged.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
 import { startKeepAwake } from '../power/keep-awake.js';
 import { createNotifyPaneMerged } from './notify-pane-merged.js';
@@ -235,6 +236,23 @@ const handleScanInProgressMerged = createScanInProgressMergedHandler({
   addComment: (...args) => github.addComment(...args),
   closeIssue: (...args) => github.closeIssue(...args),
   setStatus: (...args) => github.setStatus(...args),
+  notifyPaneMerged,
+  removeTask,
+  logger: console,
+});
+
+// state.json 残骸の掃除は毎ループのエントリ数分だけメタ issue を読む。
+// GitHub API のリトライが積み上がると watch ループ全体を詰まらせるため単発試行にする。
+function getMetaIssue(issueNumber) {
+  return github.getIssueState(GITHUB_OWNER, GITHUB_REPO, issueNumber, { retryDelays: [] });
+}
+
+const reconcileOrphanedMergedTasks = createReconcileOrphanedMergedTasks({
+  getAllTasks,
+  getMetaIssue,
+  extractPRUrlFromIssueBody: (...args) => github.extractPRUrlFromIssueBody(...args),
+  parsePRUrl: (...args) => github.parsePRUrl(...args),
+  getPRState: (...args) => github.getPRState(...args),
   notifyPaneMerged,
   removeTask,
   logger: console,
@@ -1461,10 +1479,10 @@ async function loop() {
   //    返信転送不要なので VK Terminals に依存せず、健全性ゲートより前で回す（VK Terminals 不要）。
   await scanAnsweredRecovery();
 
-  // 6. ここから先（返信転送・dispatch）は VK Terminals が必要
+  // 6. ここから先（返信転送・後始末・dispatch）は VK Terminals が必要
   const healthy = await checkHealth(VK_PORT);
   if (!healthy) {
-    console.log(`[warn] VK Terminals (port ${VK_PORT}) に接続できません。返信転送・起動をスキップします。`);
+    console.log(`[warn] VK Terminals (port ${VK_PORT}) に接続できません。返信転送・後始末・起動をスキップします。`);
     return;
   }
 
@@ -1482,7 +1500,12 @@ async function loop() {
   //    （VK Terminals states で pane の生死・無反応を見るため checkHealth 後ろ）
   await scanWatchdog();
 
-  // 11. ready をディスパッチ
+  // 11. 先回りクローズ済み + PR マージ済みの state 残骸を後始末
+  //     VK Terminals が到達不能な間は prMerged 通知を送れないため、
+  //     health 確認済みのループでのみ通知してから state を消し込む。
+  await reconcileOrphanedMergedTasks();
+
+  // 12. ready をディスパッチ
   const issues = await github.fetchPendingIssues();
   if (issues.length === 0) {
     console.log('[poll] 実行待ちタスクなし');
