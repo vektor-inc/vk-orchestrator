@@ -29,7 +29,7 @@ vk-agents のルールを指定プロジェクトに展開する。
 - 環境ごとに変えたいスキルの設定をまとめるファイル。`--claude-global` 実行時、**`config.json` がある時だけ** `~/.claude/vk-agents-settings.json` へ複製する。無い環境では展開せず（古い展開先は掃除し）、各スキルの既定にフォールバックする。テンプレ `config.json.example` は自動展開されない雛形（`cp config.json.example config.json` で有効化）。
 - 現在のキー:
   - `multi_repo_task.default_engine`（`claude` / `codex` = マルチリポジトリタスクの既定実行エンジン。未展開時のフォールバックは `claude`）
-  - `staff_wp_dev.engine`（`claude` / `codex` = 和田（staff-wp-dev）の起動エンジン。未展開時・キー未設定時のフォールバックは `claude`。codex は単独作業のみ対応。詳細は `skills/staff-wp-dev/SKILL.md`「起動方法」参照）
+  - `staff_wp_dev.engine`（`claude` / `codex` = 和田（staff-wp-dev）の起動エンジン。未展開時・キー未設定時のフォールバックは `claude`。Codex は単独作業のみ対応。詳細は `skills/staff-wp-dev/SKILL.md`「起動方法」参照）
   - `features.coderabbit`（`true` / `false` = CodeRabbit 連携の有効/無効。未展開時・キー未設定時・JSON パース失敗時のフォールバックは `true`。詳細は `rules/coderabbit-monitoring.md`「前提条件」参照）
   - 設定を変えたいときは `~/.claude` を直接編集せず、このリポ直下の `config.json` を編集して再 sync する。
 

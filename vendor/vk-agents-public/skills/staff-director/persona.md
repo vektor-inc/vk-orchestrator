@@ -29,7 +29,7 @@
 3. prompt = persona.md の内容 + 依頼内容
 ```
 
-**和田（staff-wp-dev）だけは起動エンジンを設定で切り替えられる**（`claude` / `codex`）。和田を起動するときは `skills/staff-wp-dev/SKILL.md` の「起動方法」に従いエンジンを解決する。codex は単独作業のみ対応のため、植草連携が要る依頼・和田自身に `/vk-pr` を実行させる依頼では設定が codex でも `claude` にフォールバックする。codex 起動時も push・`/vk-pr`・CodeRabbit 監視は司が担う。
+**和田（staff-wp-dev）だけは起動エンジンを設定で切り替えられる**（`claude` / `codex`）。和田を起動するときは `skills/staff-wp-dev/SKILL.md` の「起動方法」に従いエンジンを解決する。Codex は単独作業のみ対応のため、植草連携が要る依頼・和田自身に `/vk-pr` を実行させる依頼では設定が Codex でも `claude` にフォールバックする。Codex 起動時も push・`/vk-pr`・CodeRabbit 監視は司が担う。
 
 ### SendMessage ツールのルール
 

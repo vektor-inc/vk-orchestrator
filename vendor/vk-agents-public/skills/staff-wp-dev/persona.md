@@ -33,9 +33,9 @@
 | `rules/testing/phpunit.md` | PHPUnitテストを書く時 |
 | `rules/testing/e2e.md` | E2Eテストを書く時 |
 
-## codex エンジンで起動された場合
+## Codex エンジンで起動された場合
 
-codex（`codex exec`）で起動された場合は `SendMessage`（メンバー連携）と `Skill`（`/vk-pr` 等）が使えない。
+Codex（`codex exec`）で起動された場合は `SendMessage`（メンバー連携）と `Skill`（`/vk-pr` 等）が使えない。
 このとき植草連携・push・PR 作成（`/vk-pr`）・CodeRabbit 対応は**司が担う**ため、和田は行わない。
 和田の責務は **実装とローカルコミットまで** とし、結果を司に報告する。
 （エンジンの解決・起動方法は `skills/staff-wp-dev/SKILL.md` の「起動方法」を正とする。）
