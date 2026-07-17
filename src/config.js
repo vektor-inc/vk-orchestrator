@@ -21,6 +21,11 @@ const REPO_ROOT = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
 export const DEFAULT_VENDORED_VK_AGENTS_DIR = join(REPO_ROOT, 'vendor', 'vk-agents-public');
 const DEFAULT_VK_TERMINALS_PORT = 13847;
+const VK_TERMINALS_CONFIG_TARGET_PATH = '~/.vk-terminals/config.json';
+const VK_TERMINALS_SETTINGS_NOTE = 'VK Terminals 本体の設定ファイル（~/.vk-terminals/config.json）に直接保存され、VK Terminals が読み込みます。';
+// VK Terminals 本体スキーマ由来の項目のうち、orchestrator の設定画面には
+// 出したくないキーを列挙する。現状は本体スキーマの全項目を表示する。
+const VK_TERMINALS_SCHEMA_HIDDEN_KEYS = [];
 
 export const GITHUB_TOKEN_RESOLUTION_HELP = 'GitHub トークンを解決できません。gh CLI 未導入の場合は `brew install gh`（Ubuntu: `sudo apt install gh`）でインストールし、`gh auth login` で認証してください。';
 
@@ -365,9 +370,8 @@ export function migrateLegacyVkAgentsGuiKeys(options = {}) {
 // macOS では HW アクセラがそのまま効くが、WSLg 等の Linux では GPU 初期化に失敗し
 // `Exiting GPU process` / `kTransientFailure` などのエラーが多発する（利用可能な
 // Vulkan ICD がソフトウェア実装のみで SwiftShader へフォールバックするため）。
-// ここでは起動モードを config(vkTerminals.gpu) / env(VK_TERMINALS_GPU) で選べるようにし、
-// bin 側の spawn 引数と追加環境変数へ写像する。GPU モードは VK Terminals 側の config.json
-// には書き出さない（orchestrator が GUI を spawn する時点の起動オプションのため）。
+// ここでは起動モードを env(VK_TERMINALS_GPU) / VK Terminals 本体 config(gpu) で選べるようにし、
+// bin 側の spawn 引数と追加環境変数へ写像する。
 // -------------------------------------------------------
 
 /** GPU 起動モードの取りうる値。 */
@@ -390,17 +394,29 @@ let warnedUnknownGpuMode = false;
 
 /**
  * GUI 起動時の GPU モードを解決する。
- * 優先順位: 環境変数 VK_TERMINALS_GPU > config.json(vkTerminals.gpu) > プラットフォーム既定。
+ * 優先順位: 環境変数 VK_TERMINALS_GPU > ~/.vk-terminals/config.json(gpu) > プラットフォーム既定。
  * 空文字・未知の値はプラットフォーム既定にフォールバックする。撤去した 'hardware' など
  * 非空の未知値が来た場合は、挙動変更に気づけるよう一度だけ警告する（起動は止めない）。
- * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @param {{ homeDir?: string, configPath?: string }} [options]
  * @param {string} [platform] process.platform 互換の値
  * @returns {'off'|'default'}
  */
-export function getVkTerminalsGpuMode(cfg = loadUnifiedConfig(), platform = process.platform) {
-  const raw = String(process.env.VK_TERMINALS_GPU ?? cfg?.vkTerminals?.gpu ?? '')
-    .trim()
-    .toLowerCase();
+export function getVkTerminalsGpuMode(options = {}, platform = process.platform) {
+  const configPath = options.configPath ?? join(options.homeDir ?? homedir(), '.vk-terminals', 'config.json');
+  let rawValue = process.env.VK_TERMINALS_GPU;
+
+  if (rawValue === undefined) {
+    try {
+      const config = readJsonObject(configPath);
+      rawValue = config.gpu ?? '';
+    } catch (err) {
+      const fallback = defaultGpuMode(platform);
+      console.warn(`[Config] ${configPath} の読み込みに失敗したため既定 GPU モード "${fallback}" を使用します: ${err.message}`);
+      return fallback;
+    }
+  }
+
+  const raw = String(rawValue ?? '').trim().toLowerCase();
   if (GPU_MODES.includes(raw)) return raw;
   // 空（＝自動）は正常。非空の未知値（例: 旧 'hardware'）だけ一度警告してフォールバック。
   const fallback = defaultGpuMode(platform);
@@ -444,6 +460,60 @@ export function gpuLaunchOptions(mode) {
  */
 export function resolveVkTerminalsDir() {
   return dirname(require.resolve('vk-terminals/package.json'));
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function validateVkTerminalsSettingsSchema(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    throw new Error('top-level schema must be an object');
+  }
+  if (!Array.isArray(schema.groups)) {
+    throw new Error('schema.groups must be an array');
+  }
+  for (const [groupIndex, group] of schema.groups.entries()) {
+    if (!group || typeof group !== 'object' || Array.isArray(group)) {
+      throw new Error(`schema.groups[${groupIndex}] must be an object`);
+    }
+    if (!isNonEmptyString(group.label)) {
+      throw new Error(`schema.groups[${groupIndex}].label must be a non-empty string`);
+    }
+    if (!Array.isArray(group.fields)) {
+      throw new Error(`schema.groups[${groupIndex}].fields must be an array`);
+    }
+    for (const [fieldIndex, field] of group.fields.entries()) {
+      if (!field || typeof field !== 'object' || Array.isArray(field)) {
+        throw new Error(`schema.groups[${groupIndex}].fields[${fieldIndex}] must be an object`);
+      }
+      for (const key of ['key', 'label', 'type']) {
+        if (!isNonEmptyString(field[key])) {
+          throw new Error(`schema.groups[${groupIndex}].fields[${fieldIndex}].${key} must be a non-empty string`);
+        }
+      }
+      if (field.options !== undefined && !Array.isArray(field.options)) {
+        throw new Error(`schema.groups[${groupIndex}].fields[${fieldIndex}].options must be an array`);
+      }
+    }
+  }
+  return schema;
+}
+
+/**
+ * vk-terminals 同梱の設定スキーマを読み込む。
+ * @param {string} vkDir VK Terminals パッケージのルートディレクトリ
+ * @returns {object|null}
+ */
+export function loadVkTerminalsSettingsSchema(vkDir) {
+  const schemaPath = join(vkDir, 'settings-schema.json');
+  try {
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
+    return validateVkTerminalsSettingsSchema(schema);
+  } catch (err) {
+    console.warn(`[Config] ${schemaPath} を読み込めませんでした: ${err.message}`);
+    return null;
+  }
 }
 
 function getByPath(obj, path) {
@@ -864,6 +934,85 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
   return { configPath, globalSettingsPath };
 }
 
+function vkTerminalsPortField() {
+  return {
+    key: 'port',
+    label: 'API ポート',
+    type: 'number',
+    help: `VK Terminals 本体の API サーバーが待ち受けるポート番号（既定: ${DEFAULT_VK_TERMINALS_PORT}）`,
+  };
+}
+
+function insertVkTerminalsPortField(fields) {
+  const next = fields.map((field) => ({ ...field }));
+  if (next.some((field) => field.key === 'port')) return next;
+  const apiHostIndex = next.findIndex((field) => field.key === 'apiHost');
+  next.splice(apiHostIndex >= 0 ? apiHostIndex + 1 : 0, 0, vkTerminalsPortField());
+  return next;
+}
+
+function vkTerminalsPortOnlySettingsGroup() {
+  return {
+    label: 'VK Terminals（本体設定）',
+    tab: 'terminals',
+    note: VK_TERMINALS_SETTINGS_NOTE,
+    targetPath: VK_TERMINALS_CONFIG_TARGET_PATH,
+    fields: [vkTerminalsPortField()],
+  };
+}
+
+function resolveVkTerminalsSettingsSchemaForDescriptor(options) {
+  let vkTerminalsDir = options.vkTerminalsDir;
+  if (vkTerminalsDir === undefined) {
+    try {
+      vkTerminalsDir = resolveVkTerminalsDir();
+    } catch (err) {
+      console.warn(`[Config] VK Terminals のインストールディレクトリを解決できないため settings-schema.json を読み込めません: ${err.message}`);
+      return null;
+    }
+  }
+  if (!vkTerminalsDir) return null;
+  return loadVkTerminalsSettingsSchema(vkTerminalsDir);
+}
+
+function buildVkTerminalsSettingsGroups(options = {}) {
+  const schema = resolveVkTerminalsSettingsSchemaForDescriptor(options);
+  if (!schema) {
+    console.warn('[Config] settings-schema.json が見つからない／読めないため、VK Terminals 本体設定は orchestrator 独自項目（port）のみ表示します。');
+    return [vkTerminalsPortOnlySettingsGroup()];
+  }
+
+  const hiddenKeys = new Set(options.hiddenKeys ?? VK_TERMINALS_SCHEMA_HIDDEN_KEYS);
+  const groups = [];
+  for (const group of schema.groups) {
+    const fields = group.fields
+      .filter((field) => !hiddenKeys.has(field.key))
+      .map((field) => ({ ...field }));
+    if (fields.length === 0) continue;
+    const label = schema.groups.length === 1
+      ? 'VK Terminals（本体設定）'
+      : `VK Terminals（本体設定）: ${group.label}`;
+    groups.push({
+      label,
+      tab: 'terminals',
+      note: VK_TERMINALS_SETTINGS_NOTE,
+      targetPath: VK_TERMINALS_CONFIG_TARGET_PATH,
+      fields,
+    });
+  }
+
+  if (groups.length > 0) {
+    groups[0] = {
+      ...groups[0],
+      fields: insertVkTerminalsPortField(groups[0].fields),
+    };
+  } else {
+    console.warn('[Config] settings-schema.json に表示可能なスキーマ項目が無いため、VK Terminals 本体設定は orchestrator 独自項目（port）のみ表示します。');
+    return [vkTerminalsPortOnlySettingsGroup()];
+  }
+  return groups;
+}
+
 /**
  * VK Terminals の設定パネル用「設定ディスクリプタ」を組み立てる。
  *
@@ -873,9 +1022,10 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
  * ことで、GUI から config.json を直接手編集せずに済むようにする。
  *
  * @param {string} [targetPath] 編集対象の config.json パス（既定は解決済みパス）
+ * @param {{ vkTerminalsDir?: string, hiddenKeys?: string[] }} [options]
  * @returns {object} 設定ディスクリプタ
  */
-export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
+export function buildSettingsDescriptor(targetPath = resolveConfigPath(), options = {}) {
   return {
     title: 'VK Orchestrator 設定',
     note: '保存後の反映タイミングは項目によって異なります（各グループの説明をご確認ください）。',
@@ -908,34 +1058,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
           { key: 'orchestrator.taskCwd',         label: 'タスク用ペインの Claude Code 起点ディレクトリ', type: 'text', help: 'タスク着手時に開くペインの Claude Code の起点ディレクトリを指定してください。自分のリポジトリ置き場を指定しておくと、探索・クローンがそこ基準で進みます。未設定の場合は専用ディレクトリ ~/vk-orchestrator-tasks（自動作成）で起動し、ホームディレクトリや機密ディレクトリを起点にしません。なお、ここで指定するのはあくまで起点で、操作権限があれば他のディレクトリのファイルも操作できます。別のディレクトリにある既存リポジトリを扱いたい場合も、スキルや Claude のグローバル設定であらかじめ対象リポジトリを指定しておけば、そちらで作業します。相対パスは orchestrator 起動時の作業ディレクトリ基準で解決します。', emptyToNull: true },
         ],
       },
-      {
-        label: 'VK Terminals（本体設定）',
-        tab: 'terminals',
-        note: 'VK Terminals 本体の設定ファイル（~/.vk-terminals/config.json）に直接保存され、VK Terminals が読み込みます。',
-        targetPath: '~/.vk-terminals/config.json',
-        fields: [
-          { key: 'apiHost',        label: 'API ホスト', type: 'text', help: 'VK Terminals の API サーバーが待ち受けるホスト（既定: 127.0.0.1）' },
-          { key: 'port',           label: 'API ポート', type: 'number', help: `VK Terminals 本体の API サーバーが待ち受けるポート番号（既定: ${DEFAULT_VK_TERMINALS_PORT}）` },
-          { key: 'initialCommand', label: '初期コマンド', type: 'text', help: '各ペイン起動時に自動実行するコマンド' },
-          { key: 'additionalPanes', label: '追加ペイン (JSON 配列)', type: 'json', help: '起動時に追加で開くペインの定義（JSON 配列。例: [{"cwd":"/path"}]）' },
-          { key: 'newPaneAutoLaunchClaude', label: 'Claude Code を自動的に起動する', type: 'boolean', default: false, help: 'チェックが入っている場合、新規ペインを開いた時に自動的に Claude Code が起動します。オフの場合は素のターミナルで起動します。' },
-          { key: 'newPaneStartupDir', label: '新規ペインを開く時の初期ディレクトリ', type: 'text', placeholder: '/path/to/project', help: '新規ペインを開く時の作業ディレクトリを絶対パスで指定します。「Claude Code を自動的に起動する」が有効な場合は Claude もこのディレクトリで起動します。未入力の場合、または存在しないパスの場合はホームディレクトリで起動します。' },
-        ],
-      },
-      {
-        label: 'VK Terminals 起動オプション（オーケストレーター制御）',
-        tab: 'terminals',
-        note: 'orchestrator が VK Terminals を起動する際の制御値です。変更は次回の VK Terminals 起動時に反映されます。API ホストと API ポートは「VK Terminals（本体設定）」で設定してください。',
-        fields: [
-          { key: 'vkTerminals.gpu',             label: 'GPU モード',          type: 'select',
-            options: [
-              { value: '',         label: '自動（推奨・macOS は通常起動 / その他は off）' },
-              { value: 'off',      label: 'off（GPU 無効・エラーログ抑制）' },
-              { value: 'default',  label: 'default（Chromium 任せ）' },
-            ],
-            help: 'orchestrator が VK Terminals を起動する際の GUI(Electron) GPU 利用モード。空=自動（macOS は通常起動 / その他は off）、off=GPU 無効でエラーログ抑制、default=Chromium 任せ' },
-        ],
-      },
+      ...buildVkTerminalsSettingsGroups(options),
       {
         label: 'issue を処理する Claude のコマンド',
         tab: 'orchestrator',
@@ -982,7 +1105,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
  */
 export function writeSettingsDescriptor(vkDir = resolveVkTerminalsDir(), targetPath = resolveConfigPath()) {
   const descPath = join(vkDir, 'settings-descriptor.json');
-  writeFileSync(descPath, JSON.stringify(buildSettingsDescriptor(targetPath), null, 2) + '\n');
+  writeFileSync(descPath, JSON.stringify(buildSettingsDescriptor(targetPath, { vkTerminalsDir: vkDir }), null, 2) + '\n');
   return descPath;
 }
 
