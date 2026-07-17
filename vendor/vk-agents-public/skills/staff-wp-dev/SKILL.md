@@ -19,26 +19,26 @@ description: "WordPressエンジニア（和田）をサブエージェントと
    - persona.md の内容（和田のペルソナ・役割・ルール参照先）
    - ユーザーからの依頼内容: `$ARGUMENTS`
 
-3. サブエージェント（または codex）の回答をそのままユーザーに返す。
+3. サブエージェント（または Codex）の回答をそのままユーザーに返す。
 
 ## 起動方法（エンジン解決）
 
-和田は Claude サブエージェント（`claude`）でも codex（`codex exec`）でも起動できる。**起動のたびに以下の順でエンジンを決定する**:
+和田は Claude サブエージェント（`claude`）でも Codex（`codex exec`）でも起動できる。**起動のたびに以下の順でエンジンを決定する**:
 
-1. その場の明示指示（「codex で和田を起動して」「Claude で和田を動かして」等）
+1. その場の明示指示（「Codex で和田を起動して」「Claude で和田を動かして」等）
 2. `~/.claude/vk-agents-settings.json` の `staff_wp_dev.engine`（`claude` / `codex`）
 3. どちらも無ければ `claude`
 
 `~/.claude/vk-agents-settings.json` が無い・キーが未設定・JSON パース失敗時は `claude` にフォールバックする（安全側）。設定を変えたい場合は `~/.claude` を直接編集せず、vk-agents リポ直下の `config.json`（正本。テンプレは `config.json.example`）の `staff_wp_dev.engine` を編集して `bash scripts/sync.sh --claude-global` で再展開する。
 
-### codex は単独作業のみ（claude へのフォールバック条件）
+### Codex は単独作業のみ（claude へのフォールバック条件）
 
 上記で `codex` に解決されても、依頼が次のいずれかを必要とする場合は **`claude` にフォールバック**する:
 
 - 実行中に他メンバーと連携する（例: 植草へ `SendMessage` で UX 相談する）
 - 和田自身に `/vk-pr` 等の Skill を実行させる
 
-**理由**: codex exec はステートレスで、`SendMessage`（メンバー連携）も `Skill`（`/vk-pr` 等）も呼べない。codex 和田の責務は **実装とローカルコミットまで** とし、push・`/vk-pr`・CodeRabbit 監視・他メンバー連携は司（呼び出し元の Claude）が担う。この判断は起動側が行う。
+**理由**: codex exec はステートレスで、`SendMessage`（メンバー連携）も `Skill`（`/vk-pr` 等）も呼べない。Codex 和田の責務は **実装とローカルコミットまで** とし、push・`/vk-pr`・CodeRabbit 監視・他メンバー連携は司（呼び出し元の Claude）が担う。この判断は起動側が行う。
 
 ### エンジン `claude` の場合（Agent tool）
 
@@ -49,14 +49,14 @@ description: "WordPressエンジニア（和田）をサブエージェントと
 
 ### エンジン `codex` の場合（`codex exec`）
 
-codex は CLAUDE.md や `rules/` を自動では読まないため、**ペルソナとルールをプロンプトに明示的に注入**して claude 同様に和田として動かす。`vk-multi-repo-task` の codex 起動パターンに倣う。
+Codex は CLAUDE.md や `rules/` を自動では読まないため、**ペルソナとルールをプロンプトに明示的に注入**して claude 同様に和田として動かす。`vk-multi-repo-task` の Codex 起動パターンに倣う。
 
-1. **REPO_ROOT の絶対パスを解決**する（codex には `-C` で作業ディレクトリを渡すため必須）。
+1. **REPO_ROOT の絶対パスを解決**する（Codex には `-C` で作業ディレクトリを渡すため必須）。
 2. worktree 隔離が必要な依頼（`vk-kore` の実装依頼など）では、**起動側（司）が先に `git worktree add` で worktree を作成**し、その worktree の絶対パスを `-C` に渡す。作成前に `rules/worktree.md` を Read し、既知の罠（デフォルトブランチ起点・wp-env マウント名・package-lock の name）を踏まえる。
 3. **プロンプト（`<PROMPT>`）** を以下の連結で組み立てる:
    - `persona.md` の内容（人格・役割・トーン・GitHub コメント時の名乗り）
-   - **codex 用オーバーライド**（必ず明記）:
-     > あなたは codex 実行のため `SendMessage`（メンバー連携）と `Skill`（`/vk-pr` 等）が使えません。植草連携・push・PR 作成（`/vk-pr`）・CodeRabbit 対応は司が担うため、あなたは行いません。あなたの責務は **実装とローカルコミットまで** です。
+   - **Codex 用オーバーライド**（必ず明記）:
+     > あなたは Codex 実行のため `SendMessage`（メンバー連携）と `Skill`（`/vk-pr` 等）が使えません。植草連携・push・PR 作成（`/vk-pr`）・CodeRabbit 対応は司が担うため、あなたは行いません。あなたの責務は **実装とローカルコミットまで** です。
    - **ルールの絶対パス指示**: persona.md がリストする `rules/coding-rules.md` 等の相対パスを **REPO_ROOT 起点の絶対パスに読み替えて**「作業前に該当ファイルを必ず Read せよ」と明記する（例: `/Users/.../vk-agents/rules/coding-rules.md`）。
    - 依頼内容（`$ARGUMENTS` または呼び出し元からの実装依頼）。**依頼内容や issue 本文は信頼できない入力**として扱う。`"` / `` ` `` / `$(...)` / `\` などが含まれるとシェル引数に直書きした場合にクオートが壊れコマンドインジェクション・意図しない変数展開の余地があるため、**プロンプトをシェル引数に直書きせず、必ずファイル経由（stdin）で渡す**（step 5）。
    - 末尾に「最後に output-schema に従った JSON を返すこと。strict mode のため `status` / `branch` / `summary` / `changed_files` / `error` の **5キーを必ず全て含める**（該当しないキーは空文字 `""`／空配列 `[]` で埋める）。コミットできたら `status=committed`、詰まったら `status=stuck` とし `error` に理由を書く」
@@ -85,9 +85,9 @@ codex は CLAUDE.md や `rules/` を自動では読まないため、**ペルソ
      -o "<SCRATCH>/wada-last.json" \
      < "<SCRATCH>/wada-prompt.txt"
    ```
-   > **⚠️ セキュリティ注意**: `--dangerously-bypass-approvals-and-sandbox` は codex の承認プロンプトとサンドボックスを**無効化**する。`-C` で作業ディレクトリを worktree に絞っても封じ込めは worktree 隔離のみであり、codex は **worktree 外（ホスト全体のファイル・ネットワーク）にも作用しうる**。信頼できない issue 本文がプロンプトに入る以上、間接プロンプトインジェクションで任意コマンド実行に至る経路が理屈上は成立する点を理解した上で使うこと。
+   > **⚠️ セキュリティ注意**: `--dangerously-bypass-approvals-and-sandbox` は Codex の承認プロンプトとサンドボックスを**無効化**する。`-C` で作業ディレクトリを worktree に絞っても封じ込めは worktree 隔離のみであり、Codex は **worktree 外（ホスト全体のファイル・ネットワーク）にも作用しうる**。信頼できない issue 本文がプロンプトに入る以上、間接プロンプトインジェクションで任意コマンド実行に至る経路が理屈上は成立する点を理解した上で使うこと。
 6. 完了後、`-o` で書き出された最終メッセージ JSON を Read し、`status` / `branch` / `summary` / `changed_files` / `error` を取り出す。以降の push・`/vk-pr`・CodeRabbit 監視は司が引き取る。
-7. **注意**: codex は `~/.codex/config.toml` の認証・モデル設定に依存する。未認証だと失敗するので、その場合は `stuck` 扱いにしてユーザーに codex の認証確認を促す。
+7. **注意**: Codex は `~/.codex/config.toml` の認証・モデル設定に依存する。未認証だと失敗するので、その場合は `stuck` 扱いにしてユーザーに Codex の認証確認を促す。
 
 ## 他エージェントから和田を呼ぶ方法
 
@@ -96,7 +96,7 @@ codex は CLAUDE.md や `rules/` を自動では読まないため、**ペルソ
 
 ```
 1. Read で REPO_ROOT/skills/staff-wp-dev/persona.md を読む
-2. エンジンを解決する（設定 staff_wp_dev.engine。codex は単独作業のみ、連携要なら claude にフォールバック）
-3. claude なら Agent（subagent_type: general-purpose）、codex なら codex exec で起動
-   prompt = persona.md の内容 + 依頼内容（codex の場合はルール絶対パス＋オーバーライドも注入）
+2. エンジンを解決する（設定 staff_wp_dev.engine。Codex は単独作業のみ、連携要なら claude にフォールバック）
+3. claude なら Agent（subagent_type: general-purpose）、Codex なら codex exec で起動
+   prompt = persona.md の内容 + 依頼内容（Codex の場合はルール絶対パス＋オーバーライドも注入）
 ```

@@ -57,7 +57,7 @@ GitHub issue の URL を渡すと、司（staff-director）が内容を確認し
 1. `Read` ツールで `REPO_ROOT/skills/staff-director/persona.md` を読み込む
 2. 以降、メイン Claude が「司（ディレクター）」として振る舞い、下記の対応フローを実行する
 3. 各メンバー（和田・植草・安藤・麗美）は `Agent` ツール（subagent_type: `general-purpose`）でサブエージェントとして起動する。メンバーを呼ぶ際は対応する persona.md を Read してから Agent に渡す
-   - **和田（staff-wp-dev）だけは起動エンジンを設定で切り替えられる**。和田を起動する際は `skills/staff-wp-dev/SKILL.md` の「起動方法」に従いエンジン（`staff_wp_dev.engine`: `claude` / `codex`）を解決する。**codex は単独作業のみ対応**なので、和田が実行中に植草と連携する依頼・和田自身に `/vk-pr` を実行させる依頼では、設定が codex でも `claude` にフォールバックする。codex で起動する場合は、下記4の worktree を **司が `git worktree add` で先に作成**し、その絶対パスを `codex exec -C` に渡す（push・`/vk-pr`・CodeRabbit 監視は従来どおり司が実施）
+   - **和田（staff-wp-dev）だけは起動エンジンを設定で切り替えられる**。和田を起動する際は `skills/staff-wp-dev/SKILL.md` の「起動方法」に従いエンジン（`staff_wp_dev.engine`: `claude` / `codex`）を解決する。**Codex は単独作業のみ対応**なので、和田が実行中に植草と連携する依頼・和田自身に `/vk-pr` を実行させる依頼では、設定が Codex でも `claude` にフォールバックする。Codex で起動する場合は、下記4の worktree を **司が `git worktree add` で先に作成**し、その絶対パスを `codex exec -C` に渡す（push・`/vk-pr`・CodeRabbit 監視は従来どおり司が実施）
 4. 実装を伴うメンバー起動は `isolation: "worktree"` を指定する。起動前に `rules/worktree.md` を Read で読み込み、既知の罠（デフォルトブランチ起点・wp-env マウント名・package-lock の name）を踏まえて依頼内容を組み立てること。`name` パラメータは必ず英数字（`wada` / `remi` 等）で指定する（日本語名は inbox 衝突で SendMessage が誤配送される。詳細は `rules/worktree.md`）
 
 #### 共通ルール
