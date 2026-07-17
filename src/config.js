@@ -948,6 +948,16 @@ function insertVkTerminalsPortField(fields) {
   return next;
 }
 
+function vkTerminalsPortOnlySettingsGroup() {
+  return {
+    label: 'VK Terminals（本体設定）',
+    tab: 'terminals',
+    note: VK_TERMINALS_SETTINGS_NOTE,
+    targetPath: VK_TERMINALS_CONFIG_TARGET_PATH,
+    fields: [vkTerminalsPortField()],
+  };
+}
+
 function resolveVkTerminalsSettingsSchemaForDescriptor(options) {
   let vkTerminalsDir = options.vkTerminalsDir;
   if (vkTerminalsDir === undefined) {
@@ -966,13 +976,7 @@ function buildVkTerminalsSettingsGroups(options = {}) {
   const schema = resolveVkTerminalsSettingsSchemaForDescriptor(options);
   if (!schema) {
     console.warn('[Config] settings-schema.json が見つからない／読めないため、VK Terminals 本体設定は orchestrator 独自項目（port）のみ表示します。');
-    return [{
-      label: 'VK Terminals（本体設定）',
-      tab: 'terminals',
-      note: VK_TERMINALS_SETTINGS_NOTE,
-      targetPath: VK_TERMINALS_CONFIG_TARGET_PATH,
-      fields: [vkTerminalsPortField()],
-    }];
+    return [vkTerminalsPortOnlySettingsGroup()];
   }
 
   const hiddenKeys = new Set(options.hiddenKeys ?? VK_TERMINALS_SCHEMA_HIDDEN_KEYS);
@@ -999,6 +1003,9 @@ function buildVkTerminalsSettingsGroups(options = {}) {
       ...groups[0],
       fields: insertVkTerminalsPortField(groups[0].fields),
     };
+  } else {
+    console.warn('[Config] settings-schema.json に表示可能なスキーマ項目が無いため、VK Terminals 本体設定は orchestrator 独自項目（port）のみ表示します。');
+    return [vkTerminalsPortOnlySettingsGroup()];
   }
   return groups;
 }
