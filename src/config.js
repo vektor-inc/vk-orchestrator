@@ -1028,14 +1028,14 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
             options: [
               { value: '',       label: '未設定（既定: claude）' },
               { value: 'claude', label: 'claude' },
-              { value: 'codex',  label: 'codex（単独作業のみ・push/PR は司が担当）' },
+              { value: 'codex',  label: 'Codex（単独作業のみ・push/PR は司が担当）' },
             ],
             help: 'staff-wp-dev（和田）を起動するときの実行エンジン。未設定時は Claude にフォールバックします' },
           { key: 'multi_repo_task.default_engine', label: 'vk-multi-repo-task の既定実行エンジン', type: 'select',
             options: [
               { value: '',       label: '未設定（既定: claude）' },
               { value: 'claude', label: 'claude' },
-              { value: 'codex',  label: 'codex' },
+              { value: 'codex',  label: 'Codex' },
             ],
             help: 'マルチリポジトリタスク（vk-multi-repo-task）を新規作成するときの既定エンジン。未設定時は Claude にフォールバックします' },
           { key: 'features.coderabbit', label: 'CodeRabbit 監視を有効化', type: 'boolean', default: true, help: 'OFF で PR 後の CodeRabbit 監視をスキップし、/code-review 等での確認を案内します。社外・個人リポジトリなど CodeRabbit 未導入の環境では OFF 推奨です' },

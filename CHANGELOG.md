@@ -3,6 +3,7 @@
 - [ 仕様変更 ] vk-terminals を 1.25.0 から 1.26.0 にアップデート（設定スキーマ `settings-schema.json` の同梱・設定モーダルの保存ヒント改行修正）
 - [ 仕様変更 ] 設定パネルの VK Terminals 本体設定を vk-terminals 同梱の設定スキーマから読み込む方式に変更し、本体との説明文ズレや項目漏れを解消
 - [ 仕様変更 ] VK Terminals の GPU 起動モード設定を本体 config の `gpu` に一本化し、オーケストレーター側の起動オプション設定欄を撤去
+- [ 仕様変更 ] 設定パネルのエンジン選択肢に表示する Codex の製品名表記を修正
 - [ 不具合修正 ] エージェントが手動マージ後にメタ issue を先にクローズすると、ペインの PR ラベルがマージ済み表示に切り替わらず state.json のエントリも消し込まれない不具合を修正
 - [ その他 ] 旧 orchestrator config の `vkTerminals.port` を VK Terminals 本体 config へ初回移行する過渡的な後方互換処理を撤去 (#104)
 
