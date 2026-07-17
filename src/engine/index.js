@@ -38,6 +38,7 @@ import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from '.
 import { startKeepAwake } from '../power/keep-awake.js';
 import { createNotifyPaneMerged } from './notify-pane-merged.js';
 import { createWaitingMarkerScanner } from './waiting-marker-scanner.js';
+import { createCommandsFileProcessor, startCommandsFileWatcher } from './commands-file.js';
 import { installPersistentConsoleLogger } from './persistent-logger.js';
 import { createStartLock } from './start-lock.js';
 import { writeAgentRulesHandoff } from './agentRulesHandoff.js';
@@ -247,6 +248,12 @@ const handleScanInProgressMerged = createScanInProgressMergedHandler({
 function getMetaIssue(issueNumber) {
   return github.getIssueState(GITHUB_OWNER, GITHUB_REPO, issueNumber, { retryDelays: [] });
 }
+
+const commandsFileProcessor = createCommandsFileProcessor({
+  github,
+  getMetaIssue,
+  logger: console,
+});
 
 const reconcileOrphanedMergedTasks = createReconcileOrphanedMergedTasks({
   getAllTasks,
@@ -1466,47 +1473,50 @@ async function loopBody() {
   //    pickupEnabled=false の場合は fetch 系が空配列を返すため、取り込み・実行とも何もしない。
   await importNewTasks();
 
-  // 2. in-progress スキャン: 指示待ち検知 → waiting-input / PR 完了 → waiting-merge /
+  // 2. VK Terminals からのステータス変更コマンドを消化する（VK Terminals 不要）
+  await commandsFileProcessor.consumeOnce();
+
+  // 3. in-progress スキャン: 指示待ち検知 → waiting-input / PR 完了 → waiting-merge /
   //    PR マージ → done / PR 未マージ closed → failed（VK Terminals 不要。PR アイコンのみ任意）
   await scanInProgressIssues();
 
-  // 3. マージ待ち issue のマージ検知 + automerge（VK Terminals 不要）
+  // 4. マージ待ち issue のマージ検知 + automerge（VK Terminals 不要）
   await checkWaitingMergeIssues();
 
-  // 4. 失敗扱いになった issue の事後復旧チェック（VK Terminals 不要）
+  // 5. 失敗扱いになった issue の事後復旧チェック（VK Terminals 不要）
   await recheckFailedIssues();
 
-  // 5. answered 復帰スキャン: `Status: answered` の waiting-input を in-progress へ戻す。
+  // 6. answered 復帰スキャン: `Status: answered` の waiting-input を in-progress へ戻す。
   //    返信転送不要なので VK Terminals に依存せず、健全性ゲートより前で回す（VK Terminals 不要）。
   await scanAnsweredRecovery();
 
-  // 6. ここから先（返信転送・後始末・dispatch）は VK Terminals が必要
+  // 7. ここから先（返信転送・後始末・dispatch）は VK Terminals が必要
   const healthy = await checkHealth(VK_PORT);
   if (!healthy) {
     console.log(`[warn] VK Terminals (port ${VK_PORT}) に接続できません。返信転送・後始末・起動をスキップします。`);
     return;
   }
 
-  // 7. VK Terminals の再起動で消える注入メニューを、接続確立後に毎回冪等に再投稿する
+  // 8. VK Terminals の再起動で消える注入メニューを、接続確立後に毎回冪等に再投稿する
   await syncOrchestratorMenu();
 
-  // 8. 指示待ちスキャン: ユーザー返信を pane に転送して in-progress に戻す
+  // 9. 指示待ちスキャン: ユーザー返信を pane に転送して in-progress に戻す
   await scanWaitingInputIssues();
 
-  // 9. issue 連動ペインの入力待ちマーカーを push（waiting-input ラベルへの完全鏡写し）。
+  // 10. issue 連動ペインの入力待ちマーカーを push（waiting-input ラベルへの完全鏡写し）。
   //    VK Terminals states の生存ペインへ反映するため checkHealth 後ろ
   await scanWaitingMarkers();
 
-  // 10. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す
+  // 11. ウォッチドッグ（安全網）: 無言で死んだ/ハングした in-progress タスクを failed に倒す
   //    （VK Terminals states で pane の生死・無反応を見るため checkHealth 後ろ）
   await scanWatchdog();
 
-  // 11. 先回りクローズ済み + PR マージ済みの state 残骸を後始末
+  // 12. 先回りクローズ済み + PR マージ済みの state 残骸を後始末
   //     VK Terminals が到達不能な間は prMerged 通知を送れないため、
   //     health 確認済みのループでのみ通知してから state を消し込む。
   await reconcileOrphanedMergedTasks();
 
-  // 12. ready をディスパッチ
+  // 13. ready をディスパッチ
   const issues = await github.fetchPendingIssues();
   if (issues.length === 0) {
     console.log('[poll] 実行待ちタスクなし');
@@ -1606,11 +1616,16 @@ async function main() {
     // OS ごとの方法でシステムスリープを抑止する（run-once は短命なので不要）。
     // macOS は caffeinate、Windows は SetThreadExecutionState。未対応 OS は警告のみ。
     const keepAwake = startKeepAwake();
+    const commandsWatcher = startCommandsFileWatcher(commandsFileProcessor, { logger: console });
     // graceful shutdown 時にスリープ抑止と起動ロックを即時解除する。
     // Ctrl-C / kill 時に待たず解放する。SIGINT / SIGTERM は解除後に自前で終了する。
-    process.on('exit', () => keepAwake.stop());
+    process.on('exit', () => {
+      commandsWatcher.close();
+      keepAwake.stop();
+    });
     for (const sig of ['SIGINT', 'SIGTERM']) {
       process.on(sig, () => {
+        commandsWatcher.close();
         keepAwake.stop();
         startLock.releaseSync();
         process.exit(0);

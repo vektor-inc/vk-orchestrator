@@ -18,6 +18,7 @@ import {
   loadConfig,
   migrateLegacyOrchestratorConfig,
   migrateLegacyVkAgentsGuiKeys,
+  resolveCommandsPath,
   resolveTasksViewPath,
   resolveVkAgentsRepoPath,
   resolveVkAgentsConfigPath,
@@ -30,6 +31,7 @@ import {
   isVkAgentsSetup,
   writeVkAgentsManifestSource,
   writeVkAgentsSettings,
+  writeVkTerminalsCommandsConfig,
   writeVkTerminalsTasksViewConfig,
   getTaskConfig,
   getTaskCwd,
@@ -424,6 +426,18 @@ test('resolveTasksViewPath: home 配下の tasks-view.json を返す', () => {
   }
 });
 
+test('resolveCommandsPath: home 配下の commands.jsonl を返す', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-commands-path-'));
+  try {
+    assert.equal(
+      resolveCommandsPath({ homeDir: dir }),
+      join(dir, '.task-queue', 'commands.jsonl'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('writeVkTerminalsTasksViewConfig: 既存設定を保ったまま tasksViewPath を注入する', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-tasks-view-'));
   try {
@@ -442,6 +456,30 @@ test('writeVkTerminalsTasksViewConfig: 既存設定を保ったまま tasksViewP
       port: 13847,
       apiHost: '100.64.0.2',
       tasksViewPath: join(dir, '.task-queue', 'tasks-view.json'),
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeVkTerminalsCommandsConfig: 既存設定を保ったまま commandsPath を注入する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-commands-'));
+  try {
+    const configPath = join(dir, '.vk-terminals', 'config.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({ port: 13847, apiHost: '100.64.0.2' }));
+
+    const result = writeVkTerminalsCommandsConfig({ homeDir: dir });
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+
+    assert.deepEqual(result, {
+      configPath,
+      commandsPath: join(dir, '.task-queue', 'commands.jsonl'),
+    });
+    assert.deepEqual(config, {
+      port: 13847,
+      apiHost: '100.64.0.2',
+      commandsPath: join(dir, '.task-queue', 'commands.jsonl'),
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
