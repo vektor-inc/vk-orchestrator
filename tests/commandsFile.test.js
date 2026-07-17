@@ -283,6 +283,57 @@ test('consumeCommandsFile: 一時失敗 5xx は上限までリトライし超過
   });
 });
 
+test('consumeCommandsFile: 403 は一時失敗として上限超過までリトライする', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const statePath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'secondary-rate-limit-403',
+      taskId: 403,
+      action: 'set-status',
+      expected: 'failed',
+      to: 'ready',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const { entries, logger } = captureLogger();
+    let getCalls = 0;
+    const common = {
+      commandsPath,
+      processedPath: statePath,
+      logger,
+      transientRetryLimit: 2,
+      github: {
+        setStatus: async () => {
+          throw new Error('setStatus should not be called');
+        },
+      },
+      getMetaIssue: async () => {
+        getCalls += 1;
+        throw httpError(403, 'secondary rate limit');
+      },
+    };
+
+    await consumeCommandsFile(common);
+
+    const firstState = JSON.parse(readFileSync(statePath, 'utf8'));
+    assert.equal(getCalls, 1);
+    assert.equal(firstState.consumedLines, 0);
+    assert.equal(firstState.retry?.lineNumber, 1);
+    assert.equal(firstState.retry?.attempts, 1);
+    assert.doesNotMatch(entries.warn[0], /恒久失敗/);
+
+    await consumeCommandsFile(common);
+    await consumeCommandsFile(common);
+    await consumeCommandsFile(common);
+
+    const finalState = JSON.parse(readFileSync(statePath, 'utf8'));
+    assert.equal(getCalls, 3);
+    assert.equal(finalState.consumedLines, 1);
+    assert.equal(finalState.retry, null);
+  });
+});
+
 test('consumeCommandsFile: 不良行は 2 回目に再 warn / 再評価しない', async () => {
   await withTmpDir(async (dir) => {
     const commandsPath = join(dir, 'commands.jsonl');

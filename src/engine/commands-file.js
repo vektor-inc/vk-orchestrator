@@ -275,11 +275,7 @@ export async function processSetStatusCommand(command, dependencies = {}) {
 function splitCompleteLines(text) {
   if (!text) return [];
   const chunks = text.split('\n');
-  if (text.endsWith('\n')) {
-    chunks.pop();
-  } else {
-    chunks.pop();
-  }
+  chunks.pop();
   return chunks.map((line) => line.endsWith('\r') ? line.slice(0, -1) : line);
 }
 
@@ -291,7 +287,7 @@ function getErrorStatus(err) {
 
 function isPermanentError(err) {
   const status = getErrorStatus(err);
-  return status != null && status >= 400 && status < 500 && status !== 429;
+  return status != null && status >= 400 && status < 500 && status !== 403 && status !== 429;
 }
 
 function appendRecentId(state, id, limit) {
@@ -323,6 +319,8 @@ export async function consumeCommandsFile(options = {}) {
     throw err;
   }
 
+  // commands.jsonl は追記専用契約。既存行の書き換えや同一以下の長さでの全書換は
+  // 行カーソルの整合を壊すため行わないこと。
   const lines = splitCompleteLines(text);
   const state = await readCommandsState(statePath, { recentIdLimit });
   if (state.consumedLines > lines.length) {
