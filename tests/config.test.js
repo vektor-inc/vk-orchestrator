@@ -1731,6 +1731,24 @@ test('buildSettingsDescriptor: VK Terminals 本体設定は settings-schema.json
   });
 });
 
+test('buildSettingsDescriptor: VK Terminals スキーマ側に port があれば追加挿入しない', () => {
+  withVkTerminalsSchema(vkTerminalsSchemaFixture([{
+    label: '基本',
+    fields: [
+      { key: 'apiHost', label: 'API ホスト', type: 'text' },
+      { key: 'port', label: '本体側 API ポート', type: 'number', help: 'VK Terminals 側の定義' },
+      { key: 'initialCommand', label: '初期コマンド', type: 'text' },
+    ],
+  }]), (vkTerminalsDir) => {
+    const desc = buildSettingsDescriptor('/tmp/config.json', { vkTerminalsDir });
+    const group = desc.groups.find((g) => g.label === 'VK Terminals（本体設定）');
+    assert.deepEqual(group.fields.map((field) => field.key), ['apiHost', 'port', 'initialCommand']);
+    assert.equal(group.fields.filter((field) => field.key === 'port').length, 1);
+    assert.equal(group.fields.find((field) => field.key === 'port').label, '本体側 API ポート');
+    assert.equal(group.fields.find((field) => field.key === 'port').help, 'VK Terminals 側の定義');
+  });
+});
+
 test('buildSettingsDescriptor: VK Terminals スキーマが複数グループなら group label を suffix にする', () => {
   withVkTerminalsSchema(vkTerminalsSchemaFixture([
     {

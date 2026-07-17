@@ -23,6 +23,8 @@ export const DEFAULT_VENDORED_VK_AGENTS_DIR = join(REPO_ROOT, 'vendor', 'vk-agen
 const DEFAULT_VK_TERMINALS_PORT = 13847;
 const VK_TERMINALS_CONFIG_TARGET_PATH = '~/.vk-terminals/config.json';
 const VK_TERMINALS_SETTINGS_NOTE = 'VK Terminals 本体の設定ファイル（~/.vk-terminals/config.json）に直接保存され、VK Terminals が読み込みます。';
+// VK Terminals 本体スキーマ由来の項目のうち、orchestrator の設定画面には
+// 出したくないキーを列挙する。現状は本体スキーマの全項目を表示する。
 const VK_TERMINALS_SCHEMA_HIDDEN_KEYS = [];
 
 export const GITHUB_TOKEN_RESOLUTION_HELP = 'GitHub トークンを解決できません。gh CLI 未導入の場合は `brew install gh`（Ubuntu: `sudo apt install gh`）でインストールし、`gh auth login` で認証してください。';
@@ -943,6 +945,7 @@ function vkTerminalsPortField() {
 
 function insertVkTerminalsPortField(fields) {
   const next = fields.map((field) => ({ ...field }));
+  if (next.some((field) => field.key === 'port')) return next;
   const apiHostIndex = next.findIndex((field) => field.key === 'apiHost');
   next.splice(apiHostIndex >= 0 ? apiHostIndex + 1 : 0, 0, vkTerminalsPortField());
   return next;
