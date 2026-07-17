@@ -1650,7 +1650,7 @@ test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () 
   );
   assert.equal(multiRepoEngineField.options.find((o) => o.value === 'codex').label, 'codex');
   assert.match(multiRepoEngineField.help, /vk-multi-repo-task/);
-  assert.match(multiRepoEngineField.help, /claude/);
+  assert.match(multiRepoEngineField.help, /Claude/);
 });
 
 test('buildSettingsDescriptor: Agents グループは workspace.search_paths（lines）を先頭に、CodeRabbit 2項目を末尾に持つ', () => {
