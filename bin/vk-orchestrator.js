@@ -12,6 +12,7 @@
 
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { formatErrorSummary } from '../src/engine/format-error.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -595,6 +596,6 @@ commands:
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(formatErrorSummary(err));
   process.exit(1);
 });

@@ -40,6 +40,7 @@ import { createWaitingMarkerScanner } from './waiting-marker-scanner.js';
 import { installPersistentConsoleLogger } from './persistent-logger.js';
 import { createStartLock } from './start-lock.js';
 import { writeAgentRulesHandoff } from './agentRulesHandoff.js';
+import { formatErrorSummary } from './format-error.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -1519,7 +1520,7 @@ async function loop() {
       // 同ティック内の後続 sequential タスクを待たせるため occupied に追加
       if (started && repoKey) occupiedRepos.add(repoKey);
     } catch (err) {
-      console.error(`[poll] issue #${issue.number} 起動エラー:`, err);
+      console.error(`[poll] issue #${issue.number} 起動エラー: ${formatErrorSummary(err)}`);
     } finally {
       inFlightIssues.delete(issue.number);
     }
@@ -1586,7 +1587,7 @@ async function main() {
 
     // watch モード: 初回 loop を起動し、setInterval で定期実行する。
     // setInterval 経由の呼び出しは safe wrapper を通して unhandled rejection を防ぐ。
-    const runLoopSafely = () => loop().catch(err => console.error('[Loop]', err));
+    const runLoopSafely = () => loop().catch(err => console.error('[Loop]', formatErrorSummary(err)));
     runLoopSafely();
     setInterval(runLoopSafely, POLL_INTERVAL);
   } catch (err) {
@@ -1596,6 +1597,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('[Fatal]', err);
+  console.error('[Fatal]', formatErrorSummary(err));
   process.exit(1);
 });
