@@ -323,6 +323,7 @@ async function main() {
       const { spawn } = await import('child_process');
       const { randomUUID } = await import('crypto');
       const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath, writeVkTerminalsTasksViewConfig,
+        writeVkTerminalsCommandsConfig,
         resolveVkTerminalsApiHost, resolveVkTerminalsApiPort, getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
       const {
@@ -361,6 +362,13 @@ async function main() {
         console.log(`tasks-view snapshot パスを VK Terminals 設定へ反映しました → ${tasksView.tasksViewPath}`);
       } catch (err) {
         console.warn(`[up] tasks-view snapshot パスの VK Terminals 設定反映に失敗しました（処理は継続）: ${err.message}`);
+      }
+
+      try {
+        const commands = writeVkTerminalsCommandsConfig();
+        console.log(`commands.jsonl パスを VK Terminals 設定へ反映しました → ${commands.commandsPath}`);
+      } catch (err) {
+        console.warn(`[up] commands.jsonl パスの VK Terminals 設定反映に失敗しました（処理は継続）: ${err.message}`);
       }
 
       const startOrchestrator = !process.argv.includes('--no-orchestrator');

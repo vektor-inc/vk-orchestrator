@@ -641,7 +641,7 @@ export class GitHubClient {
   // リトライしても結果が変わらないため即時 throw する。
   // 429 Too Many Requests のみ 4xx でもリトライ対象として残す（レート制限の回復を待つため）。
   //
-  // 戻り値には state / closedAt に加え、title / htmlUrl / body も含める。
+  // 戻り値には state / closedAt に加え、title / htmlUrl / body / labels も含める。
   // ペインヘッダーに元の作業対象 issue のタイトル・リンクを表示する用途で使う
   // （既存呼び出し側は .state / .closedAt しか参照していないため後方互換）。
   //
@@ -651,7 +651,7 @@ export class GitHubClient {
   //
   // @param {object} [opts]
   // @param {number[]} [opts.retryDelays=[1000,3000,9000]]  リトライ間隔（空配列でリトライなし）
-  // @returns {Promise<{state:string, closedAt:string|null, title:string, htmlUrl:string, body:string|null}>}
+  // @returns {Promise<{state:string, closedAt:string|null, title:string, htmlUrl:string, body:string|null, labels:Array}>}
   async getIssueState(owner, repo, issueNumber, { retryDelays = [1000, 3000, 9000] } = {}) {
     const delays = retryDelays;
     let lastErr;
@@ -666,6 +666,7 @@ export class GitHubClient {
           title: data.title,
           htmlUrl: data.html_url,
           body: data.body,
+          labels: data.labels ?? [],
         };
       } catch (err) {
         lastErr = err;
