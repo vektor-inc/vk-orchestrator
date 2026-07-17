@@ -1,8 +1,11 @@
 import { promises as fsPromises, watch as fsWatch } from 'fs';
 import { basename, dirname, join } from 'path';
-import { DEFAULT_LABELS, getLabelsConfig, resolveCommandsPath } from '../config.js';
+import { DEFAULT_LABELS, getLabelsConfig, resolveCommandsPath, writeJsonAtomic } from '../config.js';
 
 const STATUS_PREFIX = 'status:';
+const STATE_VERSION = 1;
+const DEFAULT_RECENT_ID_LIMIT = 1000;
+const DEFAULT_TRANSIENT_RETRY_LIMIT = 3;
 const ALLOWED_TRANSITIONS = new Set([
   'awaiting-approval->ready',
   'ready->awaiting-approval',
@@ -78,6 +81,22 @@ function normalizeTaskId(value) {
   return Number(trimmed);
 }
 
+function sanitizeLogText(value) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+}
+
+function logId(value) {
+  return sanitizeLogText(value) || '(unknown)';
+}
+
+function formatTimestamp(value) {
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
 function parseCommandLine(line, lineNumber, logger) {
   const trimmed = line.trim();
   if (!trimmed) return null;
@@ -89,17 +108,92 @@ function parseCommandLine(line, lineNumber, logger) {
       return null;
     }
     return parsed;
-  } catch (err) {
-    logger.warn?.(`[commands-file] ${lineNumber} 行目の JSON パースに失敗したため無視します: ${err.message}`);
+  } catch {
+    logger.warn?.(`[commands-file] ${lineNumber} 行目の JSON パースに失敗したため無視します`);
     return null;
   }
+}
+
+function normalizeRecentIds(ids, limit = DEFAULT_RECENT_ID_LIMIT) {
+  if (!Array.isArray(ids)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of ids) {
+    const id = String(raw ?? '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out.slice(-limit);
+}
+
+function createEmptyCommandState() {
+  return {
+    version: STATE_VERSION,
+    consumedLines: 0,
+    recentIds: [],
+    retry: null,
+  };
+}
+
+export async function readCommandsState(statePath, options = {}) {
+  const recentIdLimit = options.recentIdLimit ?? DEFAULT_RECENT_ID_LIMIT;
+  try {
+    const text = await fsPromises.readFile(statePath, 'utf8');
+    const parsed = JSON.parse(text);
+    const legacyIds = Array.isArray(parsed) ? parsed : parsed?.ids;
+    if (Array.isArray(legacyIds) && !Number.isInteger(parsed?.consumedLines)) {
+      const ids = normalizeRecentIds(legacyIds, Number.POSITIVE_INFINITY);
+      return {
+        ...createEmptyCommandState(),
+        legacyIds: ids,
+        recentIds: normalizeRecentIds(ids, recentIdLimit),
+      };
+    }
+
+    const consumedLines = Number.isInteger(parsed?.consumedLines) && parsed.consumedLines > 0
+      ? parsed.consumedLines
+      : 0;
+    const retry = parsed?.retry && Number.isInteger(parsed.retry.lineNumber)
+      ? {
+          lineNumber: parsed.retry.lineNumber,
+          attempts: Number.isInteger(parsed.retry.attempts) && parsed.retry.attempts > 0
+            ? parsed.retry.attempts
+            : 0,
+          firstFailedAt: typeof parsed.retry.firstFailedAt === 'string' ? parsed.retry.firstFailedAt : null,
+          lastFailedAt: typeof parsed.retry.lastFailedAt === 'string' ? parsed.retry.lastFailedAt : null,
+        }
+      : null;
+
+    return {
+      version: STATE_VERSION,
+      consumedLines,
+      recentIds: normalizeRecentIds(parsed?.recentIds, recentIdLimit),
+      retry,
+    };
+  } catch (err) {
+    if (err.code === 'ENOENT') return createEmptyCommandState();
+    throw err;
+  }
+}
+
+export async function writeCommandsState(statePath, state, now = new Date(), options = {}) {
+  const recentIdLimit = options.recentIdLimit ?? DEFAULT_RECENT_ID_LIMIT;
+  const payload = {
+    version: STATE_VERSION,
+    consumedLines: Math.max(0, Number.isInteger(state?.consumedLines) ? state.consumedLines : 0),
+    recentIds: normalizeRecentIds(state?.recentIds, recentIdLimit),
+    retry: state?.retry ?? null,
+    updatedAt: now instanceof Date ? now.toISOString() : String(now),
+  };
+  writeJsonAtomic(statePath, payload);
 }
 
 export async function readProcessedCommandIds(processedPath) {
   try {
     const text = await fsPromises.readFile(processedPath, 'utf8');
     const parsed = JSON.parse(text);
-    const ids = Array.isArray(parsed) ? parsed : parsed?.ids;
+    const ids = Array.isArray(parsed) ? parsed : parsed?.ids ?? parsed?.recentIds;
     if (!Array.isArray(ids)) return new Set();
     return new Set(ids.map((id) => String(id)).filter((id) => id !== ''));
   } catch (err) {
@@ -109,17 +203,10 @@ export async function readProcessedCommandIds(processedPath) {
 }
 
 export async function writeProcessedCommandIds(processedPath, ids, now = new Date()) {
-  await fsPromises.mkdir(dirname(processedPath), { recursive: true });
-  const tmpPath = join(
-    dirname(processedPath),
-    `.${basename(processedPath)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
-  );
-  const payload = {
-    ids: [...ids].sort(),
-    updatedAt: now instanceof Date ? now.toISOString() : String(now),
-  };
-  await fsPromises.writeFile(tmpPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
-  await fsPromises.rename(tmpPath, processedPath);
+  await writeCommandsState(processedPath, {
+    ...createEmptyCommandState(),
+    recentIds: [...ids].sort(),
+  }, now);
 }
 
 function validateCommand(command, logger) {
@@ -131,12 +218,12 @@ function validateCommand(command, logger) {
 
   const taskId = normalizeTaskId(command.taskId);
   if (taskId == null) {
-    logger.warn?.(`[commands-file] id=${id}: taskId が不正なため無視します`);
+    logger.warn?.(`[commands-file] id=${logId(id)}: taskId が不正なため無視します`);
     return null;
   }
 
   if (command.action == null || command.to == null || command.expected == null || command.requestedAt == null) {
-    logger.warn?.(`[commands-file] id=${id}: 必須キーが不足しているため無視します`);
+    logger.warn?.(`[commands-file] id=${logId(id)}: 必須キーが不足しているため無視します`);
     return null;
   }
 
@@ -154,40 +241,75 @@ export async function processSetStatusCommand(command, dependencies = {}) {
 
   const { id, taskId } = valid;
   if (command.action !== 'set-status') {
-    logger.warn?.(`[commands-file] id=${id}: 未対応 action "${command.action}" のため無視します`);
+    logger.warn?.(`[commands-file] id=${logId(id)}: 未対応 action "${sanitizeLogText(command.action)}" のため無視します`);
     return { evaluated: true, applied: false, reason: 'unsupported-action', id };
   }
 
   const expected = normalizeStatusName(command.expected, labelsConfig);
   const to = normalizeStatusName(command.to, labelsConfig);
   if (!expected || !to) {
-    logger.warn?.(`[commands-file] id=${id}: expected/to のステータス名が不正なため拒否します`);
+    logger.warn?.(`[commands-file] id=${logId(id)}: expected/to のステータス名が不正なため拒否します`);
     return { evaluated: true, applied: false, reason: 'invalid-status', id };
   }
 
   if (!isAllowedTransition(expected, to)) {
-    logger.warn?.(`[commands-file] id=${id}: 許可されていない遷移 ${expected} → ${to} のため拒否します`);
+    logger.warn?.(`[commands-file] id=${logId(id)}: 許可されていない遷移 ${sanitizeLogText(expected)} → ${sanitizeLogText(to)} のため拒否します`);
     return { evaluated: true, applied: false, reason: 'disallowed-transition', id };
   }
 
   const issue = await getMetaIssue(taskId);
   const actual = extractIssueStatus(issue, labelsConfig);
   if (actual !== expected) {
-    logger.info?.(`[commands-file] id=${id}: CAS 不一致（expected=${expected}, actual=${actual ?? 'none'}）のため破棄します`);
+    logger.info?.(`[commands-file] id=${logId(id)}: CAS 不一致（expected=${sanitizeLogText(expected)}, actual=${sanitizeLogText(actual ?? 'none')}）のため破棄します`);
     return { evaluated: true, applied: false, reason: 'cas-mismatch', id };
   }
 
   const nextLabel = statusLabelFor(to, labelsConfig);
+  // waiting-merge -> done を GUI から明示実行した場合も、setStatus の設計どおり
+  // upstream source issue への完了コメント投稿まで進む。
   await github.setStatus(taskId, nextLabel);
-  logger.info?.(`[commands-file] id=${id}: issue #${taskId} を ${nextLabel} へ変更しました`);
+  logger.info?.(`[commands-file] id=${logId(id)}: issue #${taskId} を ${sanitizeLogText(nextLabel)} へ変更しました`);
   return { evaluated: true, applied: true, reason: 'applied', id };
+}
+
+function splitCompleteLines(text) {
+  if (!text) return [];
+  const chunks = text.split('\n');
+  if (text.endsWith('\n')) {
+    chunks.pop();
+  } else {
+    chunks.pop();
+  }
+  return chunks.map((line) => line.endsWith('\r') ? line.slice(0, -1) : line);
+}
+
+function getErrorStatus(err) {
+  const status = err?.status ?? err?.response?.status ?? err?.statusCode;
+  const numeric = Number(status);
+  return Number.isInteger(numeric) ? numeric : null;
+}
+
+function isPermanentError(err) {
+  const status = getErrorStatus(err);
+  return status != null && status >= 400 && status < 500 && status !== 429;
+}
+
+function appendRecentId(state, id, limit) {
+  if (!id) return;
+  state.recentIds = normalizeRecentIds([...state.recentIds, id], limit);
+}
+
+function clearRetryForLine(state, lineNumber) {
+  if (state.retry?.lineNumber === lineNumber) state.retry = null;
 }
 
 export async function consumeCommandsFile(options = {}) {
   const commandsPath = options.commandsPath ?? resolveCommandsPath();
-  const processedPath = options.processedPath ?? join(dirname(commandsPath), 'commands-processed.json');
+  const statePath = options.statePath ?? options.processedPath ?? join(dirname(commandsPath), 'commands-processed.json');
   const logger = options.logger ?? console;
   const now = options.now ?? (() => new Date());
+  const recentIdLimit = options.recentIdLimit ?? DEFAULT_RECENT_ID_LIMIT;
+  const transientRetryLimit = options.transientRetryLimit ?? DEFAULT_TRANSIENT_RETRY_LIMIT;
   const github = options.github;
   const getMetaIssue = options.getMetaIssue ?? ((issueNumber) =>
     github.getIssueState(github.owner, github.repo, issueNumber, { retryDelays: [] })
@@ -201,19 +323,36 @@ export async function consumeCommandsFile(options = {}) {
     throw err;
   }
 
-  let processed = await readProcessedCommandIds(processedPath);
+  const lines = splitCompleteLines(text);
+  const state = await readCommandsState(statePath, { recentIdLimit });
+  if (state.consumedLines > lines.length) {
+    logger.warn?.('[commands-file] commands.jsonl が短くなっているため行カーソルを先頭へ戻します');
+    state.consumedLines = 0;
+    state.retry = null;
+  }
+  const processed = new Set([...(state.legacyIds ?? []), ...state.recentIds]);
   let changed = false;
   const summary = { read: 0, evaluated: 0, applied: 0, skipped: 0 };
-  const lines = text.split(/\r?\n/);
 
-  for (const [index, line] of lines.entries()) {
+  for (let index = state.consumedLines; index < lines.length; index++) {
+    const line = lines[index];
+    const lineNumber = index + 1;
     const command = parseCommandLine(line, index + 1, logger);
-    if (!command) continue;
+    if (!command) {
+      state.consumedLines = lineNumber;
+      clearRetryForLine(state, lineNumber);
+      changed = true;
+      continue;
+    }
 
     summary.read += 1;
     const id = command.id == null ? '' : String(command.id).trim();
     if (id && processed.has(id)) {
       summary.skipped += 1;
+      state.consumedLines = lineNumber;
+      clearRetryForLine(state, lineNumber);
+      appendRecentId(state, id, recentIdLimit);
+      changed = true;
       continue;
     }
 
@@ -221,22 +360,55 @@ export async function consumeCommandsFile(options = {}) {
     try {
       result = await processSetStatusCommand(command, { ...options, github, getMetaIssue });
     } catch (err) {
-      logger.warn?.(`[commands-file] id=${id || '(unknown)'}: 処理に失敗しました（次回再試行）: ${err.message}`);
-      continue;
+      if (isPermanentError(err)) {
+        const status = getErrorStatus(err);
+        logger.warn?.(`[commands-file] id=${logId(id)}: 恒久失敗（HTTP ${status}）のため隔離します`);
+        state.consumedLines = lineNumber;
+        clearRetryForLine(state, lineNumber);
+        appendRecentId(state, id, recentIdLimit);
+        changed = true;
+        continue;
+      }
+
+      const failedAt = formatTimestamp(now());
+      const retry = state.retry?.lineNumber === lineNumber
+        ? state.retry
+        : { lineNumber, attempts: 0, firstFailedAt: failedAt, lastFailedAt: null };
+      retry.attempts += 1;
+      retry.lastFailedAt = failedAt;
+      state.retry = retry;
+      changed = true;
+
+      if (retry.attempts > transientRetryLimit) {
+        const status = getErrorStatus(err);
+        const statusText = status == null ? 'network/unknown' : `HTTP ${status}`;
+        logger.warn?.(`[commands-file] id=${logId(id)}: 一時失敗（${statusText}）がリトライ上限を超えたため隔離します`);
+        state.consumedLines = lineNumber;
+        clearRetryForLine(state, lineNumber);
+        appendRecentId(state, id, recentIdLimit);
+        continue;
+      }
+
+      const message = sanitizeLogText(err?.message);
+      logger.warn?.(`[commands-file] id=${logId(id)}: 一時失敗のため次回再試行します（${retry.attempts}/${transientRetryLimit}）${message ? `: ${message}` : ''}`);
+      break;
     }
 
     if (result.evaluated) {
       summary.evaluated += 1;
-      if (result.id) {
-        processed.add(result.id);
-        changed = true;
-      }
       if (result.applied) summary.applied += 1;
     }
+    if (result.id) {
+      processed.add(result.id);
+      appendRecentId(state, result.id, recentIdLimit);
+    }
+    state.consumedLines = lineNumber;
+    clearRetryForLine(state, lineNumber);
+    changed = true;
   }
 
   if (changed) {
-    await writeProcessedCommandIds(processedPath, processed, now());
+    await writeCommandsState(statePath, state, now(), { recentIdLimit });
   }
 
   return summary;
@@ -266,7 +438,7 @@ export function startCommandsFileWatcher(processor, options = {}) {
     timer = setTimeout(() => {
       timer = null;
       processor.consumeOnce().catch((err) => {
-        logger.warn?.(`[commands-file] watch 起点の消化に失敗しました: ${err.message}`);
+        logger.warn?.(`[commands-file] watch 起点の消化に失敗しました: ${sanitizeLogText(err.message)}`);
       });
     }, debounceMs);
   };
@@ -278,11 +450,11 @@ export function startCommandsFileWatcher(processor, options = {}) {
         if (!filename || filename === basename(commandsPath)) schedule();
       });
       watcher.on('error', (err) => {
-        logger.warn?.(`[commands-file] watch に失敗しました: ${err.message}`);
+        logger.warn?.(`[commands-file] watch に失敗しました: ${sanitizeLogText(err.message)}`);
       });
     })
     .catch((err) => {
-      logger.warn?.(`[commands-file] watch ディレクトリの作成に失敗しました: ${err.message}`);
+      logger.warn?.(`[commands-file] watch ディレクトリの作成に失敗しました: ${sanitizeLogText(err.message)}`);
     });
 
   return {
