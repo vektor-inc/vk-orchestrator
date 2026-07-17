@@ -213,8 +213,7 @@ export function applyConfigToEnv(cfg = {}) {
   set('TASK_CWD', o.taskCwd);
 
   const vk = cfg.vkTerminals ?? {};
-  // port は ~/.vk-terminals/config.json の `port` が正本。旧 vkTerminals.port は
-  // migrateVkTerminalsLaunchOptions() で初回だけ本体 config へ移し、env へは流さない。
+  // port は ~/.vk-terminals/config.json の `port` が正本のため env へは流さない。
   // host は現在 ~/.vk-terminals/config.json の apiHost が正本。
   // 旧 config.json(vkTerminals.host) を使っている環境だけ後方互換として env へ流す。
   set('VK_TERMINALS_HOST', vk.host);
@@ -248,55 +247,6 @@ export function migrateLegacyOrchestratorConfig(options = {}) {
     throw err;
   }
   log(`[Config] 正本を ${targetPath} へ移行しました。今後リポジトリ直下 config.json は読まれません。削除して構いません。`);
-  return { migrated: true, sourcePath, targetPath };
-}
-
-/**
- * 旧 orchestrator config の VK Terminals 起動オプションを、本体 config へ初回移行する。
- *
- * port は VK Terminals 本体 config（~/.vk-terminals/config.json）の `port` が正本。
- * 既に本体 config に port がある場合はユーザー設定を尊重して上書きしない。
- * GPU は orchestrator が GUI を spawn する際のオプションなので移行しない。
- * @param {{ orchestratorConfigPath?: string, vkTerminalsConfigPath?: string, homeDir?: string, log?: (message:string)=>void }} [options]
- * @returns {{ migrated: boolean, sourcePath: string, targetPath: string }}
- */
-export function migrateVkTerminalsLaunchOptions(options = {}) {
-  const homeDir = options.homeDir ?? homedir();
-  const log = options.log ?? console.log;
-  const sourcePath = options.orchestratorConfigPath ?? resolveConfigPath();
-  const targetPath = options.vkTerminalsConfigPath ?? join(homeDir, '.vk-terminals', 'config.json');
-
-  let orchestratorConfig;
-  try {
-    orchestratorConfig = readJsonObject(sourcePath);
-  } catch (err) {
-    console.warn(`[Config] ${sourcePath} の読み込みに失敗したため VK Terminals port 移行をスキップしました: ${err.message}`);
-    return { migrated: false, sourcePath, targetPath };
-  }
-
-  // TODO(remove-after: #104 でレガシーキー撤去)
-  if (!hasOwnPath(orchestratorConfig, 'vkTerminals.port')) {
-    return { migrated: false, sourcePath, targetPath };
-  }
-  const legacyPort = getByPath(orchestratorConfig, 'vkTerminals.port');
-  if (legacyPort === undefined || legacyPort === null || legacyPort === '') {
-    return { migrated: false, sourcePath, targetPath };
-  }
-
-  let vkTerminalsConfig;
-  try {
-    vkTerminalsConfig = readJsonObject(targetPath);
-  } catch (err) {
-    console.warn(`[Config] ${targetPath} の読み込みに失敗したため VK Terminals port 移行をスキップしました: ${err.message}`);
-    return { migrated: false, sourcePath, targetPath };
-  }
-  if (hasOwnPath(vkTerminalsConfig, 'port')) {
-    return { migrated: false, sourcePath, targetPath };
-  }
-
-  setByPath(vkTerminalsConfig, 'port', legacyPort);
-  writeJsonAtomic(targetPath, vkTerminalsConfig);
-  log(`[Config] 旧 vkTerminals.port を ${targetPath} の port へ移行しました。`);
   return { migrated: true, sourcePath, targetPath };
 }
 

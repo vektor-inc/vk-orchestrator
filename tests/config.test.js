@@ -17,7 +17,6 @@ import {
   getGitHubTokenFromGh,
   loadConfig,
   migrateLegacyOrchestratorConfig,
-  migrateVkTerminalsLaunchOptions,
   migrateLegacyVkAgentsGuiKeys,
   resolveVkAgentsRepoPath,
   resolveVkAgentsConfigPath,
@@ -458,84 +457,6 @@ test('migrateLegacyOrchestratorConfig: home 正本があれば旧配置を上書
     assert.equal(result.migrated, false);
     assert.deepEqual(JSON.parse(readFileSync(targetPath, 'utf8')), { github: { owner: 'home' } });
     assert.equal(logs.length, 0);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('migrateVkTerminalsLaunchOptions: 旧 vkTerminals.port を本体 config の port へ移行する', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-migrate-'));
-  try {
-    const sourcePath = join(dir, 'orchestrator.json');
-    const targetPath = join(dir, '.vk-terminals', 'config.json');
-    mkdirSync(dirname(targetPath), { recursive: true });
-    writeFileSync(sourcePath, JSON.stringify({ vkTerminals: { port: 23000, gpu: 'off' } }));
-    writeFileSync(targetPath, JSON.stringify({ apiHost: '127.0.0.1' }) + '\n');
-    const logs = [];
-
-    const result = migrateVkTerminalsLaunchOptions({
-      orchestratorConfigPath: sourcePath,
-      vkTerminalsConfigPath: targetPath,
-      log: (message) => logs.push(message),
-    });
-
-    assert.deepEqual(result, { migrated: true, sourcePath, targetPath });
-    assert.deepEqual(JSON.parse(readFileSync(targetPath, 'utf8')), {
-      apiHost: '127.0.0.1',
-      port: 23000,
-    });
-    assert.equal(logs.length, 1);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('migrateVkTerminalsLaunchOptions: 本体 config に port があれば上書きせず冪等に何もしない', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-migrate-'));
-  try {
-    const sourcePath = join(dir, 'orchestrator.json');
-    const targetPath = join(dir, '.vk-terminals', 'config.json');
-    mkdirSync(dirname(targetPath), { recursive: true });
-    writeFileSync(sourcePath, JSON.stringify({ vkTerminals: { port: 23000, gpu: 'default' } }));
-    writeFileSync(targetPath, JSON.stringify({ port: 24000, apiHost: '127.0.0.1' }) + '\n');
-
-    const first = migrateVkTerminalsLaunchOptions({
-      orchestratorConfigPath: sourcePath,
-      vkTerminalsConfigPath: targetPath,
-      log: () => {},
-    });
-    const second = migrateVkTerminalsLaunchOptions({
-      orchestratorConfigPath: sourcePath,
-      vkTerminalsConfigPath: targetPath,
-      log: () => {},
-    });
-
-    assert.equal(first.migrated, false);
-    assert.equal(second.migrated, false);
-    assert.deepEqual(JSON.parse(readFileSync(targetPath, 'utf8')), {
-      port: 24000,
-      apiHost: '127.0.0.1',
-    });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('migrateVkTerminalsLaunchOptions: gpu は本体 config へ移行しない', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-migrate-'));
-  try {
-    const sourcePath = join(dir, 'orchestrator.json');
-    const targetPath = join(dir, '.vk-terminals', 'config.json');
-    writeFileSync(sourcePath, JSON.stringify({ vkTerminals: { gpu: 'off' } }));
-
-    const result = migrateVkTerminalsLaunchOptions({
-      orchestratorConfigPath: sourcePath,
-      vkTerminalsConfigPath: targetPath,
-      log: () => {},
-    });
-
-    assert.equal(result.migrated, false);
-    assert.equal(existsSync(targetPath), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
