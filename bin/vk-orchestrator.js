@@ -322,7 +322,7 @@ async function main() {
       // GUI だけ起動したい場合は `--no-orchestrator` を付ける。
       const { spawn } = await import('child_process');
       const { randomUUID } = await import('crypto');
-      const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath,
+      const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath, writeVkTerminalsTasksViewConfig,
         resolveVkTerminalsApiHost, resolveVkTerminalsApiPort, getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
       const {
@@ -355,6 +355,13 @@ async function main() {
       const configPath = resolveConfigPath();
       const descriptorPath = writeSettingsDescriptor(vkDir, configPath);
       console.log(`設定パネル用ディスクリプタを書き出しました → ${descriptorPath}（編集対象: ${configPath}）`);
+
+      try {
+        const tasksView = writeVkTerminalsTasksViewConfig();
+        console.log(`tasks-view snapshot パスを VK Terminals 設定へ反映しました → ${tasksView.tasksViewPath}`);
+      } catch (err) {
+        console.warn(`[up] tasks-view snapshot パスの VK Terminals 設定反映に失敗しました（処理は継続）: ${err.message}`);
+      }
 
       const startOrchestrator = !process.argv.includes('--no-orchestrator');
 

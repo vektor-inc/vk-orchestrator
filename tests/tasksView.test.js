@@ -1,0 +1,119 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+import {
+  buildTasksView,
+  fetchAllTaskQueueIssues,
+  normalizeTaskIssue,
+  refreshTasksViewSnapshot,
+  writeTasksViewFile,
+} from '../src/engine/tasks-view.js';
+
+async function withTmpDir(fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-tasks-view-'));
+  try {
+    return await fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('normalizeTaskIssue: status/担当者/対象 issue URL/PR URL を正規化する', () => {
+  const task = normalizeTaskIssue({
+    number: 139,
+    title: 'tasks-view snapshot',
+    body: [
+      'https://github.com/vektor-inc/vk-orchestrator/issues/138',
+      '',
+      '---',
+      '',
+      '**PR:** https://github.com/vektor-inc/vk-orchestrator/pull/140',
+    ].join('\n'),
+    labels: [{ name: 'status:waiting-merge' }, { name: 'priority:high' }],
+    assignees: [{ login: 'wada' }, { login: 'tsukasa' }],
+    html_url: 'https://github.com/vektor-inc/task-queue/issues/139',
+    updated_at: '2026-07-17T01:02:03Z',
+  });
+
+  assert.deepEqual(task, {
+    id: '139',
+    number: 139,
+    title: 'tasks-view snapshot',
+    status: 'waiting-merge',
+    statusLabel: 'status:waiting-merge',
+    assignee: 'wada',
+    assignees: ['wada', 'tsukasa'],
+    targetIssueUrl: 'https://github.com/vektor-inc/vk-orchestrator/issues/138',
+    prUrl: 'https://github.com/vektor-inc/vk-orchestrator/pull/140',
+    queueIssueUrl: 'https://github.com/vektor-inc/task-queue/issues/139',
+    updatedAt: '2026-07-17T01:02:03Z',
+  });
+});
+
+test('buildTasksView: root updatedAt を含め、pull request は除外する', () => {
+  const view = buildTasksView([
+    { number: 1, title: 'issue', labels: [], assignees: [] },
+    { number: 2, title: 'pr', pull_request: {}, labels: [], assignees: [] },
+  ], { now: new Date('2026-07-17T04:05:06Z') });
+
+  assert.equal(view.updatedAt, '2026-07-17T04:05:06.000Z');
+  assert.deepEqual(view.tasks.map((task) => task.id), ['1']);
+});
+
+test('fetchAllTaskQueueIssues: assigneeFilter を使わず全 open issue を取得する', async () => {
+  let params;
+  const issues = [{ number: 1, title: 'team task' }];
+  const github = {
+    owner: 'vektor-inc',
+    repo: 'task-queue',
+    assignee: 'wada',
+    octokit: {
+      issues: {
+        listForRepo: async () => {
+          throw new Error('paginate should call the endpoint reference, not execute here');
+        },
+      },
+      paginate: async (endpoint, p) => {
+        assert.equal(endpoint, github.octokit.issues.listForRepo);
+        params = p;
+        return issues;
+      },
+    },
+  };
+
+  assert.deepEqual(await fetchAllTaskQueueIssues(github), issues);
+  assert.equal(Object.hasOwn(params, 'assignee'), false);
+  assert.equal(params.state, 'open');
+});
+
+test('writeTasksViewFile: 一時ファイル経由で JSON を書き出す', async () => {
+  await withTmpDir(async (dir) => {
+    const filePath = join(dir, 'tasks-view.json');
+    await writeTasksViewFile({ updatedAt: 'now', tasks: [] }, { filePath });
+
+    assert.deepEqual(JSON.parse(readFileSync(filePath, 'utf8')), {
+      updatedAt: 'now',
+      tasks: [],
+    });
+    assert.deepEqual(readdirSync(dir).sort(), ['tasks-view.json']);
+  });
+});
+
+test('refreshTasksViewSnapshot: 書き出し失敗は warn のみで握りつぶす', async () => {
+  const warnings = [];
+  const result = await refreshTasksViewSnapshot(
+    { owner: 'o', repo: 'r', octokit: { issues: {} } },
+    {
+      filePath: '/dev/null/tasks-view.json',
+      issues: [],
+      logger: { warn: (message) => warnings.push(message) },
+    },
+  );
+
+  assert.equal(result, null);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /tasks-view\.json 書き出し失敗/);
+});
