@@ -42,6 +42,7 @@ import { installPersistentConsoleLogger } from './persistent-logger.js';
 import { createStartLock } from './start-lock.js';
 import { writeAgentRulesHandoff } from './agentRulesHandoff.js';
 import { formatErrorSummary } from './format-error.js';
+import { refreshTasksViewSnapshot } from './tasks-view.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -1448,7 +1449,7 @@ async function importNewTasks() {
 // -------------------------------------------------------
 // メインループ
 // -------------------------------------------------------
-async function loop() {
+async function loopBody() {
   try {
     writeAgentRulesHandoff();
   } catch (err) {
@@ -1547,6 +1548,14 @@ async function loop() {
     } finally {
       inFlightIssues.delete(issue.number);
     }
+  }
+}
+
+async function loop() {
+  try {
+    await loopBody();
+  } finally {
+    await refreshTasksViewSnapshot(github, { logger: console });
   }
 }
 

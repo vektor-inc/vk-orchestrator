@@ -1,5 +1,6 @@
 # Changelog
 
+- [ 機能追加 ] tick ごとに task-queue の全タスク表示用 snapshot（`~/.task-queue/tasks-view.json`）を書き出し、`up` 起動時に VK Terminals 設定へパスを注入
 - [ 仕様変更 ] vk-terminals を 1.25.0 から 1.26.0 にアップデート（設定スキーマ `settings-schema.json` の同梱・設定モーダルの保存ヒント改行修正）
 - [ 仕様変更 ] 設定パネルの VK Terminals 本体設定を vk-terminals 同梱の設定スキーマから読み込む方式に変更し、本体との説明文ズレや項目漏れを解消
 - [ 仕様変更 ] VK Terminals の GPU 起動モード設定を本体 config の `gpu` に一本化し、オーケストレーター側の起動オプション設定欄を撤去

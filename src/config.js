@@ -684,6 +684,31 @@ export function resolveVkTerminalsApiPort(options = {}) {
 }
 
 /**
+ * VK Terminals がタスク一覧表示に読む、正規化済み task-queue snapshot のパス。
+ * @param {{ homeDir?: string }} [options]
+ * @returns {string}
+ */
+export function resolveTasksViewPath(options = {}) {
+  return join(options.homeDir ?? homedir(), '.task-queue', 'tasks-view.json');
+}
+
+/**
+ * up 起動時に VK Terminals 本体 config へ tasks-view.json のパスを注入する。
+ * 既存キーは保持し、tasksViewPath だけを上書きする。
+ * @param {{ homeDir?: string, configPath?: string, tasksViewPath?: string }} [options]
+ * @returns {{ configPath: string, tasksViewPath: string }}
+ */
+export function writeVkTerminalsTasksViewConfig(options = {}) {
+  const homeDir = options.homeDir ?? homedir();
+  const configPath = options.configPath ?? join(homeDir, '.vk-terminals', 'config.json');
+  const tasksViewPath = options.tasksViewPath ?? resolveTasksViewPath({ homeDir });
+  const config = readJsonObject(configPath);
+  config.tasksViewPath = tasksViewPath;
+  writeJsonAtomic(configPath, config);
+  return { configPath, tasksViewPath };
+}
+
+/**
  * vk-agents の Claude グローバル派生設定パス。
  * sync.sh --claude-global と同じ場所へ、vk-agents config.json の投影として書く。
  * @param {string} [homeDir]

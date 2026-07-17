@@ -18,6 +18,7 @@ import {
   loadConfig,
   migrateLegacyOrchestratorConfig,
   migrateLegacyVkAgentsGuiKeys,
+  resolveTasksViewPath,
   resolveVkAgentsRepoPath,
   resolveVkAgentsConfigPath,
   resolveVkAgentsCanonicalConfigPath,
@@ -29,6 +30,7 @@ import {
   isVkAgentsSetup,
   writeVkAgentsManifestSource,
   writeVkAgentsSettings,
+  writeVkTerminalsTasksViewConfig,
   getTaskConfig,
   getTaskCwd,
   getProtocolConfig,
@@ -408,6 +410,42 @@ test('resolveVkTerminalsApiPort: 不正 JSON でも例外を投げず既定 1384
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+test('resolveTasksViewPath: home 配下の tasks-view.json を返す', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-tasks-view-path-'));
+  try {
+    assert.equal(
+      resolveTasksViewPath({ homeDir: dir }),
+      join(dir, '.task-queue', 'tasks-view.json'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeVkTerminalsTasksViewConfig: 既存設定を保ったまま tasksViewPath を注入する', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkterm-tasks-view-'));
+  try {
+    const configPath = join(dir, '.vk-terminals', 'config.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({ port: 13847, apiHost: '100.64.0.2' }));
+
+    const result = writeVkTerminalsTasksViewConfig({ homeDir: dir });
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+
+    assert.deepEqual(result, {
+      configPath,
+      tasksViewPath: join(dir, '.task-queue', 'tasks-view.json'),
+    });
+    assert.deepEqual(config, {
+      port: 13847,
+      apiHost: '100.64.0.2',
+      tasksViewPath: join(dir, '.task-queue', 'tasks-view.json'),
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('migrateLegacyOrchestratorConfig: repo 直下 config.json を home 正本へ初回コピーする', () => {
