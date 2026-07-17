@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -98,7 +98,7 @@ test('writeTasksViewFile: 一時ファイル経由で JSON を書き出す', asy
       updatedAt: 'now',
       tasks: [],
     });
-    assert.equal(existsSync(`${filePath}.tmp`), false);
+    assert.deepEqual(readdirSync(dir).sort(), ['tasks-view.json']);
   });
 });
 

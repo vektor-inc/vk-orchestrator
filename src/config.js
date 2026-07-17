@@ -529,7 +529,7 @@ function readJsonObject(path) {
   }
 }
 
-function writeJsonAtomic(path, obj) {
+export function writeJsonAtomic(path, obj) {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true });
   const tmpPath = join(

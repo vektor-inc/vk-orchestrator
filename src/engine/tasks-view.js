@@ -1,7 +1,4 @@
-import { promises as fs } from 'fs';
-import { dirname } from 'path';
-
-import { resolveTasksViewPath } from '../config.js';
+import { resolveTasksViewPath, writeJsonAtomic } from '../config.js';
 
 const ISSUE_URL_RE = /https:\/\/github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/issues\/\d+/;
 const PR_URL_RE = /\*\*PR:\*\*\s*(https:\/\/github\.com\/[^\s]+\/pull\/\d+)/g;
@@ -81,10 +78,7 @@ export async function fetchAllTaskQueueIssues(github) {
 
 export async function writeTasksViewFile(view, options = {}) {
   const filePath = options.filePath ?? resolveTasksViewPath();
-  await fs.mkdir(dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(view, null, 2), 'utf8');
-  await fs.rename(tmp, filePath);
+  writeJsonAtomic(filePath, view);
   return filePath;
 }
 
