@@ -949,7 +949,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath()) {
         note: 'エージェント共通設定は vk-agents の config に保存され、各スキル／エージェントが読み込みます。',
         targetPath: resolveVkAgentsCanonicalConfigPath(),
         fields: [
-          { key: 'workspace.search_paths', label: '作業ディレクトリ（複数指定可・優先順）', type: 'lines', placeholder: '/Users/you/Documents/git\n/Users/you/ghq', help: 'エージェント（vk-kore 等）が作業対象リポジトリのローカルクローンを探す起点ディレクトリを、1 行に 1 つ・絶対パスで指定します（上の行ほど優先）。上から順に走査し、origin が対象リポジトリと一致する既存クローンを最大 4 階層まで自動検出して使います。どのパスにも見つからない場合は 1 行目のディレクトリへクローンします。未設定の場合はクローンの場所を都度確認します。' },
+          { key: 'workspace.search_paths', label: '作業ディレクトリ（複数指定可・優先順）', type: 'lines', placeholder: '/Users/you/Documents/git\n/Users/you/ghq', help: 'issue を処理するスキルが作業対象リポジトリのローカルクローンを探す起点ディレクトリを、1 行に 1 つ・絶対パスで指定します（上の行ほど優先）。上から順に走査し、origin が対象リポジトリと一致する既存クローンを最大 4 階層まで自動検出して使います。どのパスにも見つからない場合は 1 行目のディレクトリへクローンします。未設定の場合はクローンの場所を都度確認します。' },
           { key: 'org.review_assets_repo', label: 'レビュー用アセットリポジトリ', type: 'text', placeholder: 'owner/repo', pattern: OWNER_REPO_PATTERN, invalidMessage: 'owner/repo の形式で入力してください（例: vektor-inc/task-queue）', help: 'PR・テスト報告用の画像/GIF を保存するリポジトリを <owner>/<repo> 形式で指定します（例: vektor-inc/review-assets）。形式が正しくない値は反映されません。空欄時は画像アップロードをスキップし、テキスト記述にフォールバックします', emptyToNull: true },
           { key: 'staff_wp_dev.engine', label: 'staff-wp-dev（和田）の実行エンジン', type: 'select',
             options: [
