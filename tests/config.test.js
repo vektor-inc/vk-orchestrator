@@ -65,6 +65,38 @@ function withSavedEnv(keys, fn) {
   }
 }
 
+function withTmpDir(prefix, fn) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function withVkTerminalsSchema(schema, fn) {
+  return withTmpDir('vko-vk-terminals-', (dir) => {
+    writeFileSync(join(dir, 'settings-schema.json'), JSON.stringify(schema, null, 2));
+    return fn(dir);
+  });
+}
+
+function vkTerminalsSchemaFixture(groups = [{
+  label: '基本',
+  fields: [
+    { key: 'apiHost', label: 'API ホスト', type: 'text', help: '既定 127.0.0.1' },
+    { key: 'initialCommand', label: '初期コマンド', type: 'text', help: '各ペイン起動時のコマンド' },
+    { key: 'confirmClose', label: '閉じる確認', type: 'select', options: [{ value: 'busy', label: '実行中のみ確認' }] },
+    { key: 'gpu', label: 'GPU モード', type: 'select', options: [{ value: '', label: '自動' }, { value: 'off', label: 'off' }] },
+  ],
+}]) {
+  return {
+    title: 'VK Terminals 設定',
+    note: '保存後、VK Terminals を再起動すると反映されます。',
+    groups,
+  };
+}
+
 test('loadUnifiedConfig: 存在しないパスは {} を返す', () => {
   assert.deepEqual(loadUnifiedConfig('/no/such/file.json'), {});
 });
@@ -1594,7 +1626,7 @@ test('buildSettingsDescriptor: tabs と各 group の tab 割り当てを持つ',
   assert.equal(tabsByLabel.GitHub, 'orchestrator');
   assert.equal(tabsByLabel['オーケストレーター'], 'orchestrator');
   assert.equal(tabsByLabel['VK Terminals（本体設定）'], 'terminals');
-  assert.equal(tabsByLabel['VK Terminals 起動オプション（オーケストレーター制御）'], 'terminals');
+  assert.equal(tabsByLabel['VK Terminals 起動オプション（オーケストレーター制御）'], undefined);
   assert.equal(tabsByLabel['issue を処理する Claude のコマンド'], 'orchestrator');
   assert.equal(tabsByLabel['vk-agents（エージェント共通設定）'], 'agents');
 });
@@ -1680,46 +1712,144 @@ test('buildSettingsDescriptor: Agents グループは workspace.search_paths（l
   ]);
 });
 
-test('buildSettingsDescriptor: VK Terminals 本体設定 group は ~/.vk-terminals/config.json を直接指す', () => {
-  const desc = buildSettingsDescriptor('/tmp/config.json');
-  const group = desc.groups.find((g) => g.label === 'VK Terminals（本体設定）');
-  assert.ok(group);
-  assert.equal(group.targetPath, '~/.vk-terminals/config.json');
-  assert.deepEqual(
-    group.fields.map((field) => field.key),
-    [
-      'apiHost',
-      'port',
-      'initialCommand',
-      'additionalPanes',
-      'newPaneAutoLaunchClaude',
-      'newPaneStartupDir',
-    ],
-  );
-  assert.equal(group.fields.find((field) => field.key === 'port').type, 'number');
-  assert.match(group.fields.find((field) => field.key === 'port').help, /本体/);
-  assert.equal(group.fields.find((field) => field.key === 'additionalPanes').type, 'json');
-  assert.equal(group.fields.find((field) => field.key === 'newPaneAutoLaunchClaude').type, 'boolean');
-  assert.equal(group.fields.find((field) => field.key === 'newPaneAutoLaunchClaude').default, false);
-  assert.equal(group.fields.find((field) => field.key === 'newPaneStartupDir').type, 'text');
+test('buildSettingsDescriptor: VK Terminals 本体設定は settings-schema.json 由来フィールドと port を表示する', () => {
+  withVkTerminalsSchema(vkTerminalsSchemaFixture(), (vkTerminalsDir) => {
+    const desc = buildSettingsDescriptor('/tmp/config.json', { vkTerminalsDir });
+    const group = desc.groups.find((g) => g.label === 'VK Terminals（本体設定）');
+    assert.ok(group);
+    assert.equal(group.tab, 'terminals');
+    assert.equal(group.targetPath, '~/.vk-terminals/config.json');
+    assert.match(group.note, /VK Terminals 本体の設定ファイル/);
+    assert.deepEqual(
+      group.fields.map((field) => field.key),
+      ['apiHost', 'port', 'initialCommand', 'confirmClose', 'gpu'],
+    );
+    assert.equal(group.fields.find((field) => field.key === 'port').type, 'number');
+    assert.match(group.fields.find((field) => field.key === 'port').help, /13847/);
+    assert.equal(group.fields.find((field) => field.key === 'confirmClose').type, 'select');
+    assert.deepEqual(group.fields.find((field) => field.key === 'confirmClose').options, [{ value: 'busy', label: '実行中のみ確認' }]);
+  });
 });
 
-test('buildSettingsDescriptor: VK Terminals 起動オプションは GPU だけ orchestrator config 側に残す', () => {
-  const desc = buildSettingsDescriptor('/tmp/orchestrator-config.json');
-  const terminalConfigGroup = desc.groups.find((g) => g.targetPath === '~/.vk-terminals/config.json');
-  const launchGroup = desc.groups.find((g) => g.label === 'VK Terminals 起動オプション（オーケストレーター制御）');
-  assert.ok(terminalConfigGroup);
-  assert.ok(launchGroup);
-  assert.equal(launchGroup.targetPath, undefined);
-  assert.match(launchGroup.note, /orchestrator が VK Terminals を起動する際/);
-  assert.match(launchGroup.note, /API ホストと API ポート/);
-  const terminalKeys = terminalConfigGroup.fields.map((field) => field.key);
-  const launchKeys = launchGroup.fields.map((field) => field.key);
-  assert.deepEqual(launchKeys, ['vkTerminals.gpu']);
-  assert.equal(terminalKeys.includes('port'), true);
-  assert.equal(terminalKeys.includes('vkTerminals.port'), false);
-  assert.equal(terminalKeys.includes('vkTerminals.gpu'), false);
-  assert.equal(terminalKeys.includes('vkTerminals.host'), false);
+test('buildSettingsDescriptor: VK Terminals スキーマが複数グループなら group label を suffix にする', () => {
+  withVkTerminalsSchema(vkTerminalsSchemaFixture([
+    {
+      label: '基本',
+      fields: [
+        { key: 'apiHost', label: 'API ホスト', type: 'text' },
+        { key: 'initialCommand', label: '初期コマンド', type: 'text' },
+      ],
+    },
+    {
+      label: '表示',
+      fields: [
+        { key: 'showUsage', label: '使用量表示', type: 'boolean' },
+      ],
+    },
+  ]), (vkTerminalsDir) => {
+    const desc = buildSettingsDescriptor('/tmp/config.json', { vkTerminalsDir });
+    const terminalGroups = desc.groups.filter((g) => g.targetPath === '~/.vk-terminals/config.json');
+    assert.deepEqual(
+      terminalGroups.map((group) => group.label),
+      ['VK Terminals（本体設定）: 基本', 'VK Terminals（本体設定）: 表示'],
+    );
+    assert.deepEqual(terminalGroups[0].fields.map((field) => field.key), ['apiHost', 'port', 'initialCommand']);
+    assert.deepEqual(terminalGroups[1].fields.map((field) => field.key), ['showUsage']);
+  });
+});
+
+test('buildSettingsDescriptor: apiHost がないスキーマでは port を先頭へ挿入する', () => {
+  withVkTerminalsSchema(vkTerminalsSchemaFixture([{
+    label: '基本',
+    fields: [
+      { key: 'initialCommand', label: '初期コマンド', type: 'text' },
+      { key: 'gpu', label: 'GPU モード', type: 'select', options: [] },
+    ],
+  }]), (vkTerminalsDir) => {
+    const desc = buildSettingsDescriptor('/tmp/config.json', { vkTerminalsDir });
+    const group = desc.groups.find((g) => g.label === 'VK Terminals（本体設定）');
+    assert.deepEqual(group.fields.map((field) => field.key), ['port', 'initialCommand', 'gpu']);
+  });
+});
+
+test('buildSettingsDescriptor: hiddenKeys 指定時は該当フィールドだけ除外し、全除外グループは出さない', () => {
+  withVkTerminalsSchema(vkTerminalsSchemaFixture([
+    {
+      label: '基本',
+      fields: [
+        { key: 'apiHost', label: 'API ホスト', type: 'text' },
+        { key: 'initialCommand', label: '初期コマンド', type: 'text' },
+      ],
+    },
+    {
+      label: '表示',
+      fields: [
+        { key: 'showUsage', label: '使用量表示', type: 'boolean' },
+      ],
+    },
+  ]), (vkTerminalsDir) => {
+    const desc = buildSettingsDescriptor('/tmp/config.json', {
+      vkTerminalsDir,
+      hiddenKeys: ['initialCommand', 'showUsage'],
+    });
+    const terminalGroups = desc.groups.filter((g) => g.targetPath === '~/.vk-terminals/config.json');
+    assert.deepEqual(terminalGroups.map((group) => group.label), ['VK Terminals（本体設定）: 基本']);
+    assert.deepEqual(terminalGroups[0].fields.map((field) => field.key), ['apiHost', 'port']);
+  });
+});
+
+test('buildSettingsDescriptor: hiddenKeys で全フィールド除外なら VK Terminals 本体設定グループを出さない', () => {
+  withVkTerminalsSchema(vkTerminalsSchemaFixture(), (vkTerminalsDir) => {
+    const desc = buildSettingsDescriptor('/tmp/config.json', {
+      vkTerminalsDir,
+      hiddenKeys: ['apiHost', 'initialCommand', 'confirmClose', 'gpu'],
+    });
+    assert.equal(desc.groups.some((g) => g.targetPath === '~/.vk-terminals/config.json'), false);
+  });
+});
+
+test('buildSettingsDescriptor: settings-schema.json が無い場合は warn して port のみ表示する', () => {
+  withTmpDir('vko-vk-terminals-empty-', (vkTerminalsDir) => {
+    const savedWarn = console.warn;
+    const warnings = [];
+    try {
+      console.warn = (message) => warnings.push(message);
+      const desc = buildSettingsDescriptor('/tmp/config.json', { vkTerminalsDir });
+      const group = desc.groups.find((g) => g.label === 'VK Terminals（本体設定）');
+      assert.ok(group);
+      assert.deepEqual(group.fields.map((field) => field.key), ['port']);
+      const allKeys = desc.groups.flatMap((g) => (g.fields ?? []).map((field) => field.key));
+      assert.equal(allKeys.includes('apiHost'), false);
+      assert.equal(allKeys.includes('initialCommand'), false);
+      assert.equal(allKeys.includes('additionalPanes'), false);
+      assert.equal(allKeys.includes('newPaneAutoLaunchClaude'), false);
+      assert.equal(allKeys.includes('vkTerminals.gpu'), false);
+      assert.equal(desc.groups.some((g) => g.label === 'VK Terminals 起動オプション（オーケストレーター制御）'), false);
+      assert.ok(warnings.some((message) => /port.*のみ表示/.test(message)));
+    } finally {
+      console.warn = savedWarn;
+    }
+  });
+});
+
+test('buildSettingsDescriptor: settings-schema.json が不正 JSON または構造不正でも port のみ表示する', () => {
+  for (const schemaText of ['{', JSON.stringify({ groups: [{ label: '基本', fields: [{ key: 'apiHost', label: 'API ホスト' }] }] })]) {
+    withTmpDir('vko-vk-terminals-invalid-', (vkTerminalsDir) => {
+      writeFileSync(join(vkTerminalsDir, 'settings-schema.json'), schemaText);
+      const savedWarn = console.warn;
+      const warnings = [];
+      try {
+        console.warn = (message) => warnings.push(message);
+        const desc = buildSettingsDescriptor('/tmp/config.json', { vkTerminalsDir });
+        const group = desc.groups.find((g) => g.label === 'VK Terminals（本体設定）');
+        assert.ok(group);
+        assert.deepEqual(group.fields.map((field) => field.key), ['port']);
+        assert.ok(warnings.some((message) => /settings-schema\.json/.test(message)));
+      } finally {
+        console.warn = savedWarn;
+      }
+    });
+  }
 });
 
 test('buildSettingsDescriptor: vk-agents group は正本リゾルバ（env 上書き）を targetPath に持つ', () => {
@@ -1789,30 +1919,99 @@ test('defaultGpuMode: macOS は default、それ以外は off', () => {
 
 test('getVkTerminalsGpuMode: 未設定はプラットフォーム既定にフォールバック', () => {
   withoutGpuEnv(() => {
-    assert.equal(getVkTerminalsGpuMode({}, 'linux'), 'off');
-    assert.equal(getVkTerminalsGpuMode({}, 'darwin'), 'default');
+    withTmpDir('vko-vk-terminals-home-', (homeDir) => {
+      assert.equal(getVkTerminalsGpuMode({ homeDir }, 'linux'), 'off');
+      assert.equal(getVkTerminalsGpuMode({ homeDir }, 'darwin'), 'default');
+    });
   });
 });
 
-test('getVkTerminalsGpuMode: config.json の値を採用する', () => {
+test('getVkTerminalsGpuMode: VK Terminals 本体 config.json の gpu を採用する', () => {
   withoutGpuEnv(() => {
-    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: 'off' } }, 'darwin'), 'off');
-    // 大文字・前後空白は正規化する
-    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: '  Default ' } }, 'linux'), 'default');
+    withTmpDir('vko-vk-terminals-home-', (homeDir) => {
+      const configDir = join(homeDir, '.vk-terminals');
+      mkdirSync(configDir, { recursive: true });
+      const configPath = join(configDir, 'config.json');
+
+      writeFileSync(configPath, JSON.stringify({ gpu: 'off' }));
+      assert.equal(getVkTerminalsGpuMode({ homeDir }, 'darwin'), 'off');
+
+      // 大文字・前後空白は正規化する
+      writeFileSync(configPath, JSON.stringify({ gpu: '  Default ' }));
+      assert.equal(getVkTerminalsGpuMode({ configPath }, 'linux'), 'default');
+    });
   });
 });
 
-test('getVkTerminalsGpuMode: 未知の値は既定にフォールバックする', () => {
+test('getVkTerminalsGpuMode: null / 空文字はプラットフォーム既定にフォールバックする', () => {
   withoutGpuEnv(() => {
-    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: 'turbo' } }, 'linux'), 'off');
-    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: '' } }, 'darwin'), 'default');
+    withTmpDir('vko-vk-terminals-home-', (homeDir) => {
+      const configDir = join(homeDir, '.vk-terminals');
+      mkdirSync(configDir, { recursive: true });
+      const configPath = join(configDir, 'config.json');
+
+      writeFileSync(configPath, JSON.stringify({ gpu: null }));
+      assert.equal(getVkTerminalsGpuMode({ homeDir }, 'linux'), 'off');
+
+      writeFileSync(configPath, JSON.stringify({ gpu: '' }));
+      assert.equal(getVkTerminalsGpuMode({ homeDir }, 'darwin'), 'default');
+    });
+  });
+});
+
+test('getVkTerminalsGpuMode: 未知の値は warn して既定にフォールバックする', () => {
+  withoutGpuEnv(() => {
+    withTmpDir('vko-vk-terminals-home-', (homeDir) => {
+      const configDir = join(homeDir, '.vk-terminals');
+      mkdirSync(configDir, { recursive: true });
+      const configPath = join(configDir, 'config.json');
+      writeFileSync(configPath, JSON.stringify({ gpu: 'turbo' }));
+
+      const savedWarn = console.warn;
+      const warnings = [];
+      try {
+        console.warn = (message) => warnings.push(message);
+        assert.equal(getVkTerminalsGpuMode({ homeDir }, 'linux'), 'off');
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], /未知の GPU モード "turbo"/);
+      } finally {
+        console.warn = savedWarn;
+      }
+    });
   });
 });
 
 test('getVkTerminalsGpuMode: env VK_TERMINALS_GPU が config.json より優先される', () => {
   withoutGpuEnv(() => {
-    process.env.VK_TERMINALS_GPU = 'default';
-    assert.equal(getVkTerminalsGpuMode({ vkTerminals: { gpu: 'off' } }, 'linux'), 'default');
+    withTmpDir('vko-vk-terminals-home-', (homeDir) => {
+      const configDir = join(homeDir, '.vk-terminals');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ gpu: 'off' }));
+      process.env.VK_TERMINALS_GPU = 'default';
+      assert.equal(getVkTerminalsGpuMode({ homeDir }, 'linux'), 'default');
+    });
+  });
+});
+
+test('getVkTerminalsGpuMode: config 読み込み失敗時は warn して既定にフォールバックする', () => {
+  withoutGpuEnv(() => {
+    withTmpDir('vko-vk-terminals-home-', (homeDir) => {
+      const configDir = join(homeDir, '.vk-terminals');
+      mkdirSync(configDir, { recursive: true });
+      const configPath = join(configDir, 'config.json');
+      writeFileSync(configPath, '{');
+
+      const savedWarn = console.warn;
+      const warnings = [];
+      try {
+        console.warn = (message) => warnings.push(message);
+        assert.equal(getVkTerminalsGpuMode({ homeDir }, 'linux'), 'off');
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], /既定 GPU モード "off"/);
+      } finally {
+        console.warn = savedWarn;
+      }
+    });
   });
 });
 
@@ -1832,19 +2031,18 @@ test('GPU_MODES: 取りうる値の一覧（off / default の2択）', () => {
   assert.deepEqual(GPU_MODES, ['off', 'default']);
 });
 
-test('buildSettingsDescriptor: VK Terminals グループに GPU モードの制約付きピッカーがある', () => {
-  const desc = buildSettingsDescriptor('/tmp/config.json');
-  const gpuField = desc.groups
-    .flatMap((g) => g.fields ?? [])
-    .find((f) => f.key === 'vkTerminals.gpu');
-  assert.ok(gpuField);
-  // 自由入力ではなく選択式（enum ピッカー）であること。
-  assert.equal(gpuField.type, 'select');
-  const optionValues = (gpuField.options ?? []).map((o) => o.value);
-  // 空（自動）＋ getVkTerminalsGpuMode が受理する各モードが選択肢に含まれること。
-  assert.deepEqual(optionValues, ['', 'off', 'default']);
-  // 選択肢の値は空文字を除き GPU_MODES に一致する（silent な不正値を防ぐ）。
-  for (const v of optionValues) {
-    if (v !== '') assert.ok(GPU_MODES.includes(v), `未知のモード: ${v}`);
-  }
+test('buildSettingsDescriptor: VK Terminals スキーマ由来の GPU モードピッカーが本体設定グループにある', () => {
+  withVkTerminalsSchema(vkTerminalsSchemaFixture(), (vkTerminalsDir) => {
+    const desc = buildSettingsDescriptor('/tmp/config.json', { vkTerminalsDir });
+    const gpuField = desc.groups
+      .flatMap((g) => g.fields ?? [])
+      .find((f) => f.key === 'gpu');
+    assert.ok(gpuField);
+    assert.equal(gpuField.type, 'select');
+    const optionValues = (gpuField.options ?? []).map((o) => o.value);
+    assert.deepEqual(optionValues, ['', 'off']);
+    for (const v of optionValues) {
+      if (v !== '') assert.ok(GPU_MODES.includes(v), `未知のモード: ${v}`);
+    }
+  });
 });

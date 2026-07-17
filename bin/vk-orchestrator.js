@@ -363,10 +363,10 @@ async function main() {
       // GUI(Electron) の GPU 起動モードを解決し、電子へ渡すフラグと追加 env を組み立てる。
       // 既定は非 macOS で 'off'（Chromium の GPU 初期化失敗による `Exiting GPU process`
       // 等のエラーログを抑制。描画はソフトウェアだがターミナル用途で実害なし）。
-      // config `vkTerminals.gpu` / env `VK_TERMINALS_GPU` で 'hardware'（WSLg の d3d12
-      // 経由 HW OpenGL）/ 'default'（Chromium 任せ）へ切り替え可能。
+      // env `VK_TERMINALS_GPU` / VK Terminals 本体 config `gpu` で 'default'
+      // （Chromium 任せ）へ切り替え可能。
       // フラグは `npm start -- <flags>` で `electron .` 側へ渡す。
-      const gpuMode = getVkTerminalsGpuMode(unifiedConfig);
+      const gpuMode = getVkTerminalsGpuMode();
       const { args: gpuArgs, env: gpuEnv } = gpuLaunchOptions(gpuMode);
       const guiArgs = gpuArgs.length ? ['start', '--', ...gpuArgs] : ['start'];
       const preferredPort = resolveVkTerminalsApiPort();
