@@ -2,6 +2,8 @@ import { resolveTasksViewPath, writeJsonAtomic } from '../config.js';
 
 const ISSUE_URL_RE = /https:\/\/github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/issues\/\d+/;
 const PR_URL_RE = /\*\*PR:\*\*\s*(https:\/\/github\.com\/[^\s]+\/pull\/\d+)/g;
+const PRIORITY_PREFIX = 'priority:';
+const PRIORITY_VALUES = new Set(['high', 'medium', 'low']);
 
 function labelName(label) {
   return typeof label === 'string' ? label : label?.name;
@@ -28,6 +30,8 @@ export function normalizeTaskIssue(issue) {
     .map(labelName)
     .filter((name) => typeof name === 'string' && name !== '');
   const statusLabel = labels.find((name) => name.startsWith('status:')) ?? null;
+  const priorityLabel = labels.find((name) => name.startsWith(PRIORITY_PREFIX)) ?? null;
+  const priority = priorityLabel?.slice(PRIORITY_PREFIX.length) ?? null;
   const assignees = (issue.assignees ?? [])
     .map(assigneeLogin)
     .filter((login) => typeof login === 'string' && login !== '');
@@ -38,6 +42,8 @@ export function normalizeTaskIssue(issue) {
     title: issue.title ?? '',
     status: statusLabel ? statusLabel.slice('status:'.length) : null,
     statusLabel,
+    priority: PRIORITY_VALUES.has(priority) ? priority : null,
+    sequential: labels.includes('sequential'),
     assignee: assignees[0] ?? null,
     assignees,
     targetIssueUrl: extractTargetIssueUrl(issue.body),

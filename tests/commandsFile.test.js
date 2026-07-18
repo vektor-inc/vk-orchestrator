@@ -49,6 +49,10 @@ test('isAllowedTransition: 許可遷移だけを accept する', () => {
   const allowed = [
     ['awaiting-approval', 'ready'],
     ['ready', 'awaiting-approval'],
+    ['in-progress', 'awaiting-approval'],
+    ['waiting-input', 'awaiting-approval'],
+    ['waiting-merge', 'awaiting-approval'],
+    ['failed', 'awaiting-approval'],
     ['waiting-merge', 'done'],
     ['failed', 'ready'],
     ['ready', 'failed'],
@@ -61,6 +65,37 @@ test('isAllowedTransition: 許可遷移だけを accept する', () => {
   assert.equal(isAllowedTransition('in-progress', 'done'), false);
   assert.equal(isAllowedTransition('awaiting-approval', 'done'), false);
   assert.equal(isAllowedTransition('status:ready', 'status:done'), false);
+});
+
+test('consumeCommandsFile: 差し戻し遷移は awaiting-approval へ戻せる', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'revert-to-approval',
+      taskId: 41,
+      action: 'set-status',
+      expected: 'waiting-input',
+      to: 'awaiting-approval',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setStatus: async (...args) => calls.push(args),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'status:waiting-input' }],
+      }),
+    });
+
+    assert.deepEqual(calls, [[41, 'status:awaiting-approval']]);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 1, skipped: 0 });
+  });
 });
 
 test('consumeCommandsFile: CAS 一致なら setStatus を呼ぶ', async () => {
@@ -126,6 +161,222 @@ test('consumeCommandsFile: CAS 不一致なら適用せず throw しない', asy
   });
 });
 
+test('consumeCommandsFile: set-priority は CAS 一致なら setPriority を呼ぶ', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'priority-apply',
+      taskId: 50,
+      action: 'set-priority',
+      expected: 'medium',
+      to: 'high',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async (...args) => calls.push(args),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'status:ready' }, { name: 'priority:medium' }],
+      }),
+    });
+
+    assert.deepEqual(calls, [[50, 'high']]);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 1, skipped: 0 });
+  });
+});
+
+test('consumeCommandsFile: set-priority は none を優先度ラベル無しとして扱う', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'priority-none',
+      taskId: 51,
+      action: 'set-priority',
+      expected: 'none',
+      to: 'low',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async (...args) => calls.push(args),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'status:ready' }],
+      }),
+    });
+
+    assert.deepEqual(calls, [[51, 'low']]);
+  });
+});
+
+test('consumeCommandsFile: set-priority は CAS 不一致なら適用しない', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'priority-cas-mismatch',
+      taskId: 52,
+      action: 'set-priority',
+      expected: 'high',
+      to: 'low',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async (...args) => calls.push(args),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'priority:medium' }],
+      }),
+    });
+
+    assert.deepEqual(calls, []);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+  });
+});
+
+test('consumeCommandsFile: set-priority は不正値を拒否してメタ issue を読まない', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'priority-invalid',
+      taskId: 53,
+      action: 'set-priority',
+      expected: 'high',
+      to: 'urgent',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async (...args) => calls.push(args),
+      },
+      getMetaIssue: async () => {
+        throw new Error('getMetaIssue should not be called for invalid priority');
+      },
+    });
+
+    assert.deepEqual(calls, []);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+  });
+});
+
+test('consumeCommandsFile: set-sequential は CAS 一致なら setSequential を呼ぶ', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'sequential-apply',
+      taskId: 54,
+      action: 'set-sequential',
+      expected: 'parallel',
+      to: 'sequential',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setSequential: async (...args) => calls.push(args),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'status:ready' }],
+      }),
+    });
+
+    assert.deepEqual(calls, [[54, 'sequential']]);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 1, skipped: 0 });
+  });
+});
+
+test('consumeCommandsFile: set-sequential は CAS 不一致なら適用しない', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'sequential-cas-mismatch',
+      taskId: 55,
+      action: 'set-sequential',
+      expected: 'parallel',
+      to: 'sequential',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setSequential: async (...args) => calls.push(args),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'sequential' }],
+      }),
+    });
+
+    assert.deepEqual(calls, []);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+  });
+});
+
+test('consumeCommandsFile: set-sequential は不正値を拒否してメタ issue を読まない', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'sequential-invalid',
+      taskId: 56,
+      action: 'set-sequential',
+      expected: 'parallel',
+      to: 'serialized',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setSequential: async (...args) => calls.push(args),
+      },
+      getMetaIssue: async () => {
+        throw new Error('getMetaIssue should not be called for invalid sequential');
+      },
+    });
+
+    assert.deepEqual(calls, []);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+  });
+});
+
 test('consumeCommandsFile: 許可外遷移は拒否して setStatus を呼ばない', async () => {
   await withTmpDir(async (dir) => {
     const commandsPath = join(dir, 'commands.jsonl');
@@ -154,6 +405,38 @@ test('consumeCommandsFile: 許可外遷移は拒否して setStatus を呼ばな
 
     assert.deepEqual(calls, []);
     assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+  });
+});
+
+test('consumeCommandsFile: 未対応 action は consumed 扱いで無視する', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'unsupported',
+      taskId: 49,
+      action: 'set-label',
+      expected: 'old',
+      to: 'new',
+      requestedAt: '2026-07-18T00:00:00.000Z',
+    }]);
+
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setStatus: async () => {
+          throw new Error('setStatus should not be called for unsupported action');
+        },
+      },
+      getMetaIssue: async () => {
+        throw new Error('getMetaIssue should not be called for unsupported action');
+      },
+    });
+
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+    assert.equal(JSON.parse(readFileSync(processedPath, 'utf8')).consumedLines, 1);
   });
 });
 

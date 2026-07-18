@@ -1,5 +1,7 @@
 # Changelog
 
+- [ 機能追加 ] タスク一覧 snapshot に優先度・直列実行情報を追加し、VK Terminals からの優先度変更・直列/並列切り替え・承認待ち差し戻し依頼に対応
+
 = 0.19.0 =
 
 - [ 機能追加 ] tick ごとに task-queue の全タスク表示用 snapshot（`~/.task-queue/tasks-view.json`）を書き出し、`up` 起動時に VK Terminals 設定へパスを注入
