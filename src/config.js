@@ -210,7 +210,6 @@ export function applyConfigToEnv(cfg = {}) {
   set('WATCHDOG_IDLE_MS', o.watchdogIdleMs);
   set('PANE_RESUME_MAX', o.paneResumeMax);
   set('ASSIGNEE_FILTER', o.assigneeFilter);
-  set('TASK_CWD', o.taskCwd);
 
   const vk = cfg.vkTerminals ?? {};
   // port は ~/.vk-terminals/config.json の `port` が正本のため env へは流さない。
@@ -1055,7 +1054,6 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
           { key: 'orchestrator.watchdogIdleMs',  label: 'ウォッチドッグ idle (ms)', type: 'number', help: 'この時間ターミナルが無活動だと停滞とみなす閾値（ミリ秒。例: 10800000 = 3 時間）' },
           { key: 'orchestrator.paneResumeMax',   label: 'ペイン消失時の自動再開上限 (回)', type: 'number', help: '作業ペイン消失時（PR 未生成に限る）に自動で再実行する上限回数。超えると failed になり手動確認が必要（既定: 3）' },
           { key: 'orchestrator.assigneeFilter',  label: '担当者フィルタ (login)', type: 'text', help: 'この GitHub ログイン名が assign されている Issue だけを取り込む。空＝一切取り込まない（安全側の既定）。全件取り込むには all と入力', emptyToNull: true },
-          { key: 'orchestrator.taskCwd',         label: 'タスク用ペインの Claude Code 起点ディレクトリ', type: 'text', help: 'タスク着手時に開くペインの Claude Code の起点ディレクトリを指定してください。自分のリポジトリ置き場を指定しておくと、探索・クローンがそこ基準で進みます。未設定の場合は専用ディレクトリ ~/vk-orchestrator-tasks（自動作成）で起動し、ホームディレクトリや機密ディレクトリを起点にしません。なお、ここで指定するのはあくまで起点で、操作権限があれば他のディレクトリのファイルも操作できます。別のディレクトリにある既存リポジトリを扱いたい場合も、スキルや Claude のグローバル設定であらかじめ対象リポジトリを指定しておけば、そちらで作業します。相対パスは orchestrator 起動時の作業ディレクトリ基準で解決します。', emptyToNull: true },
         ],
       },
       ...buildVkTerminalsSettingsGroups(options),
@@ -1072,7 +1070,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
         note: 'エージェント共通設定は vk-agents の config に保存され、各スキル／エージェントが読み込みます。',
         targetPath: resolveVkAgentsCanonicalConfigPath(),
         fields: [
-          { key: 'workspace.search_paths', label: '作業ディレクトリ（複数指定可・優先順）', type: 'lines', placeholder: '/Users/you/Documents/git\n/Users/you/ghq', help: 'issue を処理するスキルが作業対象リポジトリのローカルクローンを探す起点ディレクトリを、1 行に 1 つ・絶対パスで指定します（上の行ほど優先）。上から順に走査し、origin が対象リポジトリと一致する既存クローンを最大 4 階層まで自動検出して使います。どのパスにも見つからない場合は 1 行目のディレクトリへクローンします。未設定の場合はクローンの場所を都度確認します。' },
+          { key: 'workspace.search_paths', label: '作業ディレクトリ（複数指定可・優先順）', type: 'lines', placeholder: '/Users/you/Documents/git\n/Users/you/ghq', help: '作業対象リポジトリのローカルクローンを探す起点ディレクトリを、1 行に 1 つ・絶対パスで指定します（上の行ほど優先）。この設定は 2 つの場面で使われます。(1) issue を処理するスキルがクローンを探すとき、(2) オーケストレーターがタスク着手時にタスクペインを開く場所を決めるとき。上から順に走査し、origin が対象リポジトリと一致する既存クローンを最大 4 階層まで自動検出して、そのディレクトリでスキルの作業とペインを開始します。見つからない場合、スキルは 1 行目のディレクトリへクローンします。オーケストレーターのペインは、対象リポジトリを特定できないとき・この設定が未設定のとき・検出できないときは、専用ディレクトリ ~/vk-orchestrator-tasks（自動作成。ホームディレクトリや機密ディレクトリは起点にしません）で開きます。' },
           { key: 'org.review_assets_repo', label: 'レビュー用アセットリポジトリ', type: 'text', placeholder: 'owner/repo', pattern: OWNER_REPO_PATTERN, invalidMessage: 'owner/repo の形式で入力してください（例: vektor-inc/task-queue）', help: 'PR・テスト報告用の画像/GIF を保存するリポジトリを <owner>/<repo> 形式で指定します（例: vektor-inc/review-assets）。形式が正しくない値は反映されません。空欄時は画像アップロードをスキップし、テキスト記述にフォールバックします', emptyToNull: true },
           { key: 'staff_wp_dev.engine', label: 'staff-wp-dev（和田）の実行エンジン', type: 'select',
             options: [
@@ -1150,25 +1148,22 @@ export function getTaskConfig(cfg = loadUnifiedConfig()) {
 
 /**
  * タスク用ペイン（Claude Code）の起点ディレクトリを返す。
- * 優先順位: 環境変数 TASK_CWD > config.json(cfg.orchestrator.taskCwd) > 専用ディレクトリ。
+ * 優先順位: 環境変数 TASK_CWD > 専用ディレクトリ。
  * 未設定時は `~/vk-orchestrator-tasks` を使う。これは $HOME 直下や特定リポジトリ、
  * config.json / .env 等の機密ディレクトリを起点にせず、空・非 git の専用ディレクトリから
  * タスクを始めるための安全側の既定。ただし cwd は隔離ではなく、絶対パス指定での
  * ファイル読み取りを防ぐものではない。
- * env / config の明示値は前後空白を除去し、空文字なら未指定として次の優先順位へ
+ * env の明示値は前後空白を除去し、空文字なら未指定として専用ディレクトリへ
  * フォールバックする。相対パスが指定された場合は process.cwd() 基準で resolve() される。
  * 既定ディレクトリは VK Terminals 側フォールバックで $HOME 起点にならないよう自動作成する。
  * 一方、明示値は typo を隠さないため自動作成せず、存在しない場合は警告だけ出して返す。
- * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @param {object} [_cfg] 旧 API 互換の未使用引数。orchestrator.taskCwd は廃止済み。
  * @param {string} [homeDir] 既定ディレクトリの親となるホームディレクトリ
  * @returns {string}
  */
-export function getTaskCwd(cfg = loadUnifiedConfig(), homeDir = homedir()) {
+export function getTaskCwd(_cfg = {}, homeDir = homedir()) {
   const envValue = String(process.env.TASK_CWD ?? '').trim();
   if (envValue !== '') return resolveExplicitTaskCwd(envValue);
-
-  const configValue = String(cfg?.orchestrator?.taskCwd ?? '').trim();
-  if (configValue !== '') return resolveExplicitTaskCwd(configValue);
 
   const defaultDir = join(homeDir, 'vk-orchestrator-tasks');
   try {
@@ -1185,7 +1180,7 @@ function resolveExplicitTaskCwd(rawValue) {
   const taskCwd = resolve(rawValue);
   if (!existsSync(taskCwd) && !warnedMissingTaskCwds.has(taskCwd)) {
     warnedMissingTaskCwds.add(taskCwd);
-    console.warn(`[Config] 指定された taskCwd が存在しません。存在しないと VK Terminals 側フォールバックで $HOME 起点になる恐れがあります: ${taskCwd}`);
+    console.warn(`[Config] 指定された TASK_CWD が存在しません。存在しないと VK Terminals 側フォールバックで $HOME 起点になる恐れがあります: ${taskCwd}`);
   }
   return taskCwd;
 }

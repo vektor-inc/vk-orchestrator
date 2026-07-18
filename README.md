@@ -187,18 +187,19 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 | `orchestrator.watchdogIdleMs` | `WATCHDOG_IDLE_MS` | ウォッチドッグ閾値 | `10800000` |
 | `orchestrator.paneResumeMax` | `PANE_RESUME_MAX` | ペイン消失時（PR 未生成）の自動再開上限回数 | `3` |
 | `orchestrator.assigneeFilter` | `ASSIGNEE_FILTER` | 担当者フィルタ。空/未設定は一切取り込まず、全件対象は `all` を明示 | `null`（拾わない） |
-| `orchestrator.taskCwd` | `TASK_CWD` | タスク用ペインの Claude Code 起点ディレクトリ | `~/vk-orchestrator-tasks`（無ければ自動作成） |
+| `workspace.search_paths`（vk-agents config） | なし | 作業対象リポジトリのローカルクローン探索起点。タスク用ペインの起点決定にも使用 | 未設定時は `~/vk-orchestrator-tasks`（無ければ自動作成） |
+| なし | `TASK_CWD` | タスク用ペインの Claude Code 起点ディレクトリの緊急上書き | 未設定 |
 | `~/.vk-terminals/config.json` の `port` / `apiHost` | `VK_TERMINALS_PORT` / `VK_TERMINALS_HOST` | VK Terminals API | `13847` / `127.0.0.1` |
 | `~/.vk-terminals/config.json` の `gpu` | `VK_TERMINALS_GPU` | GUI の GPU 起動モード（下記）。設定パネルの「VK Terminals（本体設定）」から編集可 | 空=自動 |
 | `~/.vk-terminals/config.json` の `initialCommand` / `additionalPanes` 等 | 設定パネルから保存 | VK Terminals のペイン構成等 | — |
 
-`orchestrator.taskCwd` はタスク用ペイン（Claude Code）の起点ディレクトリです。どのリポジトリを対象に作業するかは issue の URL で決まり、エージェントは対象リポジトリの既存チェックアウトを探すか、無ければクローンしてそこで作業します。起点はその入口にすぎません。
+タスク用ペイン（Claude Code）の起点ディレクトリは、issue に含まれる対象リポジトリ URL と vk-agents config の `workspace.search_paths` から決まります。上から順に走査し、origin が対象リポジトリと一致する既存クローンを最大 4 階層まで自動検出して、そのディレクトリでペインを開きます。
 
-想定する使い方は、自分のリポジトリ置き場（複数のチェックアウトが並ぶ親ディレクトリ）を `orchestrator.taskCwd`（または env `TASK_CWD`）へ指定しておくことです。探索・クローンがそこ基準で自然に進みますが、環境ごとに異なるため既定にはしていません。
+対象リポジトリを特定できないとき、`workspace.search_paths` が未設定のとき、または検出できないときは、専用ディレクトリ `~/vk-orchestrator-tasks`（無ければ自動作成）で起動します。`$HOME`（ホームディレクトリ）や特定リポジトリ、`config.json` / `.env` のある機密ディレクトリを起点にしないための安全側の既定です。
 
-未設定時は専用ディレクトリ `~/vk-orchestrator-tasks`（無ければ自動作成）で起動します。`$HOME`（ホームディレクトリ）や特定リポジトリ、`config.json` / `.env` のある機密ディレクトリを起点にしないための安全側の既定です。
+`TASK_CWD` 環境変数を設定した場合は緊急上書きとして最優先され、ローカルクローン検出は行いません。config の `orchestrator.taskCwd` は廃止され、読み取りません。
 
-注意: 起点（cwd）は「起点」であって「隔離」ではありません。絶対パス指定でのファイル読み取りは起点に関わらず可能なので、`GITHUB_TOKEN` 等の機密保護は起点設定だけでは達成できません。秘密管理・権限分離は別途行ってください。相対パスを指定した場合はオーケストレーター起動時の作業ディレクトリ基準で解決されます。
+注意: 起点（cwd）は「起点」であって「隔離」ではありません。絶対パス指定でのファイル読み取りは起点に関わらず可能なので、`GITHUB_TOKEN` 等の機密保護は起点設定だけでは達成できません。秘密管理・権限分離は別途行ってください。`TASK_CWD` に相対パスを指定した場合はオーケストレーター起動時の作業ディレクトリ基準で解決されます。
 
 > **`gpu`（GUI の GPU 起動モード）** — VK Terminals(GUI) は Electron アプリで、macOS 以外（WSLg 等の Linux）では Chromium の GPU 初期化が失敗し `up` 起動時に `Exiting GPU process` / `kTransientFailure` 等のエラーログが大量に出ます。値で挙動を選べます。
 >
