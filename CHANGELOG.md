@@ -1,8 +1,10 @@
 # Changelog
 
+= 0.19.0 =
+
 - [ 機能追加 ] tick ごとに task-queue の全タスク表示用 snapshot（`~/.task-queue/tasks-view.json`）を書き出し、`up` 起動時に VK Terminals 設定へパスを注入
 - [ 機能追加 ] VK Terminals からのステータス変更依頼を `commands.jsonl` で受け付け、CAS と許可遷移チェックを通して GitHub ラベルへ適用
-- [ 仕様変更 ] vk-terminals を 1.25.0 から 1.26.0 にアップデート（設定スキーマ `settings-schema.json` の同梱・設定モーダルの保存ヒント改行修正）
+- [ 仕様変更 ] vk-terminals を 1.25.0 から 1.29.0 にアップデート（設定スキーマ `settings-schema.json` の同梱・設定画面の説明文拡充・入力待ち除外 cwd 設定を config 直編集専用に変更・起動時初回ペインの初期ディレクトリ不具合修正・サイドバー／モバイルのタスク一覧とステータス変更依頼 UI を追加）
 - [ 仕様変更 ] 設定パネルの VK Terminals 本体設定を vk-terminals 同梱の設定スキーマから読み込む方式に変更し、本体との説明文ズレや項目漏れを解消
 - [ 仕様変更 ] VK Terminals の GPU 起動モード設定を本体 config の `gpu` に一本化し、オーケストレーター側の起動オプション設定欄を撤去
 - [ 仕様変更 ] タスクペインの起点ディレクトリを issue 対象リポジトリのローカルクローン（workspace.search_paths から自動検出）に変更し、orchestrator.taskCwd 設定を廃止（未検出時は従来どおり ~/vk-orchestrator-tasks で起動）
