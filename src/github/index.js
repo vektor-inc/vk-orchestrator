@@ -254,6 +254,66 @@ export class GitHubClient {
     }
   }
 
+  // issue の優先度ラベルを更新する。
+  // status / sequential など priority:* 以外のラベルは維持し、priority ファミリーだけを差し替える。
+  // newPriority は high / medium / low / none を受け付け、none は priority:* を外すだけにする。
+  async setPriority(issueNumber, newPriority) {
+    const labelsConfig = getLabelsConfig();
+    const priorityLabels = labelsConfig.priority ?? {};
+    const nextLabel = newPriority === 'none' ? null : priorityLabels[newPriority];
+    if (newPriority !== 'none' && !nextLabel) {
+      throw new Error(`不明な優先度です: ${newPriority}`);
+    }
+
+    const { data: issue } = await this.octokit.issues.get({
+      owner: this.owner,
+      repo: this.repo,
+      issue_number: issueNumber,
+    });
+
+    const currentLabels = issue.labels.map(l => l.name);
+    const otherLabels = currentLabels.filter(name => !name.startsWith('priority:'));
+    const labels = nextLabel ? [...otherLabels, nextLabel] : otherLabels;
+
+    await this.octokit.issues.setLabels({
+      owner: this.owner,
+      repo: this.repo,
+      issue_number: issueNumber,
+      labels,
+    });
+
+    console.log(`  [GitHub] issue #${issueNumber} priority → ${newPriority}`);
+  }
+
+  // issue の直列実行ラベルを更新する。
+  // sequential 以外のラベルは維持し、parallel の場合も parallel ラベルは付けない。
+  async setSequential(issueNumber, mode) {
+    const labelsConfig = getLabelsConfig();
+    const sequentialLabel = labelsConfig.sequential ?? 'sequential';
+    if (mode !== 'sequential' && mode !== 'parallel') {
+      throw new Error(`不明な実行方式です: ${mode}`);
+    }
+
+    const { data: issue } = await this.octokit.issues.get({
+      owner: this.owner,
+      repo: this.repo,
+      issue_number: issueNumber,
+    });
+
+    const currentLabels = issue.labels.map(l => l.name);
+    const otherLabels = currentLabels.filter(name => name !== sequentialLabel);
+    const labels = mode === 'sequential' ? [...otherLabels, sequentialLabel] : otherLabels;
+
+    await this.octokit.issues.setLabels({
+      owner: this.owner,
+      repo: this.repo,
+      issue_number: issueNumber,
+      labels,
+    });
+
+    console.log(`  [GitHub] issue #${issueNumber} execution → ${mode}`);
+  }
+
   // 作業対象リポジトリの Issue の repository_url（"https://api.github.com/repos/{owner}/{repo}" 形式）から
   // owner / repo を取り出す。取り込み系メソッド共通のヘルパー。
   parseSourceRepo(sourceIssue) {

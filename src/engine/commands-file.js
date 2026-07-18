@@ -3,16 +3,22 @@ import { basename, dirname, join } from 'path';
 import { DEFAULT_LABELS, getLabelsConfig, resolveCommandsPath, writeJsonAtomic } from '../config.js';
 
 const STATUS_PREFIX = 'status:';
+const PRIORITY_PREFIX = 'priority:';
 const STATE_VERSION = 1;
 const DEFAULT_RECENT_ID_LIMIT = 1000;
 const DEFAULT_TRANSIENT_RETRY_LIMIT = 3;
 const ALLOWED_TRANSITIONS = new Set([
   'awaiting-approval->ready',
   'ready->awaiting-approval',
+  'in-progress->awaiting-approval',
+  'waiting-input->awaiting-approval',
+  'waiting-merge->awaiting-approval',
+  'failed->awaiting-approval',
   'waiting-merge->done',
   'failed->ready',
   'ready->failed',
 ]);
+const SEQUENTIAL_VALUES = new Set(['sequential', 'parallel']);
 
 function labelName(label) {
   return typeof label === 'string' ? label : label?.name;
@@ -55,6 +61,52 @@ export function statusLabelFor(value, labelsConfig = getLabelsConfig()) {
   return buildStatusLabelMaps(labelsConfig).bareToLabel.get(bare) ?? null;
 }
 
+function priorityLabelsFromConfig(labelsConfig = getLabelsConfig()) {
+  return labelsConfig?.priority ?? DEFAULT_LABELS.priority;
+}
+
+export function buildPriorityLabelMaps(labelsConfig = getLabelsConfig()) {
+  const priorityLabels = priorityLabelsFromConfig(labelsConfig);
+  const bareToLabel = new Map();
+  const labelToBare = new Map();
+
+  for (const [bare, label] of Object.entries(priorityLabels)) {
+    if (!['high', 'medium', 'low'].includes(bare)) continue;
+    if (typeof label !== 'string' || !label.startsWith(PRIORITY_PREFIX)) continue;
+    bareToLabel.set(bare, label);
+    labelToBare.set(label, bare);
+  }
+
+  return { bareToLabel, labelToBare };
+}
+
+export function normalizePriorityName(value, labelsConfig = getLabelsConfig()) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (raw === 'none') return 'none';
+
+  const { bareToLabel, labelToBare } = buildPriorityLabelMaps(labelsConfig);
+  if (labelToBare.has(raw)) return labelToBare.get(raw);
+
+  const bare = raw.startsWith(PRIORITY_PREFIX) ? raw.slice(PRIORITY_PREFIX.length) : raw;
+  return bareToLabel.has(bare) ? bare : null;
+}
+
+export function priorityLabelFor(value, labelsConfig = getLabelsConfig()) {
+  const bare = normalizePriorityName(value, labelsConfig);
+  if (!bare || bare === 'none') return null;
+  return buildPriorityLabelMaps(labelsConfig).bareToLabel.get(bare) ?? null;
+}
+
+export function normalizeSequentialName(value, labelsConfig = getLabelsConfig()) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (SEQUENTIAL_VALUES.has(raw)) return raw;
+  return raw === labelsConfig?.sequential ? 'sequential' : null;
+}
+
 export function isAllowedTransition(from, to) {
   const normalizedFrom = typeof from === 'string' && from.startsWith(STATUS_PREFIX)
     ? from.slice(STATUS_PREFIX.length)
@@ -71,6 +123,21 @@ export function extractIssueStatus(issue, labelsConfig = getLabelsConfig()) {
     .filter((name) => typeof name === 'string' && name !== '');
   const statusLabel = labels.find((name) => name.startsWith(STATUS_PREFIX));
   return statusLabel ? normalizeStatusName(statusLabel, labelsConfig) : null;
+}
+
+export function extractIssuePriority(issue, labelsConfig = getLabelsConfig()) {
+  const labels = (issue?.labels ?? [])
+    .map(labelName)
+    .filter((name) => typeof name === 'string' && name !== '');
+  const priorityLabel = labels.find((name) => name.startsWith(PRIORITY_PREFIX));
+  return priorityLabel ? normalizePriorityName(priorityLabel, labelsConfig) ?? 'none' : 'none';
+}
+
+export function extractIssueSequential(issue, labelsConfig = getLabelsConfig()) {
+  const labels = (issue?.labels ?? [])
+    .map(labelName)
+    .filter((name) => typeof name === 'string' && name !== '');
+  return labels.includes(labelsConfig?.sequential ?? DEFAULT_LABELS.sequential) ? 'sequential' : 'parallel';
 }
 
 function normalizeTaskId(value) {
@@ -272,6 +339,82 @@ export async function processSetStatusCommand(command, dependencies = {}) {
   return { evaluated: true, applied: true, reason: 'applied', id };
 }
 
+export async function processSetPriorityCommand(command, dependencies = {}) {
+  const logger = dependencies.logger ?? console;
+  const labelsConfig = dependencies.labelsConfig ?? getLabelsConfig();
+  const github = dependencies.github;
+  const getMetaIssue = dependencies.getMetaIssue;
+
+  const valid = validateCommand(command, logger);
+  if (!valid) return { evaluated: false, applied: false, reason: 'invalid' };
+
+  const { id, taskId } = valid;
+  const expected = normalizePriorityName(command.expected, labelsConfig);
+  const to = normalizePriorityName(command.to, labelsConfig);
+  if (!expected || !to) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: expected/to の優先度名が不正なため拒否します`);
+    return { evaluated: true, applied: false, reason: 'invalid-priority', id };
+  }
+
+  const issue = await getMetaIssue(taskId);
+  const actual = extractIssuePriority(issue, labelsConfig);
+  if (actual !== expected) {
+    logger.info?.(`[commands-file] id=${logId(id)}: CAS 不一致（expected=${sanitizeLogText(expected)}, actual=${sanitizeLogText(actual)}）のため破棄します`);
+    return { evaluated: true, applied: false, reason: 'cas-mismatch', id };
+  }
+
+  await github.setPriority(taskId, to);
+  logger.info?.(`[commands-file] id=${logId(id)}: issue #${taskId} の優先度を ${sanitizeLogText(to)} へ変更しました`);
+  return { evaluated: true, applied: true, reason: 'applied', id };
+}
+
+export async function processSetSequentialCommand(command, dependencies = {}) {
+  const logger = dependencies.logger ?? console;
+  const labelsConfig = dependencies.labelsConfig ?? getLabelsConfig();
+  const github = dependencies.github;
+  const getMetaIssue = dependencies.getMetaIssue;
+
+  const valid = validateCommand(command, logger);
+  if (!valid) return { evaluated: false, applied: false, reason: 'invalid' };
+
+  const { id, taskId } = valid;
+  const expected = normalizeSequentialName(command.expected, labelsConfig);
+  const to = normalizeSequentialName(command.to, labelsConfig);
+  if (!expected || !to) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: expected/to の直列指定が不正なため拒否します`);
+    return { evaluated: true, applied: false, reason: 'invalid-sequential', id };
+  }
+
+  const issue = await getMetaIssue(taskId);
+  const actual = extractIssueSequential(issue, labelsConfig);
+  if (actual !== expected) {
+    logger.info?.(`[commands-file] id=${logId(id)}: CAS 不一致（expected=${sanitizeLogText(expected)}, actual=${sanitizeLogText(actual)}）のため破棄します`);
+    return { evaluated: true, applied: false, reason: 'cas-mismatch', id };
+  }
+
+  await github.setSequential(taskId, to);
+  logger.info?.(`[commands-file] id=${logId(id)}: issue #${taskId} の実行方式を ${sanitizeLogText(to)} へ変更しました`);
+  return { evaluated: true, applied: true, reason: 'applied', id };
+}
+
+export async function processCommand(command, dependencies = {}) {
+  const logger = dependencies.logger ?? console;
+  const valid = validateCommand(command, logger);
+  if (!valid) return { evaluated: false, applied: false, reason: 'invalid' };
+
+  switch (command.action) {
+    case 'set-status':
+      return processSetStatusCommand(command, dependencies);
+    case 'set-priority':
+      return processSetPriorityCommand(command, dependencies);
+    case 'set-sequential':
+      return processSetSequentialCommand(command, dependencies);
+    default:
+      logger.warn?.(`[commands-file] id=${logId(valid.id)}: 未対応 action "${sanitizeLogText(command.action)}" のため無視します`);
+      return { evaluated: true, applied: false, reason: 'unsupported-action', id: valid.id };
+  }
+}
+
 function splitCompleteLines(text) {
   if (!text) return [];
   const chunks = text.split('\n');
@@ -356,7 +499,7 @@ export async function consumeCommandsFile(options = {}) {
 
     let result;
     try {
-      result = await processSetStatusCommand(command, { ...options, github, getMetaIssue });
+      result = await processCommand(command, { ...options, github, getMetaIssue });
     } catch (err) {
       if (isPermanentError(err)) {
         const status = getErrorStatus(err);

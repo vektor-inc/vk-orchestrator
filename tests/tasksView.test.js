@@ -32,7 +32,7 @@ test('normalizeTaskIssue: status/担当者/対象 issue URL/PR URL を正規化�
       '',
       '**PR:** https://github.com/vektor-inc/vk-orchestrator/pull/140',
     ].join('\n'),
-    labels: [{ name: 'status:waiting-merge' }, { name: 'priority:high' }],
+    labels: [{ name: 'status:waiting-merge' }, { name: 'priority:high' }, { name: 'sequential' }],
     assignees: [{ login: 'wada' }, { login: 'tsukasa' }],
     html_url: 'https://github.com/vektor-inc/task-queue/issues/139',
     updated_at: '2026-07-17T01:02:03Z',
@@ -44,6 +44,8 @@ test('normalizeTaskIssue: status/担当者/対象 issue URL/PR URL を正規化�
     title: 'tasks-view snapshot',
     status: 'waiting-merge',
     statusLabel: 'status:waiting-merge',
+    priority: 'high',
+    sequential: true,
     assignee: 'wada',
     assignees: ['wada', 'tsukasa'],
     targetIssueUrl: 'https://github.com/vektor-inc/vk-orchestrator/issues/138',
@@ -51,6 +53,17 @@ test('normalizeTaskIssue: status/担当者/対象 issue URL/PR URL を正規化�
     queueIssueUrl: 'https://github.com/vektor-inc/task-queue/issues/139',
     updatedAt: '2026-07-17T01:02:03Z',
   });
+});
+
+test('normalizeTaskIssue: priority ラベルが無ければ null、sequential が無ければ false を返す', () => {
+  const task = normalizeTaskIssue({
+    number: 140,
+    title: 'parallel task',
+    labels: [{ name: 'status:ready' }, { name: 'bug' }],
+  });
+
+  assert.equal(task.priority, null);
+  assert.equal(task.sequential, false);
 });
 
 test('buildTasksView: root updatedAt を含め、pull request は除外する', () => {
