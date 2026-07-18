@@ -12,6 +12,9 @@ import {
   ensureGitHubToken,
   getTaskConfig,
   getTaskCwd,
+  loadUnifiedConfig,
+  resolveVkAgentsConfigPath,
+  resolveVkTerminalsApiHost,
   resolveVkTerminalsApiPort,
 } from '../config.js';
 import {
@@ -44,6 +47,7 @@ import { createStartLock } from './start-lock.js';
 import { writeAgentRulesHandoff } from './agentRulesHandoff.js';
 import { formatErrorSummary } from './format-error.js';
 import { refreshTasksViewSnapshot } from './tasks-view.js';
+import { resolveRepoCwd } from './resolve-repo-cwd.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -123,6 +127,69 @@ function formatAssigneeMode(client) {
 // status:in-progress ラベル反映前に並行 loop が同じ ready issue を fetch した場合の
 // レースを抑えるために残す。
 const inFlightIssues = new Set();
+
+function isLoopbackHost(host) {
+  const normalized = String(host ?? '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1';
+}
+
+function getWorkspaceSearchPaths() {
+  const configPath = resolveVkAgentsConfigPath();
+  if (!configPath) return [];
+  try {
+    const config = loadUnifiedConfig(configPath);
+    const searchPaths = config?.workspace?.search_paths;
+    if (!Array.isArray(searchPaths)) return [];
+    return searchPaths.filter((path) => typeof path === 'string' && path.trim() !== '');
+  } catch (err) {
+    console.warn(`  [task-cwd] vk-agents config の読み込み失敗（検出をスキップ）: ${err.message}`);
+    return [];
+  }
+}
+
+function resolveTaskPaneCwd(issue, target) {
+  const fallback = () => getTaskCwd();
+  const envTaskCwd = String(process.env.TASK_CWD ?? '').trim();
+  if (envTaskCwd !== '') {
+    const cwd = fallback();
+    console.log(`  [task-cwd] TASK_CWD env を使用: ${cwd}`);
+    return cwd;
+  }
+
+  const apiHost = resolveVkTerminalsApiHost();
+  if (!isLoopbackHost(apiHost)) {
+    const cwd = fallback();
+    console.log(`  [task-cwd] VK Terminals host=${apiHost} は非ループバックのため検出をスキップし、安全既定を使用: ${cwd}`);
+    return cwd;
+  }
+
+  if (target.isSelf) {
+    const cwd = fallback();
+    console.log(`  [task-cwd] issue #${issue.number} は対象リポジトリ未特定のため安全既定を使用: ${cwd}`);
+    return cwd;
+  }
+
+  const searchPaths = getWorkspaceSearchPaths();
+  if (searchPaths.length === 0) {
+    const cwd = fallback();
+    console.log(`  [task-cwd] workspace.search_paths 未設定のため安全既定を使用: ${cwd}`);
+    return cwd;
+  }
+
+  const detected = resolveRepoCwd({
+    owner: target.owner,
+    repo: target.repo,
+    searchPaths,
+  });
+  if (detected) {
+    console.log(`  [task-cwd] ${target.owner}/${target.repo} のローカルクローンを検出: ${detected}`);
+    return detected;
+  }
+
+  const cwd = fallback();
+  console.log(`  [task-cwd] ${target.owner}/${target.repo} のローカルクローン未検出のため安全既定を使用: ${cwd}`);
+  return cwd;
+}
 
 // issue の本文・タイトルから作業対象リポジトリのキー（"owner/repo"）を抽出する。
 // GitHub issue URL を含まない汎用タスクは null（＝他と干渉しない独立タスクとして扱う）。
@@ -299,10 +366,12 @@ async function syncOrchestratorMenu() {
 async function startTask(issue) {
   const { number, title, body } = issue;
   console.log(`\n[Task #${number}] "${title}" を起動`);
+  const resolved = resolveTarget(issue);
+  const taskPaneCwd = resolveTaskPaneCwd(issue, resolved);
 
   let termId;
   try {
-    termId = await createNewPane(VK_PORT, getTaskCwd());
+    termId = await createNewPane(VK_PORT, taskPaneCwd);
     console.log(`  → 新規ペイン作成 (termId: ${termId})`);
   } catch (err) {
     console.error(`  新規ペイン作成失敗: ${err.message}`);
@@ -313,7 +382,6 @@ async function startTask(issue) {
   // task-queue のメタ issue 本文に元の作業対象 issue の URL が含まれていれば、
   // その元 issue のタイトル・リンクをヘッダーに出す（issue #23）。解決できない汎用タスクや
   // 元 issue の取得失敗時は従来どおりメタ issue のタイトル・リンクにフォールバックする。
-  const resolved = resolveTarget(issue);
   let resolvedTarget = null;
   if (!resolved.isSelf) {
     // ペインタイトルは付随処理（cosmetic）なので、取得に失敗してもメタ issue へ
@@ -349,7 +417,7 @@ async function startTask(issue) {
   // wp-env 連携の ON/OFF を解決する（設定で明示があればそれ、無ければ対象リポの
   // `.wp-env.json` 有無で自動判定）。結果を buildCommand に渡してポート割り当て・
   // {wpPort} 展開・クリーンアップ用 wpPort 保存の要否を決める。
-  const wpEnvEnabled = await resolveWpEnvEnabled(issue);
+  const wpEnvEnabled = await resolveWpEnvEnabled(issue, resolved);
   let reservedPorts = new Set();
   if (wpEnvEnabled) {
     try {
@@ -437,11 +505,10 @@ function resolveTarget(issue) {
 //   （WordPress 案件のみ ON）。汎用タスク（対象 issue URL 無し）や取得失敗時は false に倒す
 //   （非 WP 前提。存在しない wp-env のポート割り当て・掃除を避ける安全側の既定）。
 // -------------------------------------------------------
-async function resolveWpEnvEnabled(issue) {
+async function resolveWpEnvEnabled(issue, target = resolveTarget(issue)) {
   const configVal = getTaskConfig().wpEnv?.enabled;
   if (typeof configVal === 'boolean') return configVal;
 
-  const target = resolveTarget(issue);
   if (target.isSelf) return false;
 
   try {
