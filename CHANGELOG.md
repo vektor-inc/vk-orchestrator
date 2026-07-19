@@ -1,5 +1,7 @@
 # Changelog
 
+- [ 不具合修正 ] 自前 PR を持たない親調整 issue が全 sub-issue 完了後も in-progress のまま残る不具合を修正
+
 = 0.20.0 =
 
 - [ 機能追加 ] タスク一覧 snapshot に優先度・直列実行情報を追加し、VK Terminals からの優先度変更・直列/並列切り替え・承認待ち差し戻し依頼に対応
