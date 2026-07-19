@@ -36,6 +36,7 @@ import { closeSourceIssueBeforeGate as closeSourceIssueBeforeGateImpl } from './
 import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { createScanInProgressMergedHandler } from './scan-in-progress-merged.js';
+import { createPrLessParentDoneHandler } from './pr-less-parent-done.js';
 import { createReconcileOrphanedMergedTasks } from './reconcile-orphaned-merged.js';
 import { findReplyAfterWaitingInput, hasAgentAnsweredAfterWaitingInput } from './decision-record.js';
 import { startKeepAwake } from '../power/keep-awake.js';
@@ -310,6 +311,15 @@ const handleScanInProgressMerged = createScanInProgressMergedHandler({
   logger: console,
 });
 
+const handlePrLessParentDone = createPrLessParentDoneHandler({
+  getSubIssueStates: github.listSubIssueStates.bind(github),
+  completeIssue: (issue) => handleScanInProgressMerged(issue, null, {
+    completionComment: '✅ 完了\n\n全サブ issue が完了しました。',
+    logMessage: `  [scan-in-progress] issue #${issue.number}: PR なし親調整 issue の全 sub-issue closed → done`,
+  }),
+  logger: console,
+});
+
 // state.json 残骸の掃除は毎ループのエントリ数分だけメタ issue を読む。
 // GitHub API のリトライが積み上がると watch ループ全体を詰まらせるため単発試行にする。
 function getMetaIssue(issueNumber) {
@@ -531,9 +541,11 @@ async function gatherTargetState(issue) {
   let pr = null;
   let prState = null;
   let prCompletionReady = false;
+  let prLookupFailed = false;
   try {
     pr = await github.findPRForIssue(target.owner, target.repo, target.number);
   } catch (err) {
+    prLookupFailed = true;
     console.warn(`  [scan] issue #${issue.number}: PR 検索失敗: ${err.message}`);
   }
   if (pr) {
@@ -567,7 +579,7 @@ async function gatherTargetState(issue) {
   }
   comments.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-  return { target, pr, prState, prCompletionReady, comments };
+  return { target, pr, prState, prCompletionReady, comments, prLookupFailed };
 }
 
 // -------------------------------------------------------
@@ -637,7 +649,10 @@ async function scanInProgressIssues() {
       automerge: github.hasAutomergeLabel(issue),
     });
 
-    if (action.type === 'none') continue;
+    if (action.type === 'none') {
+      await handlePrLessParentDone(issue, state, action);
+      continue;
+    }
 
     if (action.type === 'waiting-input') {
       // 未応答の waiting-input を検知。指示待ちに倒す（確認内容は対象 issue/PR 側にある）。

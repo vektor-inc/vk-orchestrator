@@ -101,4 +101,33 @@ describe('scan-in-progress merged handler', () => {
     assert.match(warnings[0], /issue #86/);
     assert.match(warnings[0], /terminal unavailable/);
   });
+
+  it('PR なし親調整 issue 用の完了コメントを指定できる', async () => {
+    const comments = [];
+    const notifications = [];
+    const issue = { number: 148 };
+    const handleMerged = createScanInProgressMergedHandler({
+      closeSourceIssueBeforeGate: async () => {},
+      canTransitionToDone: async () => true,
+      addComment: async (issueNumber, body) => comments.push({ issueNumber, body }),
+      closeIssue: async () => {},
+      setStatus: async () => {},
+      notifyPaneMerged: async (...args) => notifications.push(args),
+      removeTask: async () => {},
+      logger: { log: () => {}, warn: () => {} },
+    });
+
+    const result = await handleMerged(issue, null, {
+      completionComment: '✅ 完了\n\n全サブ issue が完了しました。',
+    });
+
+    assert.equal(result, true);
+    assert.deepEqual(comments, [
+      {
+        issueNumber: 148,
+        body: '✅ 完了\n\n全サブ issue が完了しました。',
+      },
+    ]);
+    assert.deepEqual(notifications, []);
+  });
 });
