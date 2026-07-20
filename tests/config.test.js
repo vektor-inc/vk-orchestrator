@@ -1688,7 +1688,7 @@ test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () 
     multiRepoEngineField.options.map((o) => o.value),
     ['', 'claude', 'codex'],
   );
-  assert.equal(multiRepoEngineField.options.find((o) => o.value === 'codex').label, 'codex');
+  assert.equal(multiRepoEngineField.options.find((o) => o.value === 'codex').label, 'Codex');
   assert.match(multiRepoEngineField.help, /vk-multi-repo-task/);
   assert.match(multiRepoEngineField.help, /Claude/);
 });
