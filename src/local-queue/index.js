@@ -26,6 +26,15 @@ function priorityLabelFor(priority, labelsConfig = getLabelsConfig()) {
   return (labelsConfig.priority ?? {})[bare] ?? `priority:${bare}`;
 }
 
+function labelsForTask(task, labelsConfig = getLabelsConfig()) {
+  return [
+    statusLabelFor(task.status, labelsConfig),
+    priorityLabelFor(task.priority, labelsConfig),
+    task.sequential ? labelsConfig.sequential ?? DEFAULT_LABELS.sequential : null,
+    task.automerge ? labelsConfig.automerge ?? DEFAULT_LABELS.automerge : null,
+  ].filter(Boolean);
+}
+
 function normalizePriority(priority) {
   const bare = String(priority ?? '').trim().replace(/^priority:/, '');
   return bare === '' ? 'none' : bare;
@@ -80,20 +89,12 @@ export class LocalQueueClient {
   }
 
   taskToIssue(task) {
-    const labelsConfig = getLabelsConfig();
-    const labels = [
-      statusLabelFor(task.status, labelsConfig),
-      priorityLabelFor(task.priority, labelsConfig),
-      task.sequential ? labelsConfig.sequential ?? DEFAULT_LABELS.sequential : null,
-      task.automerge ? labelsConfig.automerge ?? DEFAULT_LABELS.automerge : null,
-    ].filter(Boolean);
-
     return {
       number: task.id,
       state: task.state ?? 'open',
       title: task.title ?? '',
       body: task.body ?? '',
-      labels,
+      labels: labelsForTask(task),
       assignees: Array.isArray(task.assignees) ? task.assignees : [],
       html_url: `local://queue/${task.id}`,
       updated_at: task.updatedAt ?? null,
@@ -320,7 +321,29 @@ export class LocalQueueClient {
   getLastCodeRabbitCommentTime(...args) { return this.github.getLastCodeRabbitCommentTime(...args); }
   mergePR(...args) { return this.github.mergePR(...args); }
   deleteRemoteBranch(...args) { return this.github.deleteRemoteBranch(...args); }
-  getIssueState(...args) { return this.github.getIssueState(...args); }
+  async getIssueState(owner, repo, issueNumber, opts) {
+    if (owner !== this.owner || repo !== this.repo) {
+      return this.github.getIssueState(owner, repo, issueNumber, opts);
+    }
+
+    const id = Number(issueNumber);
+    const task = this.readQueue().tasks.find(item => item.id === id);
+    if (!task) {
+      const err = new Error(`Local queue task #${issueNumber} が見つかりません`);
+      err.status = 404;
+      throw err;
+    }
+
+    const state = task.state ?? 'open';
+    return {
+      state,
+      closedAt: state === 'closed' ? task.updatedAt ?? null : null,
+      title: task.title ?? '',
+      htmlUrl: `local://queue/${task.id}`,
+      body: task.body ?? '',
+      labels: labelsForTask(task),
+    };
+  }
   hasWpEnvConfig(...args) { return this.github.hasWpEnvConfig(...args); }
   listSubIssueStates(...args) { return this.github.listSubIssueStates(...args); }
   closeSourceIssue(...args) { return this.github.closeSourceIssue(...args); }
