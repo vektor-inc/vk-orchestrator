@@ -45,6 +45,7 @@ import { createWaitingMarkerScanner } from './waiting-marker-scanner.js';
 import { createCommandsFileProcessor, startCommandsFileWatcher } from './commands-file.js';
 import { installPersistentConsoleLogger } from './persistent-logger.js';
 import { createStartLock } from './start-lock.js';
+import { dispatchReadyIssues } from './ready-dispatch.js';
 import { writeAgentRulesHandoff } from './agentRulesHandoff.js';
 import { formatErrorSummary } from './format-error.js';
 import { refreshTasksViewSnapshot } from './tasks-view.js';
@@ -1611,36 +1612,21 @@ async function loopBody() {
   // （in-memory のカウンタではなくラベル状態を真実の源にする）。
   const occupiedRepos = await getOccupiedRepoKeys();
 
-  for (const issue of issues) {
-    if (inFlightIssues.has(issue.number)) {
-      console.log(`[poll] issue #${issue.number} は起動処理中のためスキップ`);
-      continue;
-    }
-
-    const repoKey = getTargetRepoKey(issue);
-
-    // sequential ラベル付き issue は、同じ作業対象リポジトリのタスクが作業中なら
-    // 起動を見送り、次のポーリングで再評価する。別 repo・汎用・ラベル無しは即起動。
-    if (github.isSequential(issue) && repoKey && occupiedRepos.has(repoKey)) {
-      console.log(
-        `[poll] issue #${issue.number} (${repoKey}): 同じ作業対象リポジトリのタスクが作業中のため待機`
-      );
-      continue;
-    }
-
-    // 起動は撃ちっぱなし（ペイン作成＋送信＋state 記録で完了）。
-    // inFlightIssues は「status:in-progress 反映前に並行 loop が同じ ready を拾う」レース対策。
-    inFlightIssues.add(issue.number);
-    try {
-      const started = await startTask(issue);
-      // 同ティック内の後続 sequential タスクを待たせるため occupied に追加
-      if (started && repoKey) occupiedRepos.add(repoKey);
-    } catch (err) {
-      console.error(`[poll] issue #${issue.number} 起動エラー: ${formatErrorSummary(err)}`);
-    } finally {
-      inFlightIssues.delete(issue.number);
-    }
-  }
+  await dispatchReadyIssues(
+    issues,
+    {
+      inFlightIssues,
+      occupiedRepos,
+      getTargetRepoKey,
+      isSequential: (issue) => github.isSequential(issue),
+      startTask,
+      getTask,
+      getStates,
+      setStatus: (issueNumber, label) => github.setStatus(issueNumber, label),
+      formatErrorSummary,
+    },
+    { port: VK_PORT, logger: console }
+  );
 }
 
 async function loop() {
