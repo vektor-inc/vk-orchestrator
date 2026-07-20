@@ -5,6 +5,10 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 import { LocalQueueClient } from '../src/local-queue/index.js';
+import { extractGitHubIssueUrl } from '../src/engine/build-command.js';
+import { canTransitionToDone } from '../src/engine/done-gate.js';
+import { decideInProgressAction } from '../src/engine/in-progress-decision.js';
+import { closeSourceIssueBeforeGate } from '../src/engine/source-close.js';
 import { readLocalQueue } from '../src/local-queue/store.js';
 import { runQueueClientContract } from './contract/queueClientContract.js';
 
@@ -53,7 +57,7 @@ function seedToTask(issue) {
     state: 'open',
     title: issue.title,
     body: issue.body ?? '',
-    status: 'ready',
+    status: issue.status ?? 'ready',
     priority: issue.priority ?? 'none',
     sequential: issue.sequential === true,
     automerge: issue.automerge === true,
@@ -77,6 +81,26 @@ function createLocalQueueClient(seedIssues, options = {}) {
     queuePath,
     githubClient: options.githubClient ?? fakeGitHubClient(),
   });
+}
+
+async function importNewTasksLikeEngine(client, sourceOrg, queueLabel) {
+  const sourceIssues = await client.searchSourceIssuesByLabel(sourceOrg, queueLabel);
+  const createdIssues = [];
+
+  for (const src of sourceIssues) {
+    const existing = await client.findTaskQueueIssueBySourceUrl(src.html_url);
+    if (existing) continue;
+
+    const claimed = await client.claimSourceIssueByLabelRemoval(src);
+    if (!claimed) continue;
+
+    const created = await client.createTaskQueueIssueFromSource(src);
+    await client.addSourceWorkingLabel(src);
+    await client.postSourceImportComment(src, created.html_url);
+    createdIssues.push(created);
+  }
+
+  return createdIssues;
 }
 
 runQueueClientContract({ label: 'LocalQueueClient', createClient: createLocalQueueClient });
@@ -233,6 +257,227 @@ test('LocalQueueClient: createTaskQueueIssueFromSource と findTaskQueueIssueByS
   assert.equal(created.body, source.html_url);
   assert.equal(found.number, 1);
   assert.ok(found.labels.includes('status:awaiting-approval'));
+});
+
+test('LocalQueueClient: importNewTasks 相当の source import は queue.json に作成し、source 操作だけ委譲する', async () => {
+  const source = {
+    number: 72,
+    title: 'Import source issue locally',
+    html_url: 'https://github.com/vektor-inc/example/issues/72',
+    repository_url: 'https://api.github.com/repos/vektor-inc/example',
+  };
+  const calls = [];
+  const client = createLocalQueueClient([], {
+    githubClient: fakeGitHubClient({
+      createTaskQueueIssueFromSource: async () => {
+        throw new Error('queue issue creation must stay local');
+      },
+      searchSourceIssuesByLabel: async (...args) => {
+        calls.push(['searchSourceIssuesByLabel', ...args]);
+        return [source];
+      },
+      claimSourceIssueByLabelRemoval: async (src) => {
+        calls.push(['claimSourceIssueByLabelRemoval', src.html_url]);
+        return true;
+      },
+      addSourceWorkingLabel: async (src) => {
+        calls.push(['addSourceWorkingLabel', src.html_url]);
+      },
+      postSourceImportComment: async (src, queueUrl) => {
+        calls.push(['postSourceImportComment', src.html_url, queueUrl]);
+      },
+    }),
+  });
+
+  const firstImport = await importNewTasksLikeEngine(client, 'vektor-inc', 'task-queue');
+  const secondImport = await importNewTasksLikeEngine(client, 'vektor-inc', 'task-queue');
+
+  assert.equal(firstImport.length, 1);
+  assert.equal(secondImport.length, 0);
+  assert.equal(firstImport[0].html_url, 'local://queue/1');
+  const queue = readQueue(client.queuePath);
+  assert.equal(queue.tasks.length, 1);
+  assert.equal(queue.tasks[0].body.split('\n')[0], source.html_url);
+  assert.equal(queue.tasks[0].status, 'awaiting-approval');
+  assert.equal((await client.findTaskQueueIssueBySourceUrl(source.html_url)).number, 1);
+  assert.deepEqual(calls, [
+    ['searchSourceIssuesByLabel', 'vektor-inc', 'task-queue'],
+    ['claimSourceIssueByLabelRemoval', source.html_url],
+    ['addSourceWorkingLabel', source.html_url],
+    ['postSourceImportComment', source.html_url, 'local://queue/1'],
+    ['searchSourceIssuesByLabel', 'vektor-inc', 'task-queue'],
+  ]);
+});
+
+test('LocalQueueClient: PR 完了条件充足時に checkPRCompletion と setStatus 経由で waiting-merge へ遷移できる', async () => {
+  const prUrl = 'https://github.com/vektor-inc/example/pull/73';
+  const calls = [];
+  const client = createLocalQueueClient([
+    {
+      number: 73,
+      title: '[example] PR monitoring',
+      body: 'https://github.com/vektor-inc/example/issues/173',
+      status: 'in-progress',
+    },
+  ], {
+    githubClient: fakeGitHubClient({
+      checkPRCompletion: async (...args) => {
+        calls.push(['checkPRCompletion', ...args]);
+        return { ready: true, ciPassing: true, coderabbitOk: true, headSha: 'abc1234' };
+      },
+    }),
+  });
+
+  const [issue] = await client.fetchInProgressIssues();
+  const completion = await client.checkPRCompletion('vektor-inc', 'example', 73);
+  const action = decideInProgressAction({
+    comments: [],
+    pr: { state: 'open', merged: false },
+    prCompletionReady: completion.ready,
+    automerge: client.hasAutomergeLabel(issue),
+  });
+
+  assert.equal(action.type, 'waiting-merge');
+
+  await client.appendPRUrlToIssue(issue.number, prUrl);
+  await client.setStatus(issue.number, 'status:waiting-merge');
+
+  const queueTask = readQueue(client.queuePath).tasks[0];
+  assert.equal(queueTask.status, 'waiting-merge');
+  assert.equal(client.extractPRUrlFromIssueBody(queueTask.body), prUrl);
+  assert.deepEqual(calls, [['checkPRCompletion', 'vektor-inc', 'example', 73]]);
+});
+
+test('LocalQueueClient: automerge 条件充足時に mergePR と done-gate 経由で source close 後 done へ遷移できる', async () => {
+  const prUrl = 'https://github.com/vektor-inc/example/pull/74';
+  const sourceUrl = 'https://github.com/vektor-inc/example/issues/174';
+  const calls = [];
+  let sourceClosed = false;
+  const client = createLocalQueueClient([
+    {
+      number: 74,
+      title: '[example] automerge local task',
+      body: `${sourceUrl}\n\n---\n\n**PR:** ${prUrl}`,
+      status: 'waiting-merge',
+      automerge: true,
+    },
+  ], {
+    githubClient: fakeGitHubClient({
+      getPRState: async (...args) => {
+        calls.push(['getPRState', ...args]);
+        return {
+          state: 'open',
+          merged: false,
+          draft: false,
+          mergeable: true,
+          mergeableState: 'clean',
+          headRefName: 'feature/local',
+        };
+      },
+      checkPRCompletion: async (...args) => {
+        calls.push(['checkPRCompletion', ...args]);
+        return { ready: true, ciPassing: true, coderabbitOk: true, headSha: 'def5678' };
+      },
+      hasReviewGateMarker: async (...args) => {
+        calls.push(['hasReviewGateMarker', ...args]);
+        return true;
+      },
+      mergePR: async (...args) => {
+        calls.push(['mergePR', ...args]);
+        return { merged: true, sha: 'merge-sha' };
+      },
+      listSubIssueStates: async (...args) => {
+        calls.push(['listSubIssueStates', ...args]);
+        return [];
+      },
+      closeSourceIssue: async (target) => {
+        calls.push(['closeSourceIssue', target]);
+        sourceClosed = true;
+      },
+      getIssueState: async (...args) => {
+        calls.push(['getIssueState', ...args]);
+        return { state: sourceClosed ? 'closed' : 'open' };
+      },
+      postSourceCompletionComment: async (...args) => {
+        calls.push(['postSourceCompletionComment', ...args]);
+      },
+    }),
+  });
+
+  const [issue] = await client.fetchWaitingMergeIssues();
+  const prRef = client.parsePRUrl(client.extractPRUrlFromIssueBody(issue.body));
+  const prState = await client.getPRState(prRef.owner, prRef.repo, prRef.number);
+  const completion = await client.checkPRCompletion(prRef.owner, prRef.repo, prRef.number);
+  const reviewPassed = await client.hasReviewGateMarker(
+    prRef.owner,
+    prRef.repo,
+    prRef.number,
+    completion.headSha,
+  );
+
+  assert.equal(client.hasAutomergeLabel(issue), true);
+  assert.equal(prState.state, 'open');
+  assert.equal(completion.ready, true);
+  assert.equal(reviewPassed, true);
+
+  await client.mergePR(prRef.owner, prRef.repo, prRef.number, {
+    method: 'squash',
+    sha: completion.headSha,
+  });
+  await closeSourceIssueBeforeGate(
+    issue,
+    {
+      extractGitHubIssueUrl,
+      closeSourceIssue: client.closeSourceIssue.bind(client),
+      getSubIssueStates: client.listSubIssueStates.bind(client),
+    },
+    { logger: { log: () => {}, warn: () => {} } },
+  );
+  const canDone = await canTransitionToDone(
+    issue,
+    {
+      extractGitHubIssueUrl,
+      getIssueState: client.getIssueState.bind(client),
+      getSubIssueStates: client.listSubIssueStates.bind(client),
+    },
+    { logger: { log: () => {}, warn: () => {} } },
+  );
+
+  assert.equal(canDone, true);
+
+  await client.closeIssue(issue.number);
+  await client.setStatus(issue.number, 'status:done');
+
+  const queueTask = readQueue(client.queuePath).tasks[0];
+  assert.equal(queueTask.state, 'closed');
+  assert.equal(queueTask.status, 'done');
+  assert.deepEqual(
+    calls.map(call => call[0]),
+    [
+      'getPRState',
+      'checkPRCompletion',
+      'hasReviewGateMarker',
+      'mergePR',
+      'listSubIssueStates',
+      'closeSourceIssue',
+      'getIssueState',
+      'listSubIssueStates',
+      'postSourceCompletionComment',
+    ],
+  );
+  assert.deepEqual(calls.find(call => call[0] === 'mergePR'), [
+    'mergePR',
+    'vektor-inc',
+    'example',
+    74,
+    { method: 'squash', sha: 'def5678' },
+  ]);
+  assert.deepEqual(calls.find(call => call[0] === 'closeSourceIssue')[1], {
+    url: sourceUrl,
+    owner: 'vektor-inc',
+    repo: 'example',
+    number: 174,
+  });
 });
 
 test('LocalQueueClient: 同時更新しても queue.json の異なる task 変更を失わない', async () => {
