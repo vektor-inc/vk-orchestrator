@@ -64,22 +64,11 @@ export function buildTasksView(issues, options = {}) {
   };
 }
 
+// タスクキュー上の全タスク（open issue）を取得する。
+// クライアント抽象のインターフェースメソッド経由でのみ取得し、GitHub API を直叩きしない
+// （キューの保存先を GitHub 以外に差し替え可能にするため）。
 export async function fetchAllTaskQueueIssues(github) {
-  const params = {
-    owner: github.owner,
-    repo: github.repo,
-    state: 'open',
-    sort: 'updated',
-    direction: 'desc',
-    per_page: 100,
-  };
-
-  if (typeof github.octokit?.paginate === 'function') {
-    return github.octokit.paginate(github.octokit.issues.listForRepo, params);
-  }
-
-  const { data } = await github.octokit.issues.listForRepo(params);
-  return data;
+  return github.listAllQueueIssues();
 }
 
 export async function writeTasksViewFile(view, options = {}) {
