@@ -267,6 +267,40 @@ export class LocalQueueClient {
     }
   }
 
+  async createLocalTask({
+    title,
+    body = '',
+    priority = 'none',
+    sequential = false,
+    status = 'ready',
+    cwd = null,
+  }) {
+    return this._runExclusive(() => {
+      const queue = this.readQueue();
+      const now = new Date().toISOString();
+      const id = queue.nextId;
+      queue.nextId = id + 1;
+      const task = {
+        id,
+        state: 'open',
+        title: String(title ?? ''),
+        body: String(body ?? ''),
+        status: String(status ?? 'ready'),
+        priority: String(priority ?? 'none'),
+        sequential: sequential === true,
+        automerge: false,
+        cwd,
+        prUrl: null,
+        comments: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      queue.tasks.push(task);
+      this.writeQueue(queue, { now });
+      return this.taskToIssue(task);
+    });
+  }
+
   async createTaskQueueIssueFromSource(sourceIssue) {
     return this._runExclusive(() => {
       const queue = this.readQueue();

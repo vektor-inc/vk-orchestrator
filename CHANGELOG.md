@@ -1,6 +1,7 @@
 # Changelog
 
 - [ 機能追加 ] 設定画面に staff-review（麗美）の実行エンジン（Claude / Codex）を選択するドロップダウンを追加
+- [ 機能追加 ] `queue.backend=local` で GitHub issue に紐づかない純ローカルタスクを登録・一覧・ステータス変更できる CLI を追加
 - [ 機能追加 ] タスクキューの保存先を `queue.backend=local` でローカル JSON（`~/.task-queue/queue.json`）へ切り替えられる中核機能を追加
 - [ 仕様変更 ] 設定画面で担当者フィルタ（担当者ログイン）を「オーケストレーター」セクションから「GitHub」セクションへ移動
 - [ 仕様変更 ] 設定画面（Orchestrator・VK Agents タブ）の説明文言で地の文に流し込んでいた箇条書き・例を改行して読みやすく整形

@@ -161,6 +161,19 @@ npx vk-orchestrator start --once   # 1 周だけ実行
 npx vk-orchestrator check-status   # 現在の状態を表示
 ```
 
+### 純ローカルタスク CLI
+
+`queue.backend` を `local` にしている環境では、GitHub issue に紐づかない純ローカルタスクを CLI から登録・確認できます。GitHub backend では実行できません。
+
+```bash
+npx vk-orchestrator task add "README の更新" --body "ローカルだけで管理する作業" --priority high --sequential
+npx vk-orchestrator task list
+npx vk-orchestrator task list --status ready --json
+npx vk-orchestrator task set-status 1 done
+```
+
+`task add` の `--status` は既定 `ready`、`--priority` は未指定なら `none` です。保存先はローカルキュー（既定 `~/.task-queue/queue.json`）で、純ローカルタスクには元 issue URL は自動追記されません。
+
 `apply` を使えば VK Terminals を起動せず設定反映だけ行うこともできます。
 
 ```bash
@@ -183,6 +196,7 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 | `github.owner` / `github.repo` | `GITHUB_OWNER` / `GITHUB_REPO` | タスク登録リポジトリ（task-queue） | `your-org` / `task-queue` |
 | `github.sourceOrg` | `SOURCE_ORG` | 作業対象リポジトリのオーナー（組織） | タスク登録リポジトリのオーナーと同じ |
 | `github.queueLabel` | `QUEUE_LABEL` | 作業対象リポジトリの取り込みラベル名 | `task-queue` |
+| `queue.backend` | `QUEUE_BACKEND` | キューの保存先。`github` は GitHub issues、`local` はローカル JSON（`~/.task-queue/queue.json`） | `github` |
 | `orchestrator.pollIntervalMs` | `POLL_INTERVAL_MS` | ポーリング間隔 | `60000` |
 | `orchestrator.watchdogIdleMs` | `WATCHDOG_IDLE_MS` | ウォッチドッグ閾値 | `10800000` |
 | `orchestrator.paneResumeMax` | `PANE_RESUME_MAX` | ペイン消失時（PR 未生成）の自動再開上限回数 | `3` |
