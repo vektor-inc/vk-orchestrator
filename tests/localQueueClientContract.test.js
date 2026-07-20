@@ -1,8 +1,10 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { tmpdir } from 'os';
+import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
 
 import { LocalQueueClient } from '../src/local-queue/index.js';
 import { extractGitHubIssueUrl } from '../src/engine/build-command.js';
@@ -13,6 +15,7 @@ import { readLocalQueue } from '../src/local-queue/store.js';
 import { runQueueClientContract } from './contract/queueClientContract.js';
 
 const tempDirs = [];
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function makeTempDir() {
   const dir = mkdtempSync(join(tmpdir(), 'vko-local-queue-'));
@@ -48,6 +51,23 @@ function writeQueue(queuePath, tasks) {
 
 function readQueue(queuePath) {
   return JSON.parse(readFileSync(queuePath, 'utf8'));
+}
+
+function runTaskCli(args, { homeDir, env = {} }) {
+  return spawnSync(process.execPath, ['bin/vk-orchestrator.js', ...args], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+      GITHUB_TOKEN: 'test-token',
+      GITHUB_OWNER: 'vektor-inc',
+      GITHUB_REPO: 'task-queue',
+      QUEUE_BACKEND: 'local',
+      ...env,
+    },
+    encoding: 'utf8',
+  });
 }
 
 function seedToTask(issue) {
@@ -257,6 +277,103 @@ test('LocalQueueClient: createTaskQueueIssueFromSource と findTaskQueueIssueByS
   assert.equal(created.body, source.html_url);
   assert.equal(found.number, 1);
   assert.ok(found.labels.includes('status:awaiting-approval'));
+});
+
+test('LocalQueueClient: createLocalTask は source URL を足さず純ローカルタスクを queue.json に登録する', async () => {
+  const client = createLocalQueueClient([
+    { number: 10, title: 'existing task' },
+  ]);
+
+  const created = await client.createLocalTask({
+    title: '純ローカル作業',
+    body: 'issue URL なしの本文',
+    priority: 'high',
+    sequential: true,
+    status: 'waiting-input',
+    cwd: '/tmp/local-work',
+  });
+
+  assert.equal(created.number, 11);
+  assert.equal(created.title, '純ローカル作業');
+  assert.equal(created.body, 'issue URL なしの本文');
+  assert.ok(created.labels.includes('status:waiting-input'));
+  assert.ok(created.labels.includes('priority:high'));
+  assert.ok(created.labels.includes('sequential'));
+
+  const task = readQueue(client.queuePath).tasks.find(item => item.id === 11);
+  assert.equal(task.state, 'open');
+  assert.equal(task.status, 'waiting-input');
+  assert.equal(task.priority, 'high');
+  assert.equal(task.sequential, true);
+  assert.equal(task.automerge, false);
+  assert.equal(task.cwd, '/tmp/local-work');
+  assert.equal(task.prUrl, null);
+  assert.deepEqual(task.comments, []);
+  assert.equal(task.body.includes('https://github.com/'), false);
+});
+
+test('LocalQueueClient: createLocalTask の既定値は ready / priority none / 非 sequential', async () => {
+  const client = createLocalQueueClient([]);
+
+  await client.createLocalTask({ title: 'default local task' });
+
+  const task = readQueue(client.queuePath).tasks[0];
+  assert.equal(task.id, 1);
+  assert.equal(task.title, 'default local task');
+  assert.equal(task.body, '');
+  assert.equal(task.status, 'ready');
+  assert.equal(task.priority, 'none');
+  assert.equal(task.sequential, false);
+  assert.equal(task.automerge, false);
+  assert.equal(task.cwd, null);
+});
+
+test('CLI task: add / list --status --json / set-status はローカル queue.json を操作する', () => {
+  const homeDir = makeTempDir();
+  const queuePath = join(homeDir, '.task-queue', 'queue.json');
+
+  const addReady = runTaskCli(['task', 'add', 'ready task', '--body', 'plain body'], { homeDir });
+  assert.equal(addReady.status, 0, addReady.stderr);
+  assert.match(addReady.stdout, /task #1 を登録しました（status:ready）/);
+
+  const addWaiting = runTaskCli([
+    'task',
+    'add',
+    'waiting task',
+    '--status',
+    'waiting-input',
+    '--priority',
+    'low',
+    '--sequential',
+  ], { homeDir });
+  assert.equal(addWaiting.status, 0, addWaiting.stderr);
+
+  const listReady = runTaskCli(['task', 'list', '--status', 'ready', '--json'], { homeDir });
+  assert.equal(listReady.status, 0, listReady.stderr);
+  const listed = JSON.parse(listReady.stdout);
+  assert.deepEqual(listed.map(task => task.title), ['ready task']);
+
+  const setDone = runTaskCli(['task', 'set-status', '2', 'done'], { homeDir });
+  assert.equal(setDone.status, 0, setDone.stderr);
+
+  const queue = readQueue(queuePath);
+  const tasksById = new Map(queue.tasks.map(task => [task.id, task]));
+  assert.equal(tasksById.get(1).body, 'plain body');
+  assert.equal(tasksById.get(1).status, 'ready');
+  assert.equal(tasksById.get(2).status, 'done');
+  assert.equal(tasksById.get(2).priority, 'low');
+  assert.equal(tasksById.get(2).sequential, true);
+});
+
+test('CLI task: github backend では local 専用エラーで終了する', () => {
+  const homeDir = makeTempDir();
+  const result = runTaskCli(['task', 'list'], {
+    homeDir,
+    env: { QUEUE_BACKEND: 'github' },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /queue\.backend: local 専用です（現在: github）/);
 });
 
 test('LocalQueueClient: importNewTasks 相当の source import は queue.json に作成し、source 操作だけ委譲する', async () => {

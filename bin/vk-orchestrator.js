@@ -7,6 +7,7 @@
 //   vk-orchestrator start [--once] [--assignee <login>]
 //   vk-orchestrator check-status
 //   vk-orchestrator unblock <issue-number>
+//   vk-orchestrator task add|list|set-status ...
 //
 // dotenv の読み込みはここで最初に行い、以降のモジュールは src/config.js 経由で設定を取得する。
 
@@ -296,6 +297,11 @@ async function main() {
     case 'unblock':
       await import('../src/engine/unblock.mjs');
       break;
+    case 'task': {
+      const { runLocalTaskCommand } = await import('../src/local-queue/task-cli.js');
+      await runLocalTaskCommand(process.argv.slice(3));
+      break;
+    }
     case 'apply': {
       // vk-agents 共通設定は従来どおり apply/up タイミングで派生設定へ投影する。
       const { writeVkAgentsSettings } = await import('../src/config.js');
@@ -600,6 +606,7 @@ commands:
   start [--once] [--assignee <login>]   キューを監視して実行（--once で 1 周のみ）
   check-status                          現在のキュー／pane 状態を表示
   unblock                               waiting-input の issue を status:ready に戻す
+  task add|list|set-status              queue.backend: local 専用の純ローカルタスク操作
   apply                                 vk-agents 共通設定を正本 config と Claude 派生設定へ反映
   setup-agents                          同梱 vk-agents-public から skills/rules を ~/.claude へ展開
   setup-terminals                       VK Terminals を（ビルドログ付きで）明示的に導入し導入結果を検証
