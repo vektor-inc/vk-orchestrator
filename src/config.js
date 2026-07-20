@@ -1062,9 +1062,15 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
         tab: 'orchestrator',
         note: 'GitHub トークンは `gh auth login` で管理します（このパネルでの入力は廃止）。',
         fields: [
-          { key: 'github.owner',      label: 'タスク登録リポジトリのオーナー', type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリのオーナー名（ユーザー名または組織名）。\n例: vektor-inc' },
-          { key: 'github.repo',       label: 'タスク登録リポジトリ名',       type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリ名。\n例: task-queue' },
-          { key: 'github.sourceOrg',  label: '作業対象リポジトリのオーナー（組織・省略可）', type: 'text', help: '作業対象リポジトリが属する組織名。この組織を横断検索して `task-queue` ラベル付き Issue を取り込む。未指定時はタスク登録リポジトリのオーナーと同じ組織を対象にする', emptyToNull: true },
+          { key: 'queue.backend', label: 'キューの保存先', type: 'select', default: 'github',
+            options: [
+              { value: 'github', label: 'GitHub（既定）' },
+              { value: 'local',  label: 'ローカル' },
+            ],
+            help: 'タスクキューの保存先を選びます。\nGitHub: task-queue リポジトリに Issue を登録して管理します（既定）。この場合は下の「タスク登録リポジトリ名」が必要です。\nローカル: ローカルの JSON（~/.task-queue/queue.json）でキューを管理します。task-queue リポジトリは不要で、純ローカルタスクは `vk-orchestrator task` コマンドで登録します。' },
+          { key: 'github.owner',      label: 'GitHub オーナー（ユーザー／組織）', type: 'text', help: '作業対象リポジトリが属する GitHub のユーザー名または組織名。両モード共通で、取り込み対象組織（下の「作業対象リポジトリのオーナー」が未指定のときの既定）として使われます。GitHub モードではタスク登録リポジトリ（task-queue）のオーナーも兼ねます。\n例: vektor-inc' },
+          { key: 'github.repo',       label: 'タスク登録リポジトリ名',       type: 'text', visibleWhen: { key: 'queue.backend', value: 'local', hide: true }, help: 'task-queue の Issue を登録・管理するリポジトリ名。GitHub モードでのみ使用します（ローカルモードでは非表示・不要）。\n例: task-queue' },
+          { key: 'github.sourceOrg',  label: '作業対象リポジトリのオーナー（組織・省略可）', type: 'text', help: '作業対象リポジトリが属する組織名。この組織を横断検索して `task-queue` ラベル付き Issue を取り込む。未指定時は GitHub オーナーと同じ組織を対象にする', emptyToNull: true },
           { key: 'github.queueLabel', label: '取り込みラベル名',           type: 'text', help: '作業対象リポジトリの Issue にこのラベルが付いていると、オーケストレーターのタスクとして取り込みます' },
           { key: 'orchestrator.assigneeFilter',  label: '担当者フィルタ (login)', type: 'text', help: 'この GitHub ログイン名が assign されている Issue だけを取り込む。空＝一切取り込まない（安全側の既定）。全件取り込むには all と入力', emptyToNull: true },
         ],
