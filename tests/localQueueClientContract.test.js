@@ -5,6 +5,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 import { LocalQueueClient } from '../src/local-queue/index.js';
+import { readLocalQueue } from '../src/local-queue/store.js';
 import { runQueueClientContract } from './contract/queueClientContract.js';
 
 const tempDirs = [];
@@ -232,4 +233,67 @@ test('LocalQueueClient: createTaskQueueIssueFromSource と findTaskQueueIssueByS
   assert.equal(created.body, source.html_url);
   assert.equal(found.number, 1);
   assert.ok(found.labels.includes('status:awaiting-approval'));
+});
+
+test('LocalQueueClient: 同時更新しても queue.json の異なる task 変更を失わない', async () => {
+  const client = createLocalQueueClient([
+    { number: 81, title: 'first task' },
+    { number: 82, title: 'second task' },
+  ]);
+
+  await Promise.all([
+    client.setStatus(81, 'done'),
+    client.setStatus(82, 'failed'),
+  ]);
+
+  const tasksById = new Map(readQueue(client.queuePath).tasks.map(task => [task.id, task]));
+  assert.equal(tasksById.get(81).status, 'done');
+  assert.equal(tasksById.get(82).status, 'failed');
+});
+
+test('readLocalQueue: tasks 内の不正要素を除外して warn する', () => {
+  const dir = makeTempDir();
+  const queuePath = join(dir, 'queue.json');
+  writeFileSync(queuePath, JSON.stringify({
+    version: 1,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    nextId: 99,
+    tasks: [
+      null,
+      'invalid',
+      [],
+      { title: 'missing id' },
+      { id: 91, state: 'open', title: 'valid', status: 'ready' },
+      { id: 0, state: 'open', title: 'invalid id', status: 'ready' },
+    ],
+  }, null, 2));
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(' '));
+
+  try {
+    const queue = readLocalQueue(queuePath);
+
+    assert.deepEqual(queue.tasks.map(task => task.id), [91]);
+    assert.equal(queue.nextId, 99);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /5 件/);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('readLocalQueue: JSON パース失敗時は元エラーを cause に保持する', () => {
+  const dir = makeTempDir();
+  const queuePath = join(dir, 'queue.json');
+  writeFileSync(queuePath, '{ invalid json');
+
+  assert.throws(
+    () => readLocalQueue(queuePath),
+    (err) => {
+      assert.match(err.message, /queue\.json の読み込みに失敗しました/);
+      assert.ok(err.cause instanceof SyntaxError);
+      return true;
+    },
+  );
 });

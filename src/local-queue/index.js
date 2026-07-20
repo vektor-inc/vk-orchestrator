@@ -76,6 +76,9 @@ export class LocalQueueClient {
     this.owner = this.github.owner;
     this.repo = this.github.repo;
     this.queueLabel = this.github.queueLabel;
+    this._writeChain = Promise.resolve();
+    // ローカルモードは単一ローカルワーカー前提のため、キュー側 fetch に assignee フィルタは適用しない。
+    // 内包 GitHubClient の assignee は source-import 系の対象リポ操作で使うため保持する。
     this.assignee = null;
     this.pickupEnabled = true;
   }
@@ -86,6 +89,13 @@ export class LocalQueueClient {
 
   writeQueue(queue, options = {}) {
     writeLocalQueue(this.queuePath, queue, options);
+  }
+
+  _runExclusive(fn) {
+    const run = () => Promise.resolve().then(fn);
+    const result = this._writeChain.then(run, run);
+    this._writeChain = result.catch(() => {});
+    return result;
   }
 
   taskToIssue(task) {
@@ -157,15 +167,17 @@ export class LocalQueueClient {
   }
 
   async mutateTask(issueNumber, mutator) {
-    const queue = this.readQueue();
-    const id = Number(issueNumber);
-    const task = queue.tasks.find(item => item.id === id);
-    if (!task) throw new Error(`Local queue task #${issueNumber} が見つかりません`);
-    const now = new Date().toISOString();
-    await mutator(task, queue, now);
-    task.updatedAt = now;
-    this.writeQueue(queue, { now });
-    return task;
+    return this._runExclusive(async () => {
+      const queue = this.readQueue();
+      const id = Number(issueNumber);
+      const task = queue.tasks.find(item => item.id === id);
+      if (!task) throw new Error(`Local queue task #${issueNumber} が見つかりません`);
+      const now = new Date().toISOString();
+      await mutator(task, queue, now);
+      task.updatedAt = now;
+      this.writeQueue(queue, { now });
+      return task;
+    });
   }
 
   async setStatus(issueNumber, newStatus) {
@@ -256,28 +268,30 @@ export class LocalQueueClient {
   }
 
   async createTaskQueueIssueFromSource(sourceIssue) {
-    const queue = this.readQueue();
-    const now = new Date().toISOString();
-    const id = queue.nextId;
-    queue.nextId = id + 1;
-    const task = {
-      id,
-      state: 'open',
-      title: `[${sourceRepoName(sourceIssue)}] ${sourceIssue.title ?? ''}`,
-      body: sourceIssue.html_url ?? '',
-      status: 'awaiting-approval',
-      priority: 'none',
-      sequential: false,
-      automerge: false,
-      cwd: null,
-      prUrl: null,
-      comments: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-    queue.tasks.push(task);
-    this.writeQueue(queue, { now });
-    return this.taskToIssue(task);
+    return this._runExclusive(() => {
+      const queue = this.readQueue();
+      const now = new Date().toISOString();
+      const id = queue.nextId;
+      queue.nextId = id + 1;
+      const task = {
+        id,
+        state: 'open',
+        title: `[${sourceRepoName(sourceIssue)}] ${sourceIssue.title ?? ''}`,
+        body: sourceIssue.html_url ?? '',
+        status: 'awaiting-approval',
+        priority: 'none',
+        sequential: false,
+        automerge: false,
+        cwd: null,
+        prUrl: null,
+        comments: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      queue.tasks.push(task);
+      this.writeQueue(queue, { now });
+      return this.taskToIssue(task);
+    });
   }
 
   async findTaskQueueIssueBySourceUrl(sourceUrl) {

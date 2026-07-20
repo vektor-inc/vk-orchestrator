@@ -23,10 +23,16 @@ function normalizeQueue(parsed, now = new Date()) {
   const fallback = createEmptyQueue(now);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
 
-  const tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+  const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+  const tasks = rawTasks.filter(
+    task => task && typeof task === 'object' && !Array.isArray(task) && Number.isInteger(task.id) && task.id > 0,
+  );
+  const droppedTasks = rawTasks.length - tasks.length;
+  if (droppedTasks > 0) {
+    console.warn(`[LocalQueue] queue.json の不正な tasks 要素を ${droppedTasks} 件除外しました`);
+  }
   const maxId = tasks.reduce((max, task) => {
-    const id = Number.isInteger(task?.id) && task.id > 0 ? task.id : 0;
-    return Math.max(max, id);
+    return Math.max(max, task.id);
   }, 0);
 
   return {
@@ -46,7 +52,7 @@ export function readLocalQueue(queuePath = resolveLocalQueuePath(), options = {}
   try {
     return normalizeQueue(JSON.parse(text), options.now);
   } catch (err) {
-    throw new Error(`[LocalQueue] queue.json の読み込みに失敗しました (${queuePath}): ${err.message}`);
+    throw new Error(`[LocalQueue] queue.json の読み込みに失敗しました (${queuePath}): ${err.message}`, { cause: err });
   }
 }
 
