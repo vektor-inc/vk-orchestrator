@@ -3,6 +3,10 @@
  *
  * 作業対象リポジトリに取り込みラベル（既定 `task-queue`）が存在することを保証する。
  *
+ * ※ この補助スクリプトは GitHub モード（queue.backend = github）専用です。
+ *   ローカルモード（queue.backend = local）は GitHub の Issue ラベルを使わないため対象外です
+ *   （親 #156 決定事項 7・MVP では未対応）。
+ *
  * 背景:
  *   orchestrator は GitHub Search API で `label:<queueLabel>` を組織横断検索して
  *   作業対象リポジトリの Issue を見つける（github.js の searchSourceIssuesByLabel）。

@@ -1689,6 +1689,32 @@ test('buildSettingsDescriptor: 共有契約系フィールドを UI から除外
   assert.ok(!fieldKeys.includes('task.wpEnv.enabled'));
 });
 
+test('buildSettingsDescriptor: GitHub グループ先頭に queue.backend select を持つ', () => {
+  const desc = buildSettingsDescriptor('/tmp/config.json');
+  const githubGroup = desc.groups.find((g) => g.label === 'GitHub');
+  assert.ok(githubGroup);
+  // queue.backend はグループ先頭（github.repo の visibleWhen 親）に置く。
+  assert.equal(githubGroup.fields[0].key, 'queue.backend');
+  const backendField = githubGroup.fields[0];
+  assert.equal(backendField.type, 'select');
+  // 既定は GitHub（DEFAULT_QUEUE.backend / getQueueBackend の解決と一致）。
+  assert.equal(backendField.default, DEFAULT_QUEUE.backend);
+  assert.equal(backendField.default, 'github');
+  const optionValues = backendField.options.map((o) => o.value);
+  assert.deepEqual(optionValues, ['github', 'local']);
+});
+
+test('buildSettingsDescriptor: github.repo は local モードで hide する visibleWhen を宣言する', () => {
+  const desc = buildSettingsDescriptor('/tmp/config.json');
+  const repoField = desc.groups
+    .flatMap((g) => g.fields ?? [])
+    .find((f) => f.key === 'github.repo');
+  assert.ok(repoField);
+  assert.deepEqual(repoField.visibleWhen, { key: 'queue.backend', value: 'local', hide: true });
+  // 必須フラグは持たない（ローカルモードで未設定でも起動できることの担保）。
+  assert.ok(!repoField.required);
+});
+
 test('buildSettingsDescriptor: sourceOrg は空欄保存時に未指定として扱う', () => {
   const desc = buildSettingsDescriptor('/tmp/config.json');
   const sourceOrgField = desc.groups
