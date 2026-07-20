@@ -569,6 +569,7 @@ export function startCommandsFileWatcher(processor, options = {}) {
   const commandsPath = options.commandsPath ?? resolveCommandsPath();
   const logger = options.logger ?? console;
   const debounceMs = options.debounceMs ?? 200;
+  const afterConsume = options.afterConsume;
   let timer = null;
   let closed = false;
   let watcher = null;
@@ -578,9 +579,16 @@ export function startCommandsFileWatcher(processor, options = {}) {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      processor.consumeOnce().catch((err) => {
-        logger.warn?.(`[commands-file] watch 起点の消化に失敗しました: ${sanitizeLogText(err.message)}`);
-      });
+      processor.consumeOnce()
+        .then(async (summary) => {
+          if (closed) return;
+          if (typeof afterConsume === 'function') {
+            await afterConsume(summary);
+          }
+        })
+        .catch((err) => {
+          logger.warn?.(`[commands-file] watch 起点の消化に失敗しました: ${sanitizeLogText(err.message)}`);
+        });
     }, debounceMs);
   };
 

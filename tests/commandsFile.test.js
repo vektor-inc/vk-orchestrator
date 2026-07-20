@@ -8,6 +8,7 @@ import {
   consumeCommandsFile,
   createCommandsFileProcessor,
   isAllowedTransition,
+  startCommandsFileWatcher,
 } from '../src/engine/commands-file.js';
 
 async function withTmpDir(fn) {
@@ -43,6 +44,15 @@ function httpError(status, message = `HTTP ${status}`) {
   const err = new Error(message);
   err.status = status;
   return err;
+}
+
+async function waitFor(predicate, { timeoutMs = 1000, intervalMs = 20 } = {}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  assert.fail('condition was not met before timeout');
 }
 
 test('isAllowedTransition: 許可遷移だけを accept する', () => {
@@ -480,6 +490,49 @@ test('createCommandsFileProcessor: 同じ id は同一実行内でも再起動�
     await createCommandsFileProcessor(common).consumeOnce();
 
     assert.deepEqual(calls, [[45, 'status:ready']]);
+  });
+});
+
+test('startCommandsFileWatcher: watch 起点の消化後に summary 付きで afterConsume を呼ぶ', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    mkdirSync(dirname(commandsPath), { recursive: true });
+    writeFileSync(commandsPath, '');
+
+    const summary = { read: 1, evaluated: 1, applied: 1, skipped: 0 };
+    const afterConsumeCalls = [];
+    let consumeCalls = 0;
+    const watcher = startCommandsFileWatcher(
+      {
+        consumeOnce: async () => {
+          consumeCalls += 1;
+          return summary;
+        },
+      },
+      {
+        commandsPath,
+        debounceMs: 10,
+        logger: silentLogger(),
+        afterConsume: async (result) => {
+          afterConsumeCalls.push(result);
+        },
+      }
+    );
+
+    let writes = 0;
+    const writeInterval = setInterval(() => {
+      writes += 1;
+      writeFileSync(commandsPath, JSON.stringify({ id: `watch-trigger-${writes}` }) + '\n');
+    }, 20);
+    try {
+      await waitFor(() => afterConsumeCalls.length >= 1);
+    } finally {
+      clearInterval(writeInterval);
+      watcher.close();
+    }
+
+    assert.ok(consumeCalls >= 1);
+    assert.deepEqual(afterConsumeCalls[0], summary);
   });
 });
 

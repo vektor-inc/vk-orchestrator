@@ -1557,7 +1557,10 @@ async function loopBody() {
   await importNewTasks();
 
   // 2. VK Terminals からのステータス変更コマンドを消化する（VK Terminals 不要）
-  await commandsFileProcessor.consumeOnce();
+  const cmdSummary = await commandsFileProcessor.consumeOnce();
+  if (cmdSummary && cmdSummary.applied > 0) {
+    await refreshTasksViewSnapshot(github, { logger: console });
+  }
 
   // 3. in-progress スキャン: 指示待ち検知 → waiting-input / PR 完了 → waiting-merge /
   //    PR マージ → done / PR 未マージ closed → failed（VK Terminals 不要。PR アイコンのみ任意）
@@ -1684,7 +1687,14 @@ async function main() {
     // OS ごとの方法でシステムスリープを抑止する（run-once は短命なので不要）。
     // macOS は caffeinate、Windows は SetThreadExecutionState。未対応 OS は警告のみ。
     const keepAwake = startKeepAwake();
-    const commandsWatcher = startCommandsFileWatcher(commandsFileProcessor, { logger: console });
+    const commandsWatcher = startCommandsFileWatcher(commandsFileProcessor, {
+      logger: console,
+      afterConsume: async (summary) => {
+        if (summary && summary.applied > 0) {
+          await refreshTasksViewSnapshot(github, { logger: console });
+        }
+      },
+    });
     // graceful shutdown 時にスリープ抑止と起動ロックを即時解除する。
     // Ctrl-C / kill 時に待たず解放する。SIGINT / SIGTERM は解除後に自前で終了する。
     process.on('exit', () => {
