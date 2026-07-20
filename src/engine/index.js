@@ -7,9 +7,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '..', '..', '.env') });
 
 import { GitHubClient } from '../github/index.js';
+import { LocalQueueClient } from '../local-queue/index.js';
 import {
   GITHUB_TOKEN_RESOLUTION_HELP,
   ensureGitHubToken,
+  getQueueBackend,
   getTaskConfig,
   getTaskCwd,
   loadUnifiedConfig,
@@ -109,7 +111,9 @@ if (!GITHUB_TOKEN) {
   process.exit(1);
 }
 
-const github = new GitHubClient({
+const queueBackend = getQueueBackend();
+const QueueClient = queueBackend === 'local' ? LocalQueueClient : GitHubClient;
+const github = new QueueClient({
   token: GITHUB_TOKEN,
   owner: GITHUB_OWNER,
   repo:  GITHUB_REPO,

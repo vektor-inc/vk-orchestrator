@@ -34,6 +34,7 @@ import {
   writeVkTerminalsCommandsConfig,
   writeVkTerminalsTasksViewConfig,
   getTaskConfig,
+  getQueueBackend,
   getTaskCwd,
   getProtocolConfig,
   getLabelsConfig,
@@ -43,6 +44,7 @@ import {
   getVkTerminalsGpuMode,
   gpuLaunchOptions,
   DEFAULT_LABELS,
+  DEFAULT_QUEUE,
 } from '../src/config.js';
 
 function withTmpConfig(obj, fn) {
@@ -111,18 +113,20 @@ test('loadUnifiedConfig: JSON を読み込む', () => {
 });
 
 test('applyConfigToEnv: 未設定の env に config 値を反映する', () => {
-  const keys = ['GITHUB_OWNER', 'GITHUB_REPO', 'QUEUE_LABEL', 'VK_TERMINALS_PORT', 'ASSIGNEE_FILTER', 'TASK_CWD'];
+  const keys = ['GITHUB_OWNER', 'GITHUB_REPO', 'QUEUE_LABEL', 'QUEUE_BACKEND', 'VK_TERMINALS_PORT', 'ASSIGNEE_FILTER', 'TASK_CWD'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) delete process.env[k];
   try {
     applyConfigToEnv({
       github: { owner: 'acme', repo: 'q', queueLabel: 'lbl' },
+      queue: { backend: 'local' },
       orchestrator: { assigneeFilter: 'alice', taskCwd: '/work/task' },
       vkTerminals: { port: 20000 },
     });
     assert.equal(process.env.GITHUB_OWNER, 'acme');
     assert.equal(process.env.GITHUB_REPO, 'q');
     assert.equal(process.env.QUEUE_LABEL, 'lbl');
+    assert.equal(process.env.QUEUE_BACKEND, 'local');
     assert.equal(process.env.VK_TERMINALS_PORT, undefined);
     assert.equal(process.env.ASSIGNEE_FILTER, 'alice');
     assert.equal(process.env.TASK_CWD, undefined);
@@ -1364,6 +1368,44 @@ test('getTaskConfig: 空白のみの TASK_WP_ENV_ENABLED は未指定扱い（tr
     // 空白のみは無視され、config.json の false がそのまま採用される
     assert.equal(getTaskConfig({ task: { wpEnv: { enabled: false } } }).wpEnv.enabled, false);
     assert.equal(getTaskConfig({}).wpEnv.enabled, null); // config も無ければ既定（自動判定）
+  });
+});
+
+test('getQueueBackend: config 無しで既定値 github を返す', () => {
+  withSavedEnv(['QUEUE_BACKEND'], () => {
+    delete process.env.QUEUE_BACKEND;
+    assert.equal(DEFAULT_QUEUE.backend, 'github');
+    assert.equal(getQueueBackend({}), 'github');
+  });
+});
+
+test('getQueueBackend: config.json の queue.backend を読む', () => {
+  withSavedEnv(['QUEUE_BACKEND'], () => {
+    delete process.env.QUEUE_BACKEND;
+    assert.equal(getQueueBackend({ queue: { backend: 'local' } }), 'local');
+  });
+});
+
+test('getQueueBackend: QUEUE_BACKEND env が config.json より優先される', () => {
+  withSavedEnv(['QUEUE_BACKEND'], () => {
+    process.env.QUEUE_BACKEND = 'github';
+    assert.equal(getQueueBackend({ queue: { backend: 'local' } }), 'github');
+  });
+});
+
+test('getQueueBackend: 未知の値は github にフォールバックする', () => {
+  withSavedEnv(['QUEUE_BACKEND'], () => {
+    const savedWarn = console.warn;
+    const warnings = [];
+    console.warn = (message) => warnings.push(message);
+    try {
+      process.env.QUEUE_BACKEND = 'unknown';
+      assert.equal(getQueueBackend({ queue: { backend: 'local' } }), 'github');
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /未知の queue\.backend/);
+    } finally {
+      console.warn = savedWarn;
+    }
   });
 });
 
