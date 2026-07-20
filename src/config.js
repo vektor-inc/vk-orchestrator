@@ -1040,8 +1040,8 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
         tab: 'orchestrator',
         note: 'GitHub トークンは `gh auth login` で管理します（このパネルでの入力は廃止）。',
         fields: [
-          { key: 'github.owner',      label: 'タスク登録リポジトリのオーナー', type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリのオーナー名（ユーザー名または組織名。例: vektor-inc）' },
-          { key: 'github.repo',       label: 'タスク登録リポジトリ名',       type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリ名（例: task-queue）' },
+          { key: 'github.owner',      label: 'タスク登録リポジトリのオーナー', type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリのオーナー名（ユーザー名または組織名）。\n例: vektor-inc' },
+          { key: 'github.repo',       label: 'タスク登録リポジトリ名',       type: 'text', help: 'task-queue の Issue を登録・管理するリポジトリ名。\n例: task-queue' },
           { key: 'github.sourceOrg',  label: '作業対象リポジトリのオーナー（組織・省略可）', type: 'text', help: '作業対象リポジトリが属する組織名。この組織を横断検索して `task-queue` ラベル付き Issue を取り込む。未指定時はタスク登録リポジトリのオーナーと同じ組織を対象にする', emptyToNull: true },
           { key: 'github.queueLabel', label: '取り込みラベル名',           type: 'text', help: '作業対象リポジトリの Issue にこのラベルが付いていると、オーケストレーターのタスクとして取り込みます' },
           { key: 'orchestrator.assigneeFilter',  label: '担当者フィルタ (login)', type: 'text', help: 'この GitHub ログイン名が assign されている Issue だけを取り込む。空＝一切取り込まない（安全側の既定）。全件取り込むには all と入力', emptyToNull: true },
@@ -1051,8 +1051,8 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
         label: 'オーケストレーター',
         tab: 'orchestrator',
         fields: [
-          { key: 'orchestrator.pollIntervalMs',  label: 'ポーリング間隔 (ms)',  type: 'number', help: 'GitHub をポーリングして新しいタスクを確認する間隔（ミリ秒。例: 60000 = 1 分）' },
-          { key: 'orchestrator.watchdogIdleMs',  label: 'ウォッチドッグ idle (ms)', type: 'number', help: 'この時間ターミナルが無活動だと停滞とみなす閾値（ミリ秒。例: 10800000 = 3 時間）' },
+          { key: 'orchestrator.pollIntervalMs',  label: 'ポーリング間隔 (ms)',  type: 'number', help: 'GitHub をポーリングして新しいタスクを確認する間隔をミリ秒で指定します。\n例: 60000 = 1 分' },
+          { key: 'orchestrator.watchdogIdleMs',  label: 'ウォッチドッグ idle (ms)', type: 'number', help: 'この時間ターミナルが無活動だと停滞とみなす閾値をミリ秒で指定します。\n例: 10800000 = 3 時間' },
           { key: 'orchestrator.paneResumeMax',   label: 'ペイン消失時の自動再開上限 (回)', type: 'number', help: '作業ペイン消失時（PR 未生成に限る）に自動で再実行する上限回数。超えると failed になり手動確認が必要（既定: 3）' },
         ],
       },
@@ -1061,7 +1061,7 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
         label: 'issue を処理する Claude のコマンド',
         tab: 'orchestrator',
         fields: [
-          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', placeholder: '/vk-kore {issueUrl} wp-env-port={wpPort} headless=1', help: 'issue に対して仕様検討・実装・プルリク作成・レビューまで自動で処理してマージできる状態にする Claude のコマンドを指定してください。未指定の場合は /vk-kore {issueUrl} wp-env-port={wpPort} headless=1 のような形式で投げられます。{issueUrl} と {wpPort} は自動で置換します。独自のコマンドを使用する場合、オーケストレーターと円滑に連携するための決め事がいくつかあります。詳しくは docs/agent-rules.md をご確認ください。デフォルトの /vk-kore スキルは vendor/vk-agents-public/skills/vk-kore/ にありますので、必要に応じてそれを参考に独自のスキルをご利用の PC の .claude に作ってください。' },
+          { key: 'task.commandTemplate', label: 'コマンドテンプレート', type: 'text', placeholder: '/vk-kore {issueUrl} wp-env-port={wpPort} headless=1', help: 'issue に対して仕様検討・実装・プルリク作成・レビューまで自動で処理してマージできる状態にする Claude のコマンドを指定してください。未指定の場合は、次の形式で投げられます。\n/vk-kore {issueUrl} wp-env-port={wpPort} headless=1\n{issueUrl} と {wpPort} は自動で置換します。\n独自のコマンドを使用する場合、オーケストレーターと円滑に連携するための決め事がいくつかあります。詳しくは docs/agent-rules.md をご確認ください。デフォルトの /vk-kore スキルは vendor/vk-agents-public/skills/vk-kore/ にありますので、必要に応じてそれを参考に独自のスキルをご利用の PC の .claude に作ってください。' },
         ],
       },
       {
@@ -1070,8 +1070,8 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
         note: 'エージェント共通設定は vk-agents の config に保存され、各スキル／エージェントが読み込みます。',
         targetPath: resolveVkAgentsCanonicalConfigPath(),
         fields: [
-          { key: 'workspace.search_paths', label: '作業ディレクトリ（複数指定可・優先順）', type: 'lines', placeholder: '/Users/you/Documents/git\n/Users/you/ghq', help: '作業対象リポジトリのローカルクローンを探す起点ディレクトリを、1 行に 1 つ・絶対パスで指定します（上の行ほど優先）。この設定は 2 つの場面で使われます。(1) issue を処理するスキルがクローンを探すとき、(2) オーケストレーターがタスク着手時にタスクペインを開く場所を決めるとき。上から順に走査し、origin が対象リポジトリと一致する既存クローンを最大 4 階層まで自動検出して、そのディレクトリでスキルの作業とペインを開始します。見つからない場合、スキルは 1 行目のディレクトリへクローンします。オーケストレーターのペインは、対象リポジトリを特定できないとき・この設定が未設定のとき・検出できないときは、専用ディレクトリ ~/vk-orchestrator-tasks（自動作成。ホームディレクトリや機密ディレクトリは起点にしません）で開きます。' },
-          { key: 'org.review_assets_repo', label: 'レビュー用アセットリポジトリ', type: 'text', placeholder: 'owner/repo', pattern: OWNER_REPO_PATTERN, invalidMessage: 'owner/repo の形式で入力してください（例: vektor-inc/task-queue）', help: 'PR・テスト報告用の画像/GIF を保存するリポジトリを <owner>/<repo> 形式で指定します（例: vektor-inc/review-assets）。形式が正しくない値は反映されません。空欄時は画像アップロードをスキップし、テキスト記述にフォールバックします', emptyToNull: true },
+          { key: 'workspace.search_paths', label: '作業ディレクトリ（複数指定可・優先順）', type: 'lines', placeholder: '/Users/you/Documents/git\n/Users/you/ghq', help: '作業対象リポジトリのローカルクローンを探す起点ディレクトリを、1 行に 1 つ・絶対パスで指定します（上の行ほど優先）。\nこの設定は次の 2 つの場面で使われます。\n(1) issue を処理するスキルがクローンを探すとき\n(2) オーケストレーターがタスク着手時にタスクペインを開く場所を決めるとき\n上から順に走査し、origin が対象リポジトリと一致する既存クローンを最大 4 階層まで自動検出して、そのディレクトリでスキルの作業とペインを開始します。見つからない場合、スキルは 1 行目のディレクトリへクローンします。\nオーケストレーターのペインは、対象リポジトリを特定できないとき・この設定が未設定のとき・検出できないときは、専用ディレクトリ ~/vk-orchestrator-tasks（自動作成。ホームディレクトリや機密ディレクトリは起点にしません）で開きます。' },
+          { key: 'org.review_assets_repo', label: 'レビュー用アセットリポジトリ', type: 'text', placeholder: 'owner/repo', pattern: OWNER_REPO_PATTERN, invalidMessage: 'owner/repo の形式で入力してください（例: vektor-inc/task-queue）', help: 'PR・テスト報告用の画像/GIF を保存するリポジトリを <owner>/<repo> 形式で指定します。\n例: vektor-inc/review-assets\n形式が正しくない値は反映されません。空欄時は画像アップロードをスキップし、テキスト記述にフォールバックします', emptyToNull: true },
           { key: 'staff_wp_dev.engine', label: 'staff-wp-dev（和田）の実行エンジン', type: 'select',
             options: [
               { value: '',       label: '未設定（既定: claude）' },
