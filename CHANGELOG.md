@@ -5,6 +5,7 @@
 - [ 不具合修正 ] 自前 PR を持たない親調整 issue が全 sub-issue 完了後も in-progress のまま残る不具合を修正
 - [ 不具合修正 ] GitHub API 障害（5xx）で status:in-progress への遷移に失敗した ready タスクが、poll のたびに新規ペインを量産する不具合を修正
 - [ 不具合修正 ] VK Terminals のタスクパネル保存後に tasks-view snapshot が即時更新されず反映待ちがタイムアウトする不具合を修正
+- [ 不具合修正 ] 同一マシンを非ループバックの IP（Tailscale 等でのリモート／モバイル公開）でバインドしている場合に、タスクペインが対象リポジトリのローカルクローンで開かず ~/vk-orchestrator-tasks にフォールバックする不具合を修正
 - [ その他 ] 設定パネルのエンジン選択ドロップダウンの表示ラベルを Codex / Claude 表記に統一
 - [ その他 ] タスク一覧 snapshot 生成のタスクキュー全件取得を GitHubClient のインターフェースメソッド（listAllQueueIssues）経由に整理し、キュークライアントの契約テスト雛形を追加
 

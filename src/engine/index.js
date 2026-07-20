@@ -50,6 +50,7 @@ import { writeAgentRulesHandoff } from './agentRulesHandoff.js';
 import { formatErrorSummary } from './format-error.js';
 import { refreshTasksViewSnapshot } from './tasks-view.js';
 import { resolveRepoCwd } from './resolve-repo-cwd.js';
+import { isLocalMachineHost } from './local-machine-host.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -130,11 +131,6 @@ function formatAssigneeMode(client) {
 // レースを抑えるために残す。
 const inFlightIssues = new Set();
 
-function isLoopbackHost(host) {
-  const normalized = String(host ?? '').trim().toLowerCase().replace(/^\[|\]$/g, '');
-  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1';
-}
-
 function getWorkspaceSearchPaths() {
   const configPath = resolveVkAgentsConfigPath();
   if (!configPath) return [];
@@ -159,9 +155,9 @@ function resolveTaskPaneCwd(issue, target) {
   }
 
   const apiHost = resolveVkTerminalsApiHost();
-  if (!isLoopbackHost(apiHost)) {
+  if (!isLocalMachineHost(apiHost)) {
     const cwd = fallback();
-    console.log(`  [task-cwd] VK Terminals host=${apiHost} は非ループバックのため検出をスキップし、安全既定を使用: ${cwd}`);
+    console.log(`  [task-cwd] VK Terminals host=${apiHost} は別マシン（このマシンのアドレスに一致せず）のため検出をスキップし、安全既定を使用: ${cwd}`);
     return cwd;
   }
 
