@@ -58,6 +58,14 @@ export const DEFAULT_TASK = {
 };
 
 /**
+ * queue セクションの既定値。
+ * キューの永続化先を GitHub issue 互換のまま切り替える。
+ */
+export const DEFAULT_QUEUE = {
+  backend: 'github',
+};
+
+/**
  * protocol セクションの既定値。
  * decision-record の Status 行のトークン（decision-record.js に対応）。
  * 判定は単独 `Status:` 行のみに依存し、識別行マーカーは撤去済み（#9）。
@@ -216,6 +224,9 @@ export function applyConfigToEnv(cfg = {}) {
   // host は現在 ~/.vk-terminals/config.json の apiHost が正本。
   // 旧 config.json(vkTerminals.host) を使っている環境だけ後方互換として env へ流す。
   set('VK_TERMINALS_HOST', vk.host);
+
+  const queue = cfg.queue ?? {};
+  set('QUEUE_BACKEND', queue.backend);
 }
 
 /**
@@ -1147,6 +1158,28 @@ export function getTaskConfig(cfg = loadUnifiedConfig()) {
 }
 
 /**
+ * queue backend を解決する。
+ * 優先順位: 環境変数 QUEUE_BACKEND > config.json(cfg.queue.backend) > DEFAULT_QUEUE.backend。
+ * 未知の値は安全側で GitHub backend にフォールバックする。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @returns {'github'|'local'}
+ */
+export function getQueueBackend(cfg = loadUnifiedConfig()) {
+  const rawValue =
+    process.env.QUEUE_BACKEND !== undefined && process.env.QUEUE_BACKEND !== ''
+      ? process.env.QUEUE_BACKEND
+      : (pruneEmpty(cfg?.queue)?.backend ?? DEFAULT_QUEUE.backend);
+  const backend = String(rawValue ?? '').trim().toLowerCase();
+  if (backend === 'github' || backend === 'local') return backend;
+
+  if (!warnedUnknownQueueBackend) {
+    warnedUnknownQueueBackend = true;
+    console.warn(`[Config] 未知の queue.backend "${backend}" は無視し、既定 "github" を使用します（有効値: github / local）。`);
+  }
+  return DEFAULT_QUEUE.backend;
+}
+
+/**
  * タスク用ペイン（Claude Code）の起点ディレクトリを返す。
  * 優先順位: 環境変数 TASK_CWD > 専用ディレクトリ。
  * 未設定時は `~/vk-orchestrator-tasks` を使う。これは $HOME 直下や特定リポジトリ、
@@ -1175,6 +1208,7 @@ export function getTaskCwd(_cfg = {}, homeDir = homedir()) {
 }
 
 const warnedMissingTaskCwds = new Set();
+let warnedUnknownQueueBackend = false;
 
 function resolveExplicitTaskCwd(rawValue) {
   const taskCwd = resolve(rawValue);
@@ -1274,6 +1308,7 @@ export function loadConfig(argv = process.argv, options = {}) {
     pollInterval:   Number(process.env.POLL_INTERVAL_MS ?? 60_000),
     watchdogIdle:   Number(process.env.WATCHDOG_IDLE_MS ?? 3 * 60 * 60 * 1000),
     assigneeFilter: readArg('assignee') ?? process.env.ASSIGNEE_FILTER ?? null,
+    queueBackend:   getQueueBackend(),
   };
   if (!cfg.githubToken) {
     throw new Error(`[Config] ${GITHUB_TOKEN_RESOLUTION_HELP}`);

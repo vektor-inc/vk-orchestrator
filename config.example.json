@@ -5,6 +5,9 @@
     "sourceOrg": "your-org",
     "queueLabel": "task-queue"
   },
+  "queue": {
+    "backend": "github"
+  },
   "orchestrator": {
     "pollIntervalMs": 60000,
     "watchdogIdleMs": 10800000,
