@@ -264,6 +264,7 @@ const LEGACY_VK_AGENTS_GUI_KEYS = [
   'features.coderabbit',
   'features.coderabbit_ignore',
   'staff_wp_dev.engine',
+  'staff_review.engine',
   'multi_repo_task.default_engine',
   'org.review_assets_repo',
 ];
@@ -886,6 +887,15 @@ function applyVkAgentsGuiSettings(vkAgentsConfig, cfg) {
     }
   }
 
+  if (hasOwnPath(cfg, 'staff_review.engine')) {
+    const raw = String(getByPath(cfg, 'staff_review.engine') ?? '').trim();
+    if (raw === '') {
+      deleteByPath(out, 'staff_review.engine');
+    } else if (raw === 'claude' || raw === 'codex') {
+      setByPath(out, 'staff_review.engine', raw);
+    }
+  }
+
   if (hasOwnPath(cfg, 'multi_repo_task.default_engine')) {
     const raw = String(getByPath(cfg, 'multi_repo_task.default_engine') ?? '').trim();
     if (raw === '') {
@@ -924,6 +934,7 @@ export function writeVkAgentsSettings(cfg = {}, options = {}) {
     hasOwnPath(cfg, 'org.allowed_owners') ||
     hasOwnPath(cfg, 'org.review_assets_repo') ||
     hasOwnPath(cfg, 'staff_wp_dev.engine') ||
+    hasOwnPath(cfg, 'staff_review.engine') ||
     hasOwnPath(cfg, 'multi_repo_task.default_engine');
   if (!hasConfig && !hasGuiSettings && options.force !== true) return null;
 
@@ -1090,6 +1101,13 @@ export function buildSettingsDescriptor(targetPath = resolveConfigPath(), option
               { value: 'codex',  label: 'Codex（単独作業のみ・push/PR は司が担当）' },
             ],
             help: 'staff-wp-dev（和田）を起動するときの実行エンジン。未設定時は Claude にフォールバックします' },
+          { key: 'staff_review.engine', label: 'staff-review（麗美）の実行エンジン', type: 'select',
+            options: [
+              { value: '',       label: '未設定（既定: Claude）' },
+              { value: 'claude', label: 'Claude' },
+              { value: 'codex',  label: 'Codex（テスト実行のみ・PR コメント/差し戻しは司が担当）' },
+            ],
+            help: 'staff-review（麗美）を起動するときの実行エンジン。未設定時は Claude にフォールバックします' },
           { key: 'multi_repo_task.default_engine', label: 'vk-multi-repo-task の既定実行エンジン', type: 'select',
             options: [
               { value: '',       label: '未設定（既定: Claude）' },

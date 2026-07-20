@@ -552,6 +552,7 @@ test('migrateLegacyVkAgentsGuiKeys: 旧 GUI キーを canonical へ移送し orc
       github: { owner: 'vektor-inc' },
       features: { coderabbit: false, coderabbit_ignore: true },
       staff_wp_dev: { engine: 'codex' },
+      staff_review: { engine: 'claude' },
       multi_repo_task: { default_engine: 'claude' },
       org: {
         allowed_owners: ['vektor-inc'],
@@ -584,6 +585,7 @@ test('migrateLegacyVkAgentsGuiKeys: 旧 GUI キーを canonical へ移送し orc
         review_assets_repo: 'vektor-inc/review-assets',
       },
       staff_wp_dev: { engine: 'codex' },
+      staff_review: { engine: 'claude' },
       multi_repo_task: { default_engine: 'claude' },
     });
     assert.equal(logs.length, 1);
@@ -784,6 +786,7 @@ test('writeVkAgentsSettings: GUI の vk-agents 共通設定だけを read-merge-
       org: { allowed_owners: ['vektor-inc'] },
       features: { task_queue: true },
       staff_wp_dev: { engine: 'claude' },
+      staff_review: { engine: 'claude' },
       multi_repo_task: { default_engine: 'claude' },
     }));
 
@@ -794,6 +797,7 @@ test('writeVkAgentsSettings: GUI の vk-agents 共通設定だけを read-merge-
         },
         features: { coderabbit: false, coderabbit_ignore: true },
         staff_wp_dev: { engine: 'codex' },
+        staff_review: { engine: 'codex' },
         multi_repo_task: { default_engine: 'codex' },
       },
       { configPath, globalSettingsPath },
@@ -808,6 +812,7 @@ test('writeVkAgentsSettings: GUI の vk-agents 共通設定だけを read-merge-
       },
       features: { task_queue: true, coderabbit: false, coderabbit_ignore: true },
       staff_wp_dev: { engine: 'codex' },
+      staff_review: { engine: 'codex' },
       multi_repo_task: { default_engine: 'codex' },
     });
     assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), written);
@@ -1111,6 +1116,32 @@ test('writeVkAgentsSettings: 和田エンジンの空値は vk-agents config か
   }
 });
 
+test('writeVkAgentsSettings: 麗美エンジンの空値は vk-agents config から削除し既定へ戻せる', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    const globalSettingsPath = join(dir, 'settings.json');
+    writeFileSync(configPath, JSON.stringify({
+      staff_review: { engine: 'codex', other: true },
+      features: { coderabbit: true },
+    }));
+
+    writeVkAgentsSettings(
+      { staff_review: { engine: '' } },
+      { configPath, globalSettingsPath },
+    );
+
+    const written = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.deepEqual(written, {
+      staff_review: { other: true },
+      features: { coderabbit: true },
+    });
+    assert.deepEqual(JSON.parse(readFileSync(globalSettingsPath, 'utf8')), written);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('writeVkAgentsSettings: マルチリポタスク既定エンジンの空値は vk-agents config から削除し既定へ戻せる', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vko-vkagents-'));
   try {
@@ -1151,6 +1182,7 @@ test('writeVkAgentsSettings: setup:agents 用に features/skills/org/engine を 
           allowedOwners: ['vektor-inc', '  kurudrive  '],
         },
         staff_wp_dev: { engine: 'codex' },
+        staff_review: { engine: 'claude' },
         multi_repo_task: { default_engine: 'claude' },
       },
       { configPath, globalSettingsPath, force: true },
@@ -1162,6 +1194,7 @@ test('writeVkAgentsSettings: setup:agents 用に features/skills/org/engine を 
       skills: { disabled: ['vk-pr', 'vk-sync-skills'] },
       org: { allowed_owners: ['vektor-inc', 'kurudrive'] },
       staff_wp_dev: { engine: 'codex' },
+      staff_review: { engine: 'claude' },
       multi_repo_task: { default_engine: 'claude' },
     };
     assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), expected);
@@ -1722,6 +1755,16 @@ test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () 
   );
   assert.match(engineField.options.find((o) => o.value === 'codex').label, /push\/PR/);
 
+  const reviewEngineField = group.fields.find((f) => f.key === 'staff_review.engine');
+  assert.ok(reviewEngineField);
+  assert.equal(reviewEngineField.label, 'staff-review（麗美）の実行エンジン');
+  assert.equal(reviewEngineField.type, 'select');
+  assert.deepEqual(
+    reviewEngineField.options.map((o) => o.value),
+    ['', 'claude', 'codex'],
+  );
+  assert.match(reviewEngineField.options.find((o) => o.value === 'codex').label, /司が担当/);
+
   const multiRepoEngineField = group.fields.find((f) => f.key === 'multi_repo_task.default_engine');
   assert.ok(multiRepoEngineField);
   assert.equal(multiRepoEngineField.label, 'vk-multi-repo-task の既定実行エンジン');
@@ -1762,6 +1805,7 @@ test('buildSettingsDescriptor: Agents グループは workspace.search_paths（l
     'workspace.search_paths',
     'org.review_assets_repo',
     'staff_wp_dev.engine',
+    'staff_review.engine',
     'multi_repo_task.default_engine',
     'features.coderabbit',
     'features.coderabbit_ignore',
