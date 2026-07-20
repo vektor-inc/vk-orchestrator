@@ -76,30 +76,18 @@ test('buildTasksView: root updatedAt を含め、pull request は除外する', 
   assert.deepEqual(view.tasks.map((task) => task.id), ['1']);
 });
 
-test('fetchAllTaskQueueIssues: assigneeFilter を使わず全 open issue を取得する', async () => {
-  let params;
+test('fetchAllTaskQueueIssues: クライアントの listAllQueueIssues に委譲する', async () => {
   const issues = [{ number: 1, title: 'team task' }];
+  let called = false;
   const github = {
-    owner: 'vektor-inc',
-    repo: 'task-queue',
-    assignee: 'wada',
-    octokit: {
-      issues: {
-        listForRepo: async () => {
-          throw new Error('paginate should call the endpoint reference, not execute here');
-        },
-      },
-      paginate: async (endpoint, p) => {
-        assert.equal(endpoint, github.octokit.issues.listForRepo);
-        params = p;
-        return issues;
-      },
+    listAllQueueIssues: async () => {
+      called = true;
+      return issues;
     },
   };
 
   assert.deepEqual(await fetchAllTaskQueueIssues(github), issues);
-  assert.equal(Object.hasOwn(params, 'assignee'), false);
-  assert.equal(params.state, 'open');
+  assert.equal(called, true);
 });
 
 test('writeTasksViewFile: 一時ファイル経由で JSON を書き出す', async () => {

@@ -93,6 +93,30 @@ export class GitHubClient {
     return this.assignee ? { assignee: this.assignee } : {};
   }
 
+  // キュー（タスク登録リポジトリ）上の全 open issue を一覧取得する。
+  // tasks-view.json スナップショット生成用のインターフェースメソッド。
+  // 一覧はメンバー横断で全タスクを表示するため assignee フィルタは掛けない。
+  // octokit.paginate があれば全ページ取得、無ければ（テストの簡易 octokit モック等）
+  // 単発 listForRepo にフォールバックする。
+  // 後続の LocalQueueClient も同じシグネチャ（引数なし・open issue 配列を返す）で実装する。
+  async listAllQueueIssues() {
+    const params = {
+      owner: this.owner,
+      repo: this.repo,
+      state: 'open',
+      sort: 'updated',
+      direction: 'desc',
+      per_page: 100,
+    };
+
+    if (typeof this.octokit?.paginate === 'function') {
+      return this.octokit.paginate(this.octokit.issues.listForRepo, params);
+    }
+
+    const { data } = await this.octokit.issues.listForRepo(params);
+    return data;
+  }
+
   // 途中で止まったissue（in-progress / waiting-input）を取得
   // status:waiting-merge はターミナルを使わずGitHub APIだけで再開できるため対象外
   async fetchStuckIssues() {
