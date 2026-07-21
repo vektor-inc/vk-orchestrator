@@ -1660,7 +1660,7 @@ async function loopBody() {
   // 2. VK Terminals からのステータス変更コマンドを消化する（VK Terminals 不要）
   const cmdSummary = await commandsFileProcessor.consumeOnce();
   if (cmdSummary && cmdSummary.applied > 0) {
-    await refreshTasksViewSnapshot(github, { logger: console });
+    await refreshTasksViewSnapshot(github, { logger: console, viewer: ASSIGNEE_FILTER });
   }
 
   // 3. in-progress スキャン: 指示待ち検知 → waiting-input / PR 完了 → waiting-merge /
@@ -1740,7 +1740,7 @@ async function loop() {
   try {
     await loopBody();
   } finally {
-    await refreshTasksViewSnapshot(github, { logger: console });
+    await refreshTasksViewSnapshot(github, { logger: console, viewer: ASSIGNEE_FILTER });
   }
 }
 
@@ -1797,7 +1797,7 @@ async function main() {
       logger: console,
       afterConsume: async (summary) => {
         if (summary && summary.applied > 0) {
-          await refreshTasksViewSnapshot(github, { logger: console });
+          await refreshTasksViewSnapshot(github, { logger: console, viewer: ASSIGNEE_FILTER });
         }
       },
     });

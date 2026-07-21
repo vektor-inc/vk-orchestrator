@@ -53,11 +53,22 @@ export function normalizeTaskIssue(issue) {
   };
 }
 
+// assignee フィルタ値から「自分（viewer）」のログイン名を解決する。
+// 具体的なログイン名（非空・`all` 以外）ならその値（前後空白は trim、大小文字は保持）、
+// `all`（大小文字問わず）/ 空文字 / null / undefined など単一の自分を特定できない場合は null。
+function resolveViewer(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.toLowerCase() === 'all') return null;
+  return trimmed;
+}
+
 export function buildTasksView(issues, options = {}) {
   const now = options.now ?? new Date();
   const updatedAt = now instanceof Date ? now.toISOString() : String(now);
   return {
     updatedAt,
+    viewer: resolveViewer(options.viewer),
     tasks: issues
       .filter((issue) => !issue.pull_request)
       .map(normalizeTaskIssue),
@@ -79,7 +90,7 @@ export async function writeTasksViewFile(view, options = {}) {
 
 export async function writeTasksViewSnapshot(github, options = {}) {
   const issues = options.issues ?? await fetchAllTaskQueueIssues(github);
-  const view = buildTasksView(issues, { now: options.now });
+  const view = buildTasksView(issues, { now: options.now, viewer: options.viewer });
   const filePath = await writeTasksViewFile(view, { filePath: options.filePath });
   return { filePath, view };
 }

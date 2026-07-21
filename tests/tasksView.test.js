@@ -76,6 +76,21 @@ test('buildTasksView: root updatedAt を含め、pull request は除外する', 
   assert.deepEqual(view.tasks.map((task) => task.id), ['1']);
 });
 
+test('buildTasksView: viewer に具体的ログイン名を渡すとそのまま viewer に入る', () => {
+  const view = buildTasksView([], { viewer: '  Wada  ' });
+
+  // 前後空白は trim、大小文字はそのまま保持する
+  assert.equal(view.viewer, 'Wada');
+});
+
+test('buildTasksView: all / 空文字 / 未指定のとき viewer は null', () => {
+  assert.equal(buildTasksView([], { viewer: 'all' }).viewer, null);
+  assert.equal(buildTasksView([], { viewer: 'ALL' }).viewer, null);
+  assert.equal(buildTasksView([], { viewer: '   ' }).viewer, null);
+  assert.equal(buildTasksView([], { viewer: '' }).viewer, null);
+  assert.equal(buildTasksView([], {}).viewer, null);
+});
+
 test('fetchAllTaskQueueIssues: クライアントの listAllQueueIssues に委譲する', async () => {
   const issues = [{ number: 1, title: 'team task' }];
   let called = false;
