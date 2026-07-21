@@ -85,6 +85,10 @@ export class GitHubClient {
       this.pickupEnabled = true;
       this.assignee = normalizedAssignee;
     }
+    // capability 宣言（#138 方針5 / #157）: GitHubClient はトークン前提で構築されるため
+    // 常に GitHub 連携を有効と宣言する。エンジンはこのフラグを見て GitHub 依存処理の
+    // 早期 return を判断する。
+    this.capabilities = { githubIntegration: true };
   }
 
   // listForRepo に渡す assignee フィルタ条件（フィルタなしなら空オブジェクト）。

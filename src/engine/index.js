@@ -53,6 +53,7 @@ import { formatErrorSummary } from './format-error.js';
 import { refreshTasksViewSnapshot } from './tasks-view.js';
 import { resolveRepoCwd } from './resolve-repo-cwd.js';
 import { isLocalMachineHost } from './local-machine-host.js';
+import { hasGitHubIntegration, disabledGitHubFeatures } from './github-capability.js';
 // コマンド組み立て・ポート割り当て・テンプレート展開は副作用の無い純粋関数として
 // build-command.js に分離してある（テストから安全に import するため）。ここでは
 // 内部利用のために import しつつ、後段で再 export して index.js からも参照可能にする。
@@ -107,12 +108,24 @@ function readArgValue(name) {
 // なし / 空は安全側として何も拾わず、全件対象にする場合は "all" を明示する。
 const ASSIGNEE_FILTER = readArgValue('assignee') ?? process.env.ASSIGNEE_FILTER ?? null;
 
+const queueBackend = getQueueBackend();
+
+// トークン未解決時の分岐（#157: capability フラグの初適用 / #138 方針5）。
+// - GitHub モード         : 従来どおりトークン必須（未解決なら exit。挙動不変）。
+// - ローカルモード × 無し : process.exit せず、GitHub 連携無効の純ローカルタスク専用で続行。
+//                           何が無効になるか（source import / PR 監視 / automerge / 対象 issue 操作）を警告に明示する。
+// - ローカルモード × 有り : フル capability（挙動不変）。
 if (!GITHUB_TOKEN) {
-  console.error(`[Error] ${GITHUB_TOKEN_RESOLUTION_HELP}`);
-  process.exit(1);
+  if (queueBackend === 'local') {
+    console.warn('[warn] GITHUB_TOKEN を解決できませんでした。ローカルモード（queue.backend: local）のため純ローカルタスク専用で起動します。');
+    console.warn(`[warn] GitHub 連携が無効のため次の機能はスキップされます: ${disabledGitHubFeatures().join(' / ')}。`);
+    console.warn(`[warn] GitHub 連携を有効化するには: ${GITHUB_TOKEN_RESOLUTION_HELP}`);
+  } else {
+    console.error(`[Error] ${GITHUB_TOKEN_RESOLUTION_HELP}`);
+    process.exit(1);
+  }
 }
 
-const queueBackend = getQueueBackend();
 const QueueClient = queueBackend === 'local' ? LocalQueueClient : GitHubClient;
 const github = new QueueClient({
   token: GITHUB_TOKEN,
@@ -121,6 +134,10 @@ const github = new QueueClient({
   assignee: ASSIGNEE_FILTER,
   queueLabel: QUEUE_LABEL,
 });
+
+// GitHub 連携 capability。クライアント自身が宣言した値を単一の真実の源にする。
+// トークン無しローカルモードのときだけ false になり、GitHub 依存処理を早期 return でスキップする。
+const GITHUB_INTEGRATION = hasGitHubIntegration(github);
 
 function formatAssigneeMode(client) {
   if (!client.pickupEnabled) return '(なし・拾わない)';
@@ -614,6 +631,10 @@ async function ensurePRRecorded(issue, target, pr) {
 // 次の状態遷移を決めて適用する（新方針 案B の中核）。
 // -------------------------------------------------------
 async function scanInProgressIssues() {
+  // GitHub 連携無効時は PR 監視（PR 検索・CI 判定・完了条件判定）を行わない。
+  // 純ローカルタスクの in-progress → waiting-merge → done は手動操作（CLI / commands.jsonl）で
+  // 進めるため、この scan を止めても一巡は成立する（gatherTargetState は GitHub を叩くのでスキップ）。
+  if (!GITHUB_INTEGRATION) return;
   let issues;
   try {
     issues = await github.fetchInProgressIssues();
@@ -716,6 +737,8 @@ async function scanInProgressIssues() {
 // 固着するため（answered の設計目標を損なう）。
 // -------------------------------------------------------
 async function scanAnsweredRecovery() {
+  // 対象 issue/PR のコメントを収集して answered を判定するため GitHub 連携が前提。無効時はスキップ。
+  if (!GITHUB_INTEGRATION) return;
   let issues;
   try {
     issues = await github.fetchWaitingInputIssues();
@@ -754,6 +777,8 @@ async function scanAnsweredRecovery() {
 // （`Status: answered` による転送不要の復帰は scanAnsweredRecovery が健全性ゲート前で処理する。）
 // -------------------------------------------------------
 async function scanWaitingInputIssues() {
+  // 返信転送は対象 issue/PR のコメント収集（gatherTargetState）が前提のため GitHub 連携が必要。無効時はスキップ。
+  if (!GITHUB_INTEGRATION) return;
   let issues;
   try {
     issues = await github.fetchWaitingInputIssues();
@@ -894,7 +919,9 @@ async function scanWatchdog() {
         issue,
         saved,
         {
-          findPRForIssue: github.findPRForIssue.bind(github),
+          // GitHub 連携無効時は PR が存在しえないため「PR なし」を返す fake を渡し、
+          // pane 消失時の自動再開／failed 化（いずれもローカル操作）へ進ませる。
+          findPRForIssue: GITHUB_INTEGRATION ? github.findPRForIssue.bind(github) : async () => null,
           resolveTarget,
           cleanupForIssue,
           formatCleanupSummary,
@@ -925,15 +952,19 @@ async function scanWatchdog() {
 // 駆動するのでウォッチドッグでは触らない（誤って進行中タスクを殺さないための保険）。
 // cleanupWpPort が渡された場合（pane 消失時）は、残った wp-env コンテナ・worktree を掃除する。
 async function failIfNoPR(issue, reason, { cleanupWpPort = null } = {}) {
-  const target = resolveTarget(issue);
-  let pr = null;
-  try {
-    pr = await github.findPRForIssue(target.owner, target.repo, target.number);
-  } catch (err) {
-    console.warn(`  [watchdog] issue #${issue.number}: PR 確認失敗（今回は見送り）: ${err.message}`);
-    return;
+  // GitHub 連携有効時のみ PR の有無を確認する。無効時（純ローカル）は PR が存在しえないため
+  // 「PR なし」とみなしてそのまま failed 化する（cleanup / setStatus / addComment はローカル操作で完結する）。
+  if (GITHUB_INTEGRATION) {
+    const target = resolveTarget(issue);
+    let pr = null;
+    try {
+      pr = await github.findPRForIssue(target.owner, target.repo, target.number);
+    } catch (err) {
+      console.warn(`  [watchdog] issue #${issue.number}: PR 確認失敗（今回は見送り）: ${err.message}`);
+      return;
+    }
+    if (pr) return; // PR あり → 通常ルートに任せる
   }
-  if (pr) return; // PR あり → 通常ルートに任せる
 
   await markTaskFailed(issue, reason, { cleanupWpPort });
 }
@@ -999,6 +1030,8 @@ async function getOccupiedRepoKeys() {
 // 紐づくPRがマージされていたら status:done + close する
 // -------------------------------------------------------
 async function checkWaitingMergeIssues() {
+  // GitHub 連携無効時はマージ検知・automerge を行わない（純ローカルタスクは手動で done にする）。
+  if (!GITHUB_INTEGRATION) return;
   let issues;
   try {
     issues = await github.fetchWaitingMergeIssues();
@@ -1241,6 +1274,8 @@ async function runPostMergeCleanup(issue, prRef, prState, tag) {
 // 既存の `no_pr_found_target_closed` ルート（「PRなし完了」）と同じ扱いで done にする。
 // -------------------------------------------------------
 async function recheckFailedIssues() {
+  // failed の事後復旧は対象 issue/PR の GitHub 状態照会が前提。無効時はスキップ。
+  if (!GITHUB_INTEGRATION) return;
   let issues;
   try {
     issues = await github.fetchFailedIssues();
@@ -1443,6 +1478,8 @@ async function recheckFailedIssues() {
 let isImportingTasks = false;
 
 async function importNewTasks() {
+  // GitHub 連携無効（トークン無しローカルモード）では作業対象リポジトリの取り込みは行わない。
+  if (!GITHUB_INTEGRATION) return;
   if (isImportingTasks) {
     console.log('[import] 前回の取り込み処理が継続中のためスキップ');
     return;
@@ -1600,7 +1637,10 @@ async function loopBody() {
   // 12. 先回りクローズ済み + PR マージ済みの state 残骸を後始末
   //     VK Terminals が到達不能な間は prMerged 通知を送れないため、
   //     health 確認済みのループでのみ通知してから state を消し込む。
-  await reconcileOrphanedMergedTasks();
+  //     PR マージ検知が前提のため GitHub 連携無効時はスキップ。
+  if (GITHUB_INTEGRATION) {
+    await reconcileOrphanedMergedTasks();
+  }
 
   // 13. ready をディスパッチ
   const issues = await github.fetchPendingIssues();
@@ -1660,6 +1700,8 @@ async function main() {
     console.log(`=== task-queue orchestrator ===`);
     console.log(`  repo         : ${GITHUB_OWNER}/${GITHUB_REPO}`);
     console.log(`  source org   : ${SOURCE_ORG}`);
+    console.log(`  queue backend: ${queueBackend}`);
+    console.log(`  github 連携  : ${GITHUB_INTEGRATION ? '有効' : `無効（純ローカルタスク専用: ${disabledGitHubFeatures().join(' / ')} をスキップ）`}`);
     console.log(`  assignee     : ${formatAssigneeMode(github)}`);
     console.log(`  terminal     : http://127.0.0.1:${VK_PORT}`);
     console.log(`  interval     : ${POLL_INTERVAL / 1000}s`);

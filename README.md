@@ -106,6 +106,17 @@ orchestrator 自身の設定は `~/.vk-orchestrator/config.json` に置くとユ
 - **ローカルモード**では task-queue リポジトリは不要です。設定パネルではローカルモードを選ぶと「タスク登録リポジトリ名」（`github.repo`）が自動的に非表示になり、未設定のまま起動できます。純ローカルタスクは `vk-orchestrator task` コマンド（下記「純ローカルタスク CLI」）で登録・確認します。`github.owner` は、作業対象リポジトリを組織横断検索して取り込む際のオーナーとして**両モードで使用**するため、ローカルモードでも設定してください。
 - 補助スクリプト（`check-status` / `unblock` / `ensure-task-queue-label`）は GitHub 上の Issue を前提とするため **GitHub モード専用**です。ローカルモードでは使えません（MVP では相当スクリプトを提供しません）。
 
+#### トークンレス起動（純ローカルタスク専用運用）
+
+ローカルモードは **`GITHUB_TOKEN` を解決できなくても起動**します（GitHub モードは従来どおりトークン必須で、未解決なら起動を中止します）。トークンが無いローカルモードでは GitHub API アクセスを伴う機能が自動的に無効化され、GitHub に一切触れない「純ローカルタスク専用」で動作します。無効になるのは次の機能です。
+
+- **source import**（作業対象リポジトリからの `task-queue` ラベル付き Issue の取り込み）
+- **PR 監視**（PR 検索・CI 判定・完了条件判定による `waiting-merge` への自動遷移）
+- **automerge**（マージ検知・自動 squash マージ）
+- **対象 issue 操作**（source issue の close・完了コメント投稿など GitHub への書き込み）
+
+無効化された内容は起動時のログ（起動サマリと警告行）に明示されます。純ローカルタスク（issue URL を含まないタスク）の登録 → 実行 → `waiting-merge` → 手動 `done` の一巡は、この状態でも GitHub に触れず動作します（`waiting-merge` への移行と `done` は `vk-orchestrator task set-status` などの手動操作で行います）。トークンを解決できるローカルモードでは、上記の GitHub 連携機能は従来どおりフル稼働します。
+
 以下の「GitHub 認証」「ラベルの登録」は GitHub モードのセットアップ手順です。ローカルモードだけを使う場合、ラベル登録は不要です（GitHub 認証は、issue URL を含むタスクの取り込みや作業対象リポジトリの操作を行う場合に引き続き必要になることがあります）。
 
 ### GitHub 認証
