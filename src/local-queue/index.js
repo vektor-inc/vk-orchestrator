@@ -72,15 +72,24 @@ export class LocalQueueClient {
     githubClient = null,
   }) {
     this.queuePath = resolveLocalQueuePath({ queuePath, homeDir });
-    this.github = githubClient ?? new GitHubClient({ token, owner, repo, assignee, queueLabel });
-    this.owner = this.github.owner;
-    this.repo = this.github.repo;
-    this.queueLabel = this.github.queueLabel;
+    // トークン無し × ローカルモードでは内部 GitHubClient を生成しない（#157）。
+    // 生成しないことで、対象リポ操作（source import・PR 監視・automerge・対象 issue 操作）が
+    // 万一エンジンのガードをすり抜けて委譲されても「静かに実行される」ことを構造的に防ぐ
+    // （null 参照で即座に失敗し、握りつぶしでなく気付ける）。トークン有り or githubClient 注入時は従来どおり。
+    const hasToken = typeof token === 'string' && token.trim() !== '';
+    this.github = githubClient ?? (hasToken ? new GitHubClient({ token, owner, repo, assignee, queueLabel }) : null);
+    this.owner = this.github?.owner ?? owner;
+    this.repo = this.github?.repo ?? repo;
+    this.queueLabel = this.github?.queueLabel ?? (queueLabel || 'task-queue');
     this._writeChain = Promise.resolve();
     // ローカルモードは単一ローカルワーカー前提のため、キュー側 fetch に assignee フィルタは適用しない。
     // 内包 GitHubClient の assignee は source-import 系の対象リポ操作で使うため保持する。
     this.assignee = null;
     this.pickupEnabled = true;
+    // capability 宣言（#138 方針5 / #157）: GitHub API アクセス（＝内部 GitHubClient への委譲）が
+    // 可能かどうかを宣言する。トークン無しローカルモードでは github=null となり githubIntegration:false。
+    // エンジンはこのフラグを見て source import / PR 監視 / automerge / 対象 issue 操作 を早期 return でスキップする。
+    this.capabilities = { githubIntegration: this.github !== null };
   }
 
   readQueue() {
@@ -196,7 +205,10 @@ export class LocalQueueClient {
 
     console.log(`  [LocalQueue] task #${issueNumber} → status:${nextStatus}`);
 
-    if (shouldNotify && sourceRef) {
+    // github=null（トークン無しローカルモード）では source 側への完了通知は行わない。
+    // 純ローカルタスクは source URL を持たないため sourceRef は元々 null だが、
+    // 万一 source URL を含むタスクがトークン無しで done/failed になっても静かにスキップする。
+    if (shouldNotify && sourceRef && this.github) {
       try {
         await this.github.postSourceCompletionComment(sourceRef, queueIssueUrl, `status:${nextStatus}`);
       } catch (err) {
