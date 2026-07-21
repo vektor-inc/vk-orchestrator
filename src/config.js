@@ -704,6 +704,16 @@ export function resolveTasksViewPath(options = {}) {
 }
 
 /**
+ * VK Terminals がタスク一覧表示に読む、宣言的ウィジェット（tasks-widget.json）のパス。
+ * tasks-view.json の後継となる新形式で、当面は両方を dual-write する。
+ * @param {{ homeDir?: string }} [options]
+ * @returns {string}
+ */
+export function resolveTasksWidgetPath(options = {}) {
+  return join(options.homeDir ?? homedir(), '.task-queue', 'tasks-widget.json');
+}
+
+/**
  * VK Terminals がステータス変更依頼を追記する commands.jsonl のパス。
  * @param {{ homeDir?: string }} [options]
  * @returns {string}
@@ -726,6 +736,22 @@ export function writeVkTerminalsTasksViewConfig(options = {}) {
   config.tasksViewPath = tasksViewPath;
   writeJsonAtomic(configPath, config);
   return { configPath, tasksViewPath };
+}
+
+/**
+ * up 起動時に VK Terminals 本体 config へ tasks-widget.json のパスを注入する。
+ * 既存キーは保持し、tasksWidgetPath だけを上書きする。
+ * @param {{ homeDir?: string, configPath?: string, tasksWidgetPath?: string }} [options]
+ * @returns {{ configPath: string, tasksWidgetPath: string }}
+ */
+export function writeVkTerminalsTasksWidgetConfig(options = {}) {
+  const homeDir = options.homeDir ?? homedir();
+  const configPath = options.configPath ?? join(homeDir, '.vk-terminals', 'config.json');
+  const tasksWidgetPath = options.tasksWidgetPath ?? resolveTasksWidgetPath({ homeDir });
+  const config = readJsonObject(configPath);
+  config.tasksWidgetPath = tasksWidgetPath;
+  writeJsonAtomic(configPath, config);
+  return { configPath, tasksWidgetPath };
 }
 
 /**
