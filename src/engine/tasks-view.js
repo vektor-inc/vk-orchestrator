@@ -1,4 +1,5 @@
 import { resolveTasksViewPath, writeJsonAtomic } from '../config.js';
+import { buildTasksWidget, writeTasksWidgetFile } from './tasks-widget.js';
 
 const ISSUE_URL_RE = /https:\/\/github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/issues\/\d+/;
 const PR_URL_RE = /\*\*PR:\*\*\s*(https:\/\/github\.com\/[^\s]+\/pull\/\d+)/g;
@@ -103,4 +104,78 @@ export async function refreshTasksViewSnapshot(github, options = {}) {
     logger.warn?.(`[tasks-view] tasks-view.json 書き出し失敗（処理は継続）: ${err.message}`);
     return null;
   }
+}
+
+// -------------------------------------------------------
+// dual-write（新旧併存）
+//
+// #182 で導入した宣言的ウィジェット（tasks-widget.json）へ移行する過渡期は、旧
+// tasks-view.json（従来の純データ）と新 tasks-widget.json の両方を同じ issue 取得
+// 結果から書き出す。旧形式の廃止は #229 リリース後の後続 PR で行う。
+// どちらの書き出しも独立して警告握りつぶしにし、片方が失敗しても他方とポーリング処理を止めない。
+// -------------------------------------------------------
+
+/**
+ * issue 群から tasks-view と tasks-widget を組み立て、両ファイルへ dual-write する。
+ * issue の取得は 1 回だけ行い、同じ view を両形式の元データに使う。
+ * @param {object} github キュークライアント
+ * @param {{ issues?: Array<object>, now?: Date, viewer?: string, staleThresholdMs?: number,
+ *   tasksViewPath?: string, tasksWidgetPath?: string, domain?: object }} [options]
+ * @returns {Promise<{ view: object, widget: object, tasksViewPath: string, tasksWidgetPath: string }>}
+ */
+export async function writeTasksSnapshots(github, options = {}) {
+  const issues = options.issues ?? await fetchAllTaskQueueIssues(github);
+  const view = buildTasksView(issues, { now: options.now, viewer: options.viewer });
+  const tasksViewPath = await writeTasksViewFile(view, { filePath: options.tasksViewPath });
+
+  const widget = buildTasksWidget(view, {
+    domain: options.domain,
+    now: options.now,
+    staleThresholdMs: options.staleThresholdMs,
+  });
+  const tasksWidgetPath = await writeTasksWidgetFile(widget, { filePath: options.tasksWidgetPath });
+
+  return { view, widget, tasksViewPath, tasksWidgetPath };
+}
+
+/**
+ * writeTasksSnapshots の失敗握りつぶし版。issue 取得と各書き出しを可能な限り進め、
+ * 失敗は warn で記録してポーリング処理を止めない。
+ * @param {object} github キュークライアント
+ * @param {object} [options] writeTasksSnapshots と同じ options（logger を追加で受ける）
+ * @returns {Promise<{ view: object|null, widget: object|null }|null>}
+ */
+export async function refreshTasksSnapshots(github, options = {}) {
+  const logger = options.logger ?? console;
+  let view = null;
+  try {
+    const issues = options.issues ?? await fetchAllTaskQueueIssues(github);
+    view = buildTasksView(issues, { now: options.now, viewer: options.viewer });
+  } catch (err) {
+    logger.warn?.(`[tasks-view] タスク一覧の取得に失敗（処理は継続）: ${err.message}`);
+    return null;
+  }
+
+  // 旧 tasks-view.json の書き出し（#229 リリース後の後続 PR で廃止予定）。
+  try {
+    await writeTasksViewFile(view, { filePath: options.tasksViewPath });
+  } catch (err) {
+    logger.warn?.(`[tasks-view] tasks-view.json 書き出し失敗（処理は継続）: ${err.message}`);
+  }
+
+  // 新 tasks-widget.json の書き出し。
+  let widget = null;
+  try {
+    widget = buildTasksWidget(view, {
+      domain: options.domain,
+      now: options.now,
+      staleThresholdMs: options.staleThresholdMs,
+    });
+    await writeTasksWidgetFile(widget, { filePath: options.tasksWidgetPath });
+  } catch (err) {
+    widget = null;
+    logger.warn?.(`[tasks-view] tasks-widget.json 書き出し失敗（処理は継続）: ${err.message}`);
+  }
+
+  return { view, widget };
 }

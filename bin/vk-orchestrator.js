@@ -329,6 +329,7 @@ async function main() {
       const { spawn } = await import('child_process');
       const { randomUUID } = await import('crypto');
       const { writeVkAgentsSettings, writeSettingsDescriptor, resolveConfigPath, writeVkTerminalsTasksViewConfig,
+        writeVkTerminalsTasksWidgetConfig,
         writeVkTerminalsCommandsConfig,
         resolveVkTerminalsApiHost, resolveVkTerminalsApiPort, getVkTerminalsGpuMode, gpuLaunchOptions } =
         await import('../src/config.js');
@@ -368,6 +369,13 @@ async function main() {
         console.log(`tasks-view snapshot パスを VK Terminals 設定へ反映しました → ${tasksView.tasksViewPath}`);
       } catch (err) {
         console.warn(`[up] tasks-view snapshot パスの VK Terminals 設定反映に失敗しました（処理は継続）: ${err.message}`);
+      }
+
+      try {
+        const tasksWidget = writeVkTerminalsTasksWidgetConfig();
+        console.log(`tasks-widget 宣言パスを VK Terminals 設定へ反映しました → ${tasksWidget.tasksWidgetPath}`);
+      } catch (err) {
+        console.warn(`[up] tasks-widget 宣言パスの VK Terminals 設定反映に失敗しました（処理は継続）: ${err.message}`);
       }
 
       try {
