@@ -229,7 +229,10 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 | `queue.backend` | `QUEUE_BACKEND` | キューの保存先。`github` は GitHub issues、`local` はローカル JSON（`~/.task-queue/queue.json`） | `github` |
 | `orchestrator.pollIntervalMs` | `POLL_INTERVAL_MS` | ポーリング間隔 | `60000` |
 | `orchestrator.watchdogIdleMs` | `WATCHDOG_IDLE_MS` | ウォッチドッグ閾値 | `10800000` |
-| `orchestrator.paneResumeMax` | `PANE_RESUME_MAX` | ペイン消失時（PR 未生成）の自動再開上限回数 | `3` |
+| `orchestrator.paneResumeMax` | `PANE_RESUME_MAX` | ペイン消失時・本文未達時（PR 未生成）の自動再開上限回数（両者で合算） | `3` |
+| なし | `CLAUDE_READY_TIMEOUT_MS` | Claude Code の起動完了（入力待ち）を待つ readiness ゲートの全体タイムアウト。コールドスタートの起動バナー churn を跨げるよう設定 | `45000` |
+| なし | `CLAUDE_SUBMIT_DELAY_MS` | 本文送信後の基準待機時間（linear backoff の 1 単位）。再送のたびに待機が伸びる | `1000` |
+| なし | `CLAUDE_SUBMIT_MAX_RETRIES` | 本文・Enter それぞれの最大再送回数（初回と合わせて最大 +1 回まで送信） | `3` |
 | `orchestrator.assigneeFilter` | `ASSIGNEE_FILTER` | 担当者フィルタ。空/未設定は一切取り込まず、全件対象は `all` を明示 | `null`（拾わない） |
 | `workspace.search_paths`（vk-agents config） | なし | 作業対象リポジトリのローカルクローン探索起点。タスク用ペインの起点決定にも使用 | 未設定時は `~/vk-orchestrator-tasks`（無ければ自動作成） |
 | なし | `TASK_CWD` | タスク用ペインの Claude Code 起点ディレクトリの緊急上書き | 未設定 |

@@ -12,7 +12,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { submitToClaude } from '../src/terminals/index.js';
+import { submitToClaude, reconfirmBodyEcho } from '../src/terminals/index.js';
 
 // --------------------------------------------------------------------------
 // fetch モックの仕込み
@@ -306,5 +306,159 @@ describe('submitToClaude', () => {
     // OR 判定のままだと再送 0 回で終わる。AND 判定であれば maxRetries 分再送される。
     assert.equal(scenario.sendCalls.length, 1 + 1 + FAST_OPTIONS.maxRetries,
       'AND 判定なのでカーソル blink 相当のケースでは再送が発火する');
+  });
+});
+
+// --------------------------------------------------------------------------
+// issue #172: コールドスタートで起動バナーが数回 churn した後にエコーが出現する
+// ケース。バナー描画が長引くと、旧デフォルト（delayMs=500 / maxRetries=2）では
+// 本文の再送回数が足りずエコーを確認できずに bodyConfirmed=false で終わっていた。
+// デフォルトを delayMs=1000 / maxRetries=3 に引き上げることで、バナー churn を
+// 跨いでエコーを確認できるようになることを検証する。
+//
+// 独立した fetch モックを使い、「本文が N 回届くまではバナーが churn（エコー無し）、
+// N 回目でようやくプロンプトに本文がエコーされる」状況を再現する。
+// --------------------------------------------------------------------------
+describe('submitToClaude コールドスタート banner churn (issue #172)', () => {
+  // 実運用に近い、十分長い（4 文字以上のトークンを含む）本文。
+  const BODY = '/vk-kore https://github.com/vektor-inc/vk-blocks-pro/issues/999 wp-env-port=9200';
+  // エコーが現れるのに必要な「本文の総送信回数」。
+  //   - 旧デフォルト maxRetries=2 → 本文送信は初回 + 2 = 計 3 回。ここに届かず false。
+  //   - 新デフォルト maxRetries=3 → 本文送信は初回 + 3 = 計 4 回。ここで初めて true。
+  const ECHO_APPEARS_AFTER_BODY_SENDS = 4;
+
+  let savedFetch;
+  let bodySends;
+  let enterSends;
+
+  function states(lastOutputTime, lastLines) {
+    return {
+      ok: true,
+      json: async () => ({
+        terminals: {
+          [TERMID]: { termId: TERMID, waiting: false, lastOutputTime, lastLines },
+        },
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    savedFetch = global.fetch;
+    bodySends  = 0;
+    enterSends = 0;
+    global.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.endsWith('/api/send')) {
+        const body = init && init.body ? JSON.parse(init.body) : {};
+        if (body.input === '\r') enterSends += 1;
+        else if (body.input === CLEAR_INPUT_SEQUENCE) { /* 入力行クリアは送信回数に数えない */ }
+        else bodySends += 1;
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
+      if (u.endsWith('/api/states')) {
+        // Enter 送信後は出力が進む（Enter 確定チェックを通す）。
+        if (enterSends > 0) return states(9_000 + enterSends, 'after-enter');
+        // 本文が規定回数届くまではバナーが churn し続け、本文はエコーされない。
+        if (bodySends >= ECHO_APPEARS_AFTER_BODY_SENDS) {
+          return states(5_000 + bodySends, `> ${BODY}`);
+        }
+        return states(1_000 + bodySends, `Banner churn phase ${bodySends} ...`);
+      }
+      throw new Error(`unexpected fetch url in test: ${u}`);
+    };
+  });
+
+  afterEach(() => {
+    global.fetch = savedFetch;
+  });
+
+  it('[RED] デフォルト設定（maxRetries 未指定）でバナー churn を跨いでエコーを確認できる', async () => {
+    // delayMs は小さくして高速化（本挙動は maxRetries に依存するため、これで妥当）。
+    // maxRetries / confirm 系は「デフォルト値」を使わせたいので敢えて渡さない。
+    // 旧デフォルト maxRetries=2 だと本文送信が 3 回どまり → エコー未確認 → bodyConfirmed=false（RED）。
+    // 新デフォルト maxRetries=3 なら本文送信が 4 回に届き → エコー確認 → bodyConfirmed=true（GREEN）。
+    const result = await submitToClaude(PORT, TERMID, BODY, 5);
+
+    assert.equal(result.bodyConfirmed, true,
+      'デフォルト maxRetries でバナー churn 後のエコーを確認できるべき');
+    assert.ok(bodySends >= ECHO_APPEARS_AFTER_BODY_SENDS,
+      `本文がエコー出現に必要な回数まで再送されるべき（実際: ${bodySends}）`);
+  });
+
+  it('旧デフォルト相当 maxRetries=2 ではエコーを確認できない（false）— 不具合の再現', async () => {
+    const result = await submitToClaude(PORT, TERMID, BODY, 5, {
+      maxRetries: 2, confirmTimeoutMs: 200, pollIntervalMs: 30,
+    });
+    assert.equal(result.bodyConfirmed, false,
+      'maxRetries=2 では本文送信が 3 回どまりでエコーを確認できない');
+  });
+
+  it('新デフォルト相当 maxRetries=3 ならエコーを確認できる（true）— 修正後の期待', async () => {
+    const result = await submitToClaude(PORT, TERMID, BODY, 5, {
+      maxRetries: 3, confirmTimeoutMs: 200, pollIntervalMs: 30,
+    });
+    assert.equal(result.bodyConfirmed, true,
+      'maxRetries=3 なら本文送信が 4 回に届きエコーを確認できる');
+  });
+});
+
+// --------------------------------------------------------------------------
+// reconfirmBodyEcho（偽陽性ガード）: 再ディスパッチ発動直前のエコー再確認。
+// bodyConfirmed=false からの再ディスパッチを、真に未達のときだけ通す fail-closed 判定。
+//   - 照合対象が無い（本文が空 / 4 文字以上トークン無し）→ true（スキップ）
+//   - states 取得失敗（baseline=null）→ false（fail-closed で再ディスパッチへ）
+//   - エコー一致 → true / エコー不一致 → false
+// --------------------------------------------------------------------------
+describe('reconfirmBodyEcho（偽陽性ガード）', () => {
+  const FRAG = '/vk-kore https://github.com/vektor-inc/vk-blocks-pro/issues/999';
+
+  let savedFetch;
+  let statesCalls;
+
+  function installStates(behavior) {
+    savedFetch = global.fetch;
+    statesCalls = 0;
+    global.fetch = async (url) => {
+      const u = String(url);
+      if (!u.endsWith('/api/states')) throw new Error(`unexpected fetch url in test: ${u}`);
+      statesCalls += 1;
+      return behavior();
+    };
+  }
+  function termStates(lastLines) {
+    return { ok: true, json: async () => ({ terminals: { [TERMID]: { termId: TERMID, lastOutputTime: 1, lastLines } } }) };
+  }
+
+  afterEach(() => { if (savedFetch) global.fetch = savedFetch; savedFetch = undefined; });
+
+  it('照合対象が無い本文（4文字以上トークン無し）は true を返し、states も引かない', async () => {
+    installStates(() => { throw new Error('should not be called'); });
+    const result = await reconfirmBodyEcho(PORT, TERMID, 'ok a b');
+    assert.equal(result, true, '照合対象が無ければスキップ扱いで true');
+    assert.equal(statesCalls, 0, 'echoFragment=null のときは states を引かない');
+  });
+
+  it('states 取得が API エラー（baseline=null）なら false（fail-closed で再ディスパッチへ）', async () => {
+    installStates(() => { throw new Error('mock api/states error'); });
+    const result = await reconfirmBodyEcho(PORT, TERMID, FRAG);
+    assert.equal(result, false, 'baseline 取得失敗は fail-closed で false');
+  });
+
+  it('states にターミナルが居ない（baseline=null）なら false（fail-closed）', async () => {
+    installStates(() => ({ ok: true, json: async () => ({ terminals: {} }) }));
+    const result = await reconfirmBodyEcho(PORT, TERMID, FRAG);
+    assert.equal(result, false, '対象ターミナル不在も baseline=null で false');
+  });
+
+  it('lastLines に本文の一部がエコーされていれば true', async () => {
+    installStates(() => termStates(`> ${FRAG}`));
+    const result = await reconfirmBodyEcho(PORT, TERMID, FRAG);
+    assert.equal(result, true, 'エコーを積極的に確認できたら true');
+  });
+
+  it('lastLines にエコーが無ければ false（真に未達 → 再ディスパッチへ）', async () => {
+    installStates(() => termStates('Fable 5 is back and better than ever!'));
+    const result = await reconfirmBodyEcho(PORT, TERMID, FRAG);
+    assert.equal(result, false, 'エコー不一致は false');
   });
 });
