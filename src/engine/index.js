@@ -521,16 +521,10 @@ async function startTask(issue) {
 
     // 偽陽性ガード: bodyConfirmed=false はエコー確認の偽陽性があり得るため、
     // ロールバック（再ディスパッチ）を発動する直前に states を取り直して一度だけ
-    // 再確認する。ここで確認できたら実際には届いているので通常どおり成功扱いにする。
-    let echoedNow = false;
-    try {
-      echoedNow = await reconfirmBodyEcho(VK_PORT, termId, prompt);
-    } catch (err) {
-      // 再確認自体が失敗（API 一時エラー等）したら判定不能。誤って再ディスパッチ
-      // しないよう安全側に倒して成功扱いにする（従来の握りつぶし挙動と同等）。
-      console.warn(`  [submit] 本文エコーの再確認に失敗（送信済みとして継続）: ${err.message}`);
-      echoedNow = true;
-    }
+    // 再確認する。ここで積極的にエコーを確認できたら実際には届いているので通常どおり
+    // 成功扱いにする。reconfirmBodyEcho は throw せず、states 取得失敗は例外ではなく
+    // 戻り値 false（fail-closed）で表す契約なので、ここでは try/catch で包まない。
+    const echoedNow = await reconfirmBodyEcho(VK_PORT, termId, prompt);
     if (echoedNow) {
       console.warn(
         `  [submit] 本文エコーを再確認できたため再ディスパッチしません (issue #${number}, termId=${termId})`
@@ -538,18 +532,32 @@ async function startTask(issue) {
       return true;
     }
 
-    console.warn(
-      `  [submit] 本文が入力欄に届いていない可能性があります。status:ready へ戻して自動再ディスパッチします (issue #${number}, termId=${termId})`
-    );
     // handlePaneMissing と同じコアに相乗りして自動収束させる（pane 消失と resumeCount /
     // 上限を合算で管理）。最新の state（resumeCount / wpPort を含む）を渡す。
+    // getTask が null（state レコード喪失）だと resumeCount で上限判定できず、偽の初回
+    // 扱い（resumeCount=1 リセット）で無限リトライに化ける。readState は破損時も例外を
+    // 投げず {issues:{}} を返すため getTask は null になり得る。上限の唯一の安全装置を
+    // 状態喪失で失わないよう、レコードを取れないときは再ディスパッチせず watchdog /
+    // 次ループに委ねる（フォールバックオブジェクトで resumeCount を偽装しない）。
     let saved = null;
     try {
       saved = await getTask(number);
-    } catch { /* state 取得失敗時は最低限の情報で続行 */ }
+    } catch (err) {
+      console.warn(`  [submit] state 取得に失敗（今回は再ディスパッチを見送り）: ${err.message}`);
+    }
+    if (!saved) {
+      console.warn(
+        `  [submit] 本文が入力欄に届いていない可能性がありますが、state レコードを取得できず自動再開の上限判定ができないため再ディスパッチを見送ります。watchdog / 次ループに委ねます (issue #${number}, termId=${termId})`
+      );
+      return true;
+    }
+
+    console.warn(
+      `  [submit] 本文が入力欄に届いていない可能性があります。status:ready へ戻して自動再ディスパッチします (issue #${number}, termId=${termId})`
+    );
     await handleUndeliveredBody(
       issue,
-      saved ?? { termId, wpPort },
+      saved,
       {
         // GitHub 連携無効時は PR が存在しえないため「PR なし」を返す fake を渡す（scanWatchdog と同方針）。
         findPRForIssue: GITHUB_INTEGRATION ? github.findPRForIssue.bind(github) : async () => null,
@@ -559,7 +567,7 @@ async function startTask(issue) {
         updateTask,
         setStatus: (issueNumber, label) => github.setStatus(issueNumber, label),
         addComment: (issueNumber, body) => github.addComment(issueNumber, body),
-        failTask: (reason) => markTaskFailed(issue, reason, { cleanupWpPort: saved?.wpPort ?? wpPort }),
+        failTask: (reason) => markTaskFailed(issue, reason, { cleanupWpPort: saved.wpPort ?? wpPort }),
       },
       { resumeMax: PANE_RESUME_MAX }
     );

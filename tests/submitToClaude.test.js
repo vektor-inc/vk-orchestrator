@@ -12,7 +12,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { submitToClaude } from '../src/terminals/index.js';
+import { submitToClaude, reconfirmBodyEcho } from '../src/terminals/index.js';
 
 // --------------------------------------------------------------------------
 // fetch モックの仕込み
@@ -399,5 +399,66 @@ describe('submitToClaude コールドスタート banner churn (issue #172)', ()
     });
     assert.equal(result.bodyConfirmed, true,
       'maxRetries=3 なら本文送信が 4 回に届きエコーを確認できる');
+  });
+});
+
+// --------------------------------------------------------------------------
+// reconfirmBodyEcho（偽陽性ガード）: 再ディスパッチ発動直前のエコー再確認。
+// bodyConfirmed=false からの再ディスパッチを、真に未達のときだけ通す fail-closed 判定。
+//   - 照合対象が無い（本文が空 / 4 文字以上トークン無し）→ true（スキップ）
+//   - states 取得失敗（baseline=null）→ false（fail-closed で再ディスパッチへ）
+//   - エコー一致 → true / エコー不一致 → false
+// --------------------------------------------------------------------------
+describe('reconfirmBodyEcho（偽陽性ガード）', () => {
+  const FRAG = '/vk-kore https://github.com/vektor-inc/vk-blocks-pro/issues/999';
+
+  let savedFetch;
+  let statesCalls;
+
+  function installStates(behavior) {
+    savedFetch = global.fetch;
+    statesCalls = 0;
+    global.fetch = async (url) => {
+      const u = String(url);
+      if (!u.endsWith('/api/states')) throw new Error(`unexpected fetch url in test: ${u}`);
+      statesCalls += 1;
+      return behavior();
+    };
+  }
+  function termStates(lastLines) {
+    return { ok: true, json: async () => ({ terminals: { [TERMID]: { termId: TERMID, lastOutputTime: 1, lastLines } } }) };
+  }
+
+  afterEach(() => { if (savedFetch) global.fetch = savedFetch; savedFetch = undefined; });
+
+  it('照合対象が無い本文（4文字以上トークン無し）は true を返し、states も引かない', async () => {
+    installStates(() => { throw new Error('should not be called'); });
+    const result = await reconfirmBodyEcho(PORT, TERMID, 'ok a b');
+    assert.equal(result, true, '照合対象が無ければスキップ扱いで true');
+    assert.equal(statesCalls, 0, 'echoFragment=null のときは states を引かない');
+  });
+
+  it('states 取得が API エラー（baseline=null）なら false（fail-closed で再ディスパッチへ）', async () => {
+    installStates(() => { throw new Error('mock api/states error'); });
+    const result = await reconfirmBodyEcho(PORT, TERMID, FRAG);
+    assert.equal(result, false, 'baseline 取得失敗は fail-closed で false');
+  });
+
+  it('states にターミナルが居ない（baseline=null）なら false（fail-closed）', async () => {
+    installStates(() => ({ ok: true, json: async () => ({ terminals: {} }) }));
+    const result = await reconfirmBodyEcho(PORT, TERMID, FRAG);
+    assert.equal(result, false, '対象ターミナル不在も baseline=null で false');
+  });
+
+  it('lastLines に本文の一部がエコーされていれば true', async () => {
+    installStates(() => termStates(`> ${FRAG}`));
+    const result = await reconfirmBodyEcho(PORT, TERMID, FRAG);
+    assert.equal(result, true, 'エコーを積極的に確認できたら true');
+  });
+
+  it('lastLines にエコーが無ければ false（真に未達 → 再ディスパッチへ）', async () => {
+    installStates(() => termStates('Fable 5 is back and better than ever!'));
+    const result = await reconfirmBodyEcho(PORT, TERMID, FRAG);
+    assert.equal(result, false, 'エコー不一致は false');
   });
 });

@@ -120,6 +120,35 @@ describe('waitForClaudeReady', () => {
   // した churn シーケンスで、短い timeout では false・十分長い（45000相当）
   // timeout では true になることを検証する。
   // ------------------------------------------------------------------------
+  it('readyTimeoutMs に NaN / 負数を渡しても既定(45000)にフォールバックして正常動作する', async () => {
+    // env 由来の不正値（"abc"→NaN や負数）が分割代入デフォルトをすり抜けて素通りすると、
+    // deadline = Date.now() + NaN で while が即 false になり readiness ゲートが沈黙のうちに
+    // 無効化される。正の整数へ健全化されていれば、静止シーケンスで通常どおり true を返す。
+    const settling = [
+      { lastOutputTime: 1_000, lastLines: 'starting...' },
+      { lastOutputTime: 2_000, lastLines: 'Welcome to Claude Code' },
+      { lastOutputTime: 2_000, lastLines: 'Welcome to Claude Code' }, // 静止
+    ];
+
+    statesQueue = [...settling];
+    const nanReady = await waitForClaudeReady(PORT, TERMID, {
+      readyTimeoutMs: Number('abc'), quietMs: 120, pollIntervalMs: 30,
+    });
+    assert.equal(nanReady, true, 'NaN は既定 45000 に倒れ、静止を確認して true');
+
+    statesQueue = [...settling];
+    const negReady = await waitForClaudeReady(PORT, TERMID, {
+      readyTimeoutMs: -5, quietMs: 120, pollIntervalMs: 30,
+    });
+    assert.equal(negReady, true, '負数は既定 45000 に倒れ、静止を確認して true');
+
+    statesQueue = [...settling];
+    const zeroReady = await waitForClaudeReady(PORT, TERMID, {
+      readyTimeoutMs: 0, quietMs: 120, pollIntervalMs: 30,
+    });
+    assert.equal(zeroReady, true, '0（即無効化される値）も既定 45000 に倒れて正常動作');
+  });
+
   it('一定時間 churn 継続後に静止: 短い readyTimeoutMs では false、45000相当なら true', async () => {
     // 実時間で CHURN_MS の間は出力が変化し続け、その後は同一状態で静止する。
     const CHURN_MS = 500;

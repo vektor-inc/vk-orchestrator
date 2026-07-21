@@ -12,6 +12,20 @@ const apiHost = () => process.env.VK_TERMINALS_HOST ?? '127.0.0.1';
 const BASE_URL = (port) => `http://${apiHost()}:${port}`;
 const CLEAR_INPUT_SEQUENCE = '\x01\x0b';
 
+// 数値オプションを有限な非負整数（0 以上）に正規化する（NaN/Infinity/負数は fallback）。
+// 待機時間や再送回数など「0 が有効値」のオプション向け。
+const toNonNegativeInt = (value, fallback) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+};
+
+// 数値オプションを有限な正の整数（1 以上）に正規化する（0/負数/NaN/Infinity は fallback）。
+// タイムアウトなど「0 だと機能が沈黙のうちに無効化される」オプション向け。
+const toPositiveInt = (value, fallback) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+};
+
 /**
  * 自分自身が動作している VK Terminals ペインのタイトルを設定するための
  * OSC 0 エスケープシーケンス文字列を組み立てる。
@@ -494,11 +508,18 @@ export async function waitForClaudeReady(port, termId, options = {}) {
     pollIntervalMs = 300,
   } = options;
 
+  // readyTimeoutMs は分割代入デフォルト（=45000）が効くのは undefined のときだけで、
+  // env 由来の不正値（"abc"→NaN や負数）はそのまま素通りする。NaN のまま
+  // `Date.now() + readyTimeoutMs` にすると deadline が NaN となり while が即 false で
+  // readiness ゲートが沈黙のうちに無効化される（負数・0 でも即 false）。正の整数へ
+  // 健全化し、不正値は既定 45000 に倒す（fail-safe）。
+  const safeReadyTimeoutMs = toPositiveInt(readyTimeoutMs, 45_000);
+
   // 連続して termId が states に現れなかった回数。起動直後はペイン作成直後で states に
   // まだ反映されていないこと（=消失ではない）があるため、即 false にせず数回猶予する。
   const maxConsecutiveMisses = 5;
 
-  const deadline = Date.now() + readyTimeoutMs;
+  const deadline = Date.now() + safeReadyTimeoutMs;
   let prevSnapshot      = null;     // 直近ポーリング時の {lastOutputTime, lastLines}
   let lastChangeTime    = Date.now(); // 最後に出力が変化した時刻
   let sawOutput         = false;    // 出力が一度でも現れたか
@@ -607,20 +628,32 @@ function confirmBodyEchoed(baseline, echoFragment) {
  * submitToClaude が `bodyConfirmed:false` を返しても、エコー確認は偽陽性があり得る
  * （送信〜baseline 取得のタイミング次第でエコーを取りこぼす）。呼び出し側が
  * ロールバック（再ディスパッチ）を発動する直前に、もう一度だけエコーを確認して
- * 偽陽性で無駄な再ディスパッチをしないためのガード。判定不能時（本文が空 / 4 文字
- * 以上のトークンが無い / states 取得が API エラー）は confirmBodyEchoed と同じく
- * 「確認できた」扱い（true）にフォールスルーする。
+ * 偽陽性で無駄な再ディスパッチをしないためのガード。
+ *
+ * ここは submitToClaude 内の confirmBodyEchoed とは baseline=null（states 取得失敗）
+ * の扱いが逆で、意図的に fail-closed にしている:
+ *   - echoFragment が null（本文が空 / 4 文字以上のトークンが無い＝そもそも照合対象が
+ *     無い）: 判定不能。無駄な再ディスパッチを避けるため従来どおり「確認できた」扱い(true)。
+ *   - baseline が null（states 一時取得失敗）: この関数へ来る時点で submitToClaude は
+ *     全リトライを尽くしてエコー未確認（echoFragment 非 null かつ baseline 取得済みで
+ *     不一致）と判定済みで、本文は未達の公算が高い。最後の 1 回の states ブリップで
+ *     「届いた扱い(true)」に倒すと、真に未達のタスクが速い再ディスパッチではなく
+ *     idle watchdog（既定 3 時間）まで放置される fail-open の抜けになる。再ディスパッチは
+ *     resumeMax で有界なので false（＝再ディスパッチへ進む）に倒すのが #172 の主旨に合う。
+ *   - それ以外: 実際にエコーを積極的に確認できたときだけ true。
  *
  * @param {number} port    VK Terminals API ポート
  * @param {string} termId  対象ターミナルID
  * @param {string} prompt  送信した本文（末尾の \r/\n は剥がして照合する）
- * @returns {Promise<boolean>} エコーを確認できた（または判定不能）なら true
+ * @returns {Promise<boolean>} エコーを確認できた or 照合対象が無い＝true / baseline 取得失敗＝false
  */
 export async function reconfirmBodyEcho(port, termId, prompt) {
   const body = String(prompt).replace(/[\r\n]+$/, '');
   const echoFragment = pickEchoFragment(body);
+  if (!echoFragment) return true;                 // 照合対象が無い → スキップ（true）
   const baseline = await getTerminalBaseline(port, termId);
-  return confirmBodyEchoed(baseline, echoFragment);
+  if (!baseline) return false;                    // states 取得失敗 → fail-closed（再ディスパッチへ）
+  return baseline.lastLines.includes(echoFragment);
 }
 
 /**
@@ -681,12 +714,6 @@ export async function reconfirmBodyEcho(port, termId, prompt) {
  *   既存の呼び出し側は `result.ok` を見るだけなので、この追加フィールドは後方互換。
  */
 export async function submitToClaude(port, termId, prompt, delayMs = 1_000, options = {}) {
-  // 数値オプションを有限な非負整数に正規化するヘルパー（NaN/Infinity/負数はフォールバック）
-  const toNonNegativeInt = (value, fallback) => {
-    const n = Number(value);
-    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
-  };
-
   const {
     confirm          = true,
     confirmTimeoutMs = 8_000,
