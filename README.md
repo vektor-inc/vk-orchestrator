@@ -95,12 +95,12 @@ orchestrator 自身の設定は `~/.vk-orchestrator/config.json` に置くとユ
 
 ### キューの保存先（GitHub モード / ローカルモード）
 
-タスクキューの保存先は `queue.backend`（環境変数 `QUEUE_BACKEND`）で 2 モードから選べます。既定は GitHub モードです。設定パネル（⚙）の「GitHub」グループ先頭の「キューの保存先」プルダウン、または `config.json` の `queue.backend` で切り替えます。
+タスクキューの保存先は `queue.backend`（環境変数 `QUEUE_BACKEND`）で 2 モードから選べます。既定はローカルモードです。設定パネル（⚙）の「オーケストレーター」グループ先頭の「キューの保存先」プルダウン、または `config.json` の `queue.backend` で切り替えます。
 
 | モード | `queue.backend` | キューの実体 | task-queue リポジトリ | 主な用途 |
 |---|---|---|---|---|
-| GitHub（既定） | `github` | task-queue リポジトリの Issue | 必要 | 複数人・複数リポジトリで Issue ベースに運用する |
-| ローカル | `local` | ローカル JSON（`~/.task-queue/queue.json`） | 不要 | 手元だけでタスクを管理する。task-queue リポジトリを用意しない |
+| ローカル（既定） | `local` | ローカル JSON（`~/.task-queue/queue.json`） | 不要 | 手元だけでタスクを管理する。task-queue リポジトリを用意しない |
+| GitHub | `github` | task-queue リポジトリの Issue | 必要 | 複数人・複数リポジトリで Issue ベースに運用する |
 
 - **GitHub モード**では `github.owner` / `github.repo`（タスク登録リポジトリ）と「ラベルの登録」（下記）が必要です。
 - **ローカルモード**では task-queue リポジトリは不要です。設定パネルではローカルモードを選ぶと「タスク登録リポジトリ名」（`github.repo`）が自動的に非表示になり、未設定のまま起動できます。純ローカルタスクは `vk-orchestrator task` コマンド（下記「純ローカルタスク CLI」）で登録・確認します。`github.owner` は、作業対象リポジトリを組織横断検索して取り込む際のオーナーとして**両モードで使用**するため、ローカルモードでも設定してください。
@@ -139,7 +139,7 @@ gh auth status         # 認証状態と scope の確認
 
 ### ラベルの登録
 
-> **GitHub モード専用**: 以下のラベル登録は `queue.backend` が `github`（既定）のときだけ必要です。ローカルモード（`queue.backend = local`）では GitHub の Issue ラベルを使わないため実行不要です。
+> **GitHub モード専用**: 以下のラベル登録は `queue.backend` が `github` のときだけ必要です。ローカルモード（`queue.backend = local`、既定）では GitHub の Issue ラベルを使わないため実行不要です。
 
 運用に使うラベルは 2 系統あり、それぞれ一括登録コマンドを用意しています。`gh auth login` 済みの状態で実行してください。
 
@@ -226,7 +226,7 @@ VK Terminals は `optionalDependencies` として同梱（git 依存）しつつ
 | `github.owner` / `github.repo` | `GITHUB_OWNER` / `GITHUB_REPO` | タスク登録リポジトリ（task-queue） | `your-org` / `task-queue` |
 | `github.sourceOrg` | `SOURCE_ORG` | 作業対象リポジトリのオーナー（組織） | タスク登録リポジトリのオーナーと同じ |
 | `github.queueLabel` | `QUEUE_LABEL` | 作業対象リポジトリの取り込みラベル名 | `task-queue` |
-| `queue.backend` | `QUEUE_BACKEND` | キューの保存先。`github` は GitHub issues、`local` はローカル JSON（`~/.task-queue/queue.json`） | `github` |
+| `queue.backend` | `QUEUE_BACKEND` | キューの保存先。`github` は GitHub issues、`local` はローカル JSON（`~/.task-queue/queue.json`） | `local` |
 | `orchestrator.pollIntervalMs` | `POLL_INTERVAL_MS` | ポーリング間隔 | `60000` |
 | `orchestrator.watchdogIdleMs` | `WATCHDOG_IDLE_MS` | ウォッチドッグ閾値 | `10800000` |
 | `orchestrator.paneResumeMax` | `PANE_RESUME_MAX` | ペイン消失時・本文未達時（PR 未生成）の自動再開上限回数（両者で合算） | `3` |

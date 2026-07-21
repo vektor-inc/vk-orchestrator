@@ -6,7 +6,7 @@
     "queueLabel": "task-queue"
   },
   "queue": {
-    "backend": "github"
+    "backend": "local"
   },
   "orchestrator": {
     "pollIntervalMs": 60000,
