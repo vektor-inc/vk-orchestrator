@@ -12,8 +12,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync, rmSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { spawnSync } from 'child_process';
 import { tmpdir } from 'os';
 import { runDoctor, summarizeDoctor, formatDoctorReport } from '../src/doctor.js';
+
+const BIN_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'vk-orchestrator.js');
 
 // テスト環境を丸ごと注入するためのヘルパ。
 // homeDir 配下に config（A）・canonical（C）・manifest を任意で用意し、
@@ -253,4 +257,54 @@ test('formatDoctorReport: 充足時は up 案内、欠損時は /vk-orchestrator
     assert.match(report, /vk-orchestrator-setup/);
     assert.match(report, /❌/);
   });
+});
+
+test('runDoctor: 壊れた config.json（不正 JSON）では例外を投げる（bin 側で友好的に扱う前提）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-doctor-broken-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, '{ broken json');
+    // config を注入せず configPath だけ渡すと、内部の loadUnifiedConfig が不正 JSON で throw する。
+    assert.throws(() => runDoctor({ configPath }), /読み込みに失敗/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bin doctor: 壊れた config でも生クラッシュせず友好的メッセージで終了する（人間可読）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-doctor-cli-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, '{ broken json');
+    const result = spawnSync(process.execPath, [BIN_PATH, 'doctor'], {
+      encoding: 'utf8',
+      env: { ...process.env, VK_ORCHESTRATOR_CONFIG: configPath },
+    });
+    // 生スタックで落ちない（診断コマンドは exit 0）。
+    assert.equal(result.status, 0);
+    const out = `${result.stdout}\n${result.stderr}`;
+    assert.match(out, /\[doctor\] 設定の読み込みに失敗しました/);
+    // 生の Node スタック（"at loadUnifiedConfig ..."）を握りつぶしていること。
+    assert.doesNotMatch(out, /^\s*at loadUnifiedConfig/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bin doctor --json: 壊れた config でも生クラッシュせず stdout を汚さない', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-doctor-cli-json-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, '{ broken json');
+    const result = spawnSync(process.execPath, [BIN_PATH, 'doctor', '--json'], {
+      encoding: 'utf8',
+      env: { ...process.env, VK_ORCHESTRATOR_CONFIG: configPath },
+    });
+    assert.equal(result.status, 0);
+    // stdout には要件配列を出さない（部分的な壊れた JSON を吐かない）。エラーは stderr に JSON で。
+    assert.equal(result.stdout.trim(), '');
+    assert.match(result.stderr, /"hint"/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

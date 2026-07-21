@@ -29,6 +29,8 @@ try {
 
 // 統合設定(config.json)を読み込み、env に反映する（env > config.json > 既定）。
 // config.js は Node 標準モジュールのみに依存するため npm install 前でも安全。
+const [, , sub] = process.argv;
+
 const {
   loadUnifiedConfig,
   applyConfigToEnv,
@@ -38,11 +40,24 @@ const {
 } = await import('../src/config.js');
 migrateLegacyOrchestratorConfig();
 migrateLegacyVkAgentsGuiKeys();
-const unifiedConfig = loadUnifiedConfig();
-applyConfigToEnv(unifiedConfig);
-ensureGitHubToken();
 
-const [, , sub] = process.argv;
+// 統合設定の読み込み・env 反映は、config.json の不正 JSON などで例外を投げうる。
+// doctor は「設定が壊れている人を助ける」診断ツールなので、ここで生スタックで落とさず、
+// doctor case（下の try/catch）に委ねて分かりやすいメッセージへ変換させる。
+// それ以外のサブコマンドは有効な設定が前提のため、従来どおり要約を出して終了する
+// （main の catch と同じ formatErrorSummary で、生スタックは見せない）。
+let unifiedConfig = {};
+try {
+  unifiedConfig = loadUnifiedConfig();
+  applyConfigToEnv(unifiedConfig);
+  ensureGitHubToken();
+} catch (err) {
+  if (sub !== 'doctor') {
+    console.error(formatErrorSummary(err));
+    process.exit(1);
+  }
+  // doctor はフォールスルー：runDoctor が config を読み直して例外を投げ、case 側で友好的に扱う。
+}
 
 // 同梱の VK Terminals のインストールディレクトリを解決する。未導入なら分かりやすく終了。
 async function resolveVkDirOrExit() {
@@ -340,13 +355,26 @@ async function main() {
       // 初回セットアップ充足判定。既定は人間可読レポート、--json で要件配列＋要約を出力。
       // 診断コマンドのため、未充足でも例外扱いにはせず exit 0 で返す（スクリプトからは --json の
       // requirements[].ok / summary.allRequiredOk を読んで判定する）。
+      const asJson = process.argv.includes('--json');
       const { runDoctor, summarizeDoctor, formatDoctorReport } = await import('../src/doctor.js');
-      const requirements = runDoctor();
-      const summary = summarizeDoctor(requirements);
-      if (process.argv.includes('--json')) {
-        console.log(JSON.stringify({ requirements, summary }, null, 2));
-      } else {
-        console.log(formatDoctorReport(requirements, summary));
+      // doctor は「設定が壊れている人を助ける」ツールなので、config.json の不正 JSON などで
+      // runDoctor 自身が例外を投げても、生スタックで落ちず分かりやすいメッセージにして返す。
+      // 人間可読・--json 双方で破綻しないよう、ここで捕捉する（main の catch まで抜けさせない）。
+      try {
+        const requirements = runDoctor();
+        const summary = summarizeDoctor(requirements);
+        if (asJson) {
+          console.log(JSON.stringify({ requirements, summary }, null, 2));
+        } else {
+          console.log(formatDoctorReport(requirements, summary));
+        }
+      } catch (err) {
+        const hint = 'config.json が正しい JSON か確認してください（既定の探索先は VK_ORCHESTRATOR_CONFIG > ~/.vk-orchestrator/config.json > リポ直下 config.json）。';
+        if (asJson) {
+          console.error(JSON.stringify({ error: err.message, hint }, null, 2));
+        } else {
+          console.error(`[doctor] 設定の読み込みに失敗しました: ${err.message}\n  ${hint}`);
+        }
       }
       break;
     }
