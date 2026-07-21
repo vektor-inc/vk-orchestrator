@@ -1726,9 +1726,9 @@ test('buildSettingsDescriptor: sourceOrg は空欄保存時に未指定として
 test('buildSettingsDescriptor: tabs と各 group の tab 割り当てを持つ', () => {
   const desc = buildSettingsDescriptor('/tmp/config.json');
   assert.deepEqual(desc.tabs, [
-    { id: 'orchestrator', label: 'Orchestrator' },
-    { id: 'terminals', label: 'Terminals' },
-    { id: 'agents', label: 'VK Agents' },
+    { id: 'orchestrator', label: 'Orchestrator', note: '保存した設定は次回起動時以降に反映されます。' },
+    { id: 'terminals', label: 'Terminals', note: '保存した設定は次回起動時以降に反映されます。' },
+    { id: 'agents', label: 'VK Agents', note: '保存した設定は次回セッション以降に反映されます。' },
   ]);
   const tabsByLabel = Object.fromEntries(desc.groups.map((group) => [group.label, group.tab]));
   assert.equal(tabsByLabel.GitHub, 'orchestrator');
@@ -1742,6 +1742,16 @@ test('buildSettingsDescriptor: tabs と各 group の tab 割り当てを持つ',
   // Orchestrator タブ内は「オーケストレーター」→「GitHub」の順。
   const orchestratorLabels = desc.groups.filter((g) => g.tab === 'orchestrator').map((g) => g.label);
   assert.deepEqual(orchestratorLabels, ['オーケストレーター', 'GitHub']);
+});
+
+test('buildSettingsDescriptor: 保存後の反映タイミング案内をタブごとの note で持つ', () => {
+  const desc = buildSettingsDescriptor('/tmp/config.json');
+  assert.equal(desc.note, undefined);
+
+  const tabsById = Object.fromEntries(desc.tabs.map((tab) => [tab.id, tab]));
+  assert.equal(tabsById.orchestrator.note, '保存した設定は次回起動時以降に反映されます。');
+  assert.equal(tabsById.terminals.note, '保存した設定は次回起動時以降に反映されます。');
+  assert.equal(tabsById.agents.note, '保存した設定は次回セッション以降に反映されます。');
 });
 
 test('buildSettingsDescriptor: vk-agents 共通設定グループを含む', () => {

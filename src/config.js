@@ -1075,12 +1075,11 @@ function buildVkTerminalsSettingsGroups(options = {}) {
 export function buildSettingsDescriptor(targetPath = resolveConfigPath(), options = {}) {
   return {
     title: 'VK Orchestrator 設定',
-    note: '保存後の反映タイミングは項目によって異なります（各グループの説明をご確認ください）。',
     targetPath,
     tabs: [
-      { id: 'orchestrator', label: 'Orchestrator' },
-      { id: 'terminals', label: 'Terminals' },
-      { id: 'agents', label: 'VK Agents' },
+      { id: 'orchestrator', label: 'Orchestrator', note: '保存した設定は次回起動時以降に反映されます。' },
+      { id: 'terminals', label: 'Terminals', note: '保存した設定は次回起動時以降に反映されます。' },
+      { id: 'agents', label: 'VK Agents', note: '保存した設定は次回セッション以降に反映されます。' },
     ],
     groups: [
       {
