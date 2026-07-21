@@ -13,6 +13,7 @@
     "up": "node bin/vk-orchestrator.js up",
     "orchestrator": "node bin/vk-orchestrator.js start",
     "run-once": "node bin/vk-orchestrator.js start --once",
+    "doctor": "node bin/vk-orchestrator.js doctor",
     "check-status": "node bin/vk-orchestrator.js check-status",
     "unblock": "node bin/vk-orchestrator.js unblock",
     "setup:terminals": "node bin/vk-orchestrator.js setup-terminals",
