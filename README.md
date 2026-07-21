@@ -102,6 +102,8 @@ orchestrator 自身の設定は `~/.vk-orchestrator/config.json` に置くとユ
 | ローカル（既定） | `local` | ローカル JSON（`~/.task-queue/queue.json`） | 不要 | 手元だけでタスクを管理する。task-queue リポジトリを用意しない |
 | GitHub | `github` | task-queue リポジトリの Issue | 必要 | 複数人・複数リポジトリで Issue ベースに運用する |
 
+> **既存ユーザーへの注意:** 既定がローカルに変わったため、`queue.backend` を明記していない環境はアップグレード後にローカルモードで起動します。GitHub モードを継続する場合は `config.json` に `queue.backend: github`（または環境変数 `QUEUE_BACKEND=github`）を明示してください。
+
 - **GitHub モード**では `github.owner` / `github.repo`（タスク登録リポジトリ）と「ラベルの登録」（下記）が必要です。
 - **ローカルモード**では task-queue リポジトリは不要です。設定パネルではローカルモードを選ぶと「タスク登録リポジトリ名」（`github.repo`）が自動的に非表示になり、未設定のまま起動できます。純ローカルタスクは `vk-orchestrator task` コマンド（下記「純ローカルタスク CLI」）で登録・確認します。`github.owner` は、作業対象リポジトリを組織横断検索して取り込む際のオーナーとして**両モードで使用**するため、ローカルモードでも設定してください。
 - 補助スクリプト（`check-status` / `unblock` / `ensure-task-queue-label`）は GitHub 上の Issue を前提とするため **GitHub モード専用**です。ローカルモードでは使えません（MVP では相当スクリプトを提供しません）。
