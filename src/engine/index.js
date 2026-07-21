@@ -26,6 +26,7 @@ import {
   postMenu,
   setExternalWaiting,
   setOwnPaneTitle,
+  reconfirmBodyEcho,
   setTerminalPrUrl,
   setTerminalTitle,
   submitToClaude,
@@ -35,7 +36,7 @@ import { recordTaskStart, updateTask, removeTask, getTask, getAllTasks } from '.
 import { cleanupForIssue, formatCleanupSummary, inspectWorktreeByPort } from './cleanup.js';
 import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
 import { closeSourceIssueBeforeGate as closeSourceIssueBeforeGateImpl } from './source-close.js';
-import { handlePaneMissing, normalizeResumeMax } from './pane-resume.js';
+import { handlePaneMissing, handleUndeliveredBody, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { createScanInProgressMergedHandler } from './scan-in-progress-merged.js';
 import { createPrLessParentDoneHandler } from './pr-less-parent-done.js';
@@ -89,6 +90,14 @@ const PANE_MISSING_TICKS = 2;
 // させる。素の Number() のままだと "abc" → NaN で上限判定が常に false になり、
 // 無限リトライ防止が沈黙のうちに無効化されるため必ず健全化を通す。
 const PANE_RESUME_MAX    = normalizeResumeMax(process.env.PANE_RESUME_MAX ?? 3);
+// Claude Code の TUI 起動完了（入力待ち）を待つ readiness ゲートの全体タイムアウト。
+// コールドスタート・高負荷時は起動バナーの描画（churn）が長引き、旧既定 15 秒では
+// 静止を確認できず描画中の窓へ本文を送って取りこぼす（#172）。既定 45 秒に広げる。
+const CLAUDE_READY_TIMEOUT_MS = Number(process.env.CLAUDE_READY_TIMEOUT_MS ?? 45_000);
+// submitToClaude の本文送信後の基準待機時間（linear backoff の 1 単位）と本文/Enter の
+// 最大再送回数。バナー churn を跨いでエコーを確認できるよう既定を 500→1000 / 2→3 に広げる（#172）。
+const CLAUDE_SUBMIT_DELAY_MS   = Number(process.env.CLAUDE_SUBMIT_DELAY_MS ?? 1000);
+const CLAUDE_SUBMIT_MAX_RETRIES = Number(process.env.CLAUDE_SUBMIT_MAX_RETRIES ?? 3);
 const RUN_ONCE           = process.argv.includes('--once');
 installPersistentConsoleLogger();
 
@@ -495,20 +504,67 @@ async function startTask(issue) {
   // Claude Code の TUI 起動完了を待ってから送信する。コールドスタートや高負荷時に
   // 入力欄が現れる前に本文を送ると取りこぼす可能性があるため（#127 の残存リスク対策）。
   // タイムアウトしても従来どおり送信は試みる（waitForClaudeReady の戻り値で警告のみ出す）。
-  const ready = await waitForClaudeReady(VK_PORT, termId);
+  const ready = await waitForClaudeReady(VK_PORT, termId, { readyTimeoutMs: CLAUDE_READY_TIMEOUT_MS });
   if (!ready) {
     console.warn(`  [ready] Claude 起動完了を確認できませんでした。送信を試みます (termId=${termId})`);
   }
 
   console.log(`  → terminal #${termId} に送信`);
-  const sent = await submitToClaude(VK_PORT, termId, prompt);
+  const sent = await submitToClaude(
+    VK_PORT, termId, prompt, CLAUDE_SUBMIT_DELAY_MS, { maxRetries: CLAUDE_SUBMIT_MAX_RETRIES }
+  );
   if (sent?.bodyConfirmed === false) {
     // 本文再送を規定回数使い切ってもエコーを確認できなかった＝本文が入力欄に
-    // 届いていない可能性がある。プロセスは落とさず（graceful degradation）、
-    // 取りこぼしに気づけるよう明確な警告だけ出す（#4 の握りつぶし防止）。
+    // 届いていない可能性がある。ここで in-progress のまま放置すると、ラベルだけ
+    // in-progress・ペインは空プロンプトのまま詰まる（#172）。status:ready へ戻して
+    // 自動再ディスパッチし、次ループで拾い直させる。
+
+    // 偽陽性ガード: bodyConfirmed=false はエコー確認の偽陽性があり得るため、
+    // ロールバック（再ディスパッチ）を発動する直前に states を取り直して一度だけ
+    // 再確認する。ここで確認できたら実際には届いているので通常どおり成功扱いにする。
+    let echoedNow = false;
+    try {
+      echoedNow = await reconfirmBodyEcho(VK_PORT, termId, prompt);
+    } catch (err) {
+      // 再確認自体が失敗（API 一時エラー等）したら判定不能。誤って再ディスパッチ
+      // しないよう安全側に倒して成功扱いにする（従来の握りつぶし挙動と同等）。
+      console.warn(`  [submit] 本文エコーの再確認に失敗（送信済みとして継続）: ${err.message}`);
+      echoedNow = true;
+    }
+    if (echoedNow) {
+      console.warn(
+        `  [submit] 本文エコーを再確認できたため再ディスパッチしません (issue #${number}, termId=${termId})`
+      );
+      return true;
+    }
+
     console.warn(
-      `  [submit] 本文が入力欄に届いていない可能性があります (issue #${number}, termId=${termId})`
+      `  [submit] 本文が入力欄に届いていない可能性があります。status:ready へ戻して自動再ディスパッチします (issue #${number}, termId=${termId})`
     );
+    // handlePaneMissing と同じコアに相乗りして自動収束させる（pane 消失と resumeCount /
+    // 上限を合算で管理）。最新の state（resumeCount / wpPort を含む）を渡す。
+    let saved = null;
+    try {
+      saved = await getTask(number);
+    } catch { /* state 取得失敗時は最低限の情報で続行 */ }
+    await handleUndeliveredBody(
+      issue,
+      saved ?? { termId, wpPort },
+      {
+        // GitHub 連携無効時は PR が存在しえないため「PR なし」を返す fake を渡す（scanWatchdog と同方針）。
+        findPRForIssue: GITHUB_INTEGRATION ? github.findPRForIssue.bind(github) : async () => null,
+        resolveTarget,
+        cleanupForIssue,
+        formatCleanupSummary,
+        updateTask,
+        setStatus: (issueNumber, label) => github.setStatus(issueNumber, label),
+        addComment: (issueNumber, body) => github.addComment(issueNumber, body),
+        failTask: (reason) => markTaskFailed(issue, reason, { cleanupWpPort: saved?.wpPort ?? wpPort }),
+      },
+      { resumeMax: PANE_RESUME_MAX }
+    );
+    // ディスパッチ失敗として返す（次ループで status:ready を拾い直す）。
+    return false;
   }
   return true;
 }

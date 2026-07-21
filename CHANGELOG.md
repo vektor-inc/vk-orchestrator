@@ -7,6 +7,7 @@
 - [ 機能追加 ] ローカルモードで `GITHUB_TOKEN` 未解決でも純ローカルタスク専用で起動できるように対応（source import・PR 監視・automerge・対象 issue 操作は無効化しログに明示）
 - [ 仕様変更 ] 設定画面で担当者フィルタ（担当者ログイン）を「オーケストレーター」セクションから「GitHub」セクションへ移動
 - [ 仕様変更 ] 設定画面（Orchestrator・VK Agents タブ）の説明文言で地の文に流し込んでいた箇条書き・例を改行して読みやすく整形
+- [ 不具合修正 ] コールドスタート時に起動バナーがタスク本文を飲み込み、ラベルだけ in-progress・ペインが空プロンプトのまま放置される不具合を修正（readiness 待ちと本文再送を強化し、本文未達時は status:ready へ戻して自動再ディスパッチ。`CLAUDE_READY_TIMEOUT_MS` / `CLAUDE_SUBMIT_DELAY_MS` / `CLAUDE_SUBMIT_MAX_RETRIES` で調整可）
 - [ 不具合修正 ] 自前 PR を持たない親調整 issue が全 sub-issue 完了後も in-progress のまま残る不具合を修正
 - [ 不具合修正 ] GitHub API 障害（5xx）で status:in-progress への遷移に失敗した ready タスクが、poll のたびに新規ペインを量産する不具合を修正
 - [ 不具合修正 ] VK Terminals のタスクパネル保存後に tasks-view snapshot が即時更新されず反映待ちがタイムアウトする不具合を修正

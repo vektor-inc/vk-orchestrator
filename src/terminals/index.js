@@ -479,14 +479,17 @@ async function confirmOutputProgressed(port, termId, baseline, timeoutMs, pollIn
  * @param {number} port    VK Terminals API ポート
  * @param {string} termId  対象ターミナルID
  * @param {object} [options]
- * @param {number} [options.readyTimeoutMs=15000] 静止待ちの全体タイムアウト
+ * @param {number} [options.readyTimeoutMs=45000] 静止待ちの全体タイムアウト。
+ *   コールドスタートや高負荷時は起動バナーの描画（churn）が長引くため、旧既定の
+ *   15 秒では静止を確認できず false に倒れて描画中の窓へ送信してしまう（task-queue#172）。
+ *   churn を跨げるよう 45 秒へ広げてある（quietMs/pollIntervalMs は据え置き）。
  * @param {number} [options.quietMs=1000]         入力待ちとみなす無変化の継続時間
  * @param {number} [options.pollIntervalMs=300]   ポーリング間隔
  * @returns {Promise<boolean>} 出力出現後の静止を確認できたら true、タイムアウトなら false
  */
 export async function waitForClaudeReady(port, termId, options = {}) {
   const {
-    readyTimeoutMs = 15_000,
+    readyTimeoutMs = 45_000,
     quietMs        = 1_000,
     pollIntervalMs = 300,
   } = options;
@@ -599,6 +602,28 @@ function confirmBodyEchoed(baseline, echoFragment) {
 }
 
 /**
+ * 今この瞬間の states を取り直して、本文のエコーが画面に確認できるかを再判定する。
+ *
+ * submitToClaude が `bodyConfirmed:false` を返しても、エコー確認は偽陽性があり得る
+ * （送信〜baseline 取得のタイミング次第でエコーを取りこぼす）。呼び出し側が
+ * ロールバック（再ディスパッチ）を発動する直前に、もう一度だけエコーを確認して
+ * 偽陽性で無駄な再ディスパッチをしないためのガード。判定不能時（本文が空 / 4 文字
+ * 以上のトークンが無い / states 取得が API エラー）は confirmBodyEchoed と同じく
+ * 「確認できた」扱い（true）にフォールスルーする。
+ *
+ * @param {number} port    VK Terminals API ポート
+ * @param {string} termId  対象ターミナルID
+ * @param {string} prompt  送信した本文（末尾の \r/\n は剥がして照合する）
+ * @returns {Promise<boolean>} エコーを確認できた（または判定不能）なら true
+ */
+export async function reconfirmBodyEcho(port, termId, prompt) {
+  const body = String(prompt).replace(/[\r\n]+$/, '');
+  const echoFragment = pickEchoFragment(body);
+  const baseline = await getTerminalBaseline(port, termId);
+  return confirmBodyEchoed(baseline, echoFragment);
+}
+
+/**
  * Claude Code のプロンプト UI に本文を流し込んで Enter で確定させる。
  *
  * /api/send で `本文 + '\r'` を 1 リクエストで送ると、Claude Code 側が `\r` を
@@ -633,14 +658,17 @@ function confirmBodyEchoed(baseline, echoFragment) {
  * @param {number} port           VK Terminals API ポート
  * @param {string} termId         送信先のターミナルID
  * @param {string} prompt         確定したい本文（末尾の \r/\n は剥がす）
- * @param {number} [delayMs=500]  送信後に再描画が落ち着くまでの待機時間（本文再送時にも同じ待機を挟む）
+ * @param {number} [delayMs=1000]  送信後に再描画が落ち着くまでの基準待機時間。実際の待機は
+ *                                 linear backoff（delayMs × 送信回数）で伸ばし、コールドスタートの
+ *                                 起動バナー描画（数秒）を跨げるようにする（task-queue#172）。
  * @param {object} [options]                  再送制御
  * @param {boolean} [options.confirm=true]    本文エコー・出力変化を確認して再送するか
  * @param {number}  [options.confirmTimeoutMs=8000]  Enter 確定確認 1 回あたりのタイムアウト
  * @param {number}  [options.pollIntervalMs=500]     確認ポーリング間隔
- * @param {number}  [options.maxRetries=2]           本文再送・Enter 再送それぞれの最大回数
+ * @param {number}  [options.maxRetries=3]           本文再送・Enter 再送それぞれの最大回数
  *                                                   （最初の送信と合わせて最大 maxRetries+1 回まで送信する。
- *                                                   デフォルトの 2 なら本文・Enter それぞれ計 3 回まで送る）
+ *                                                   デフォルトの 3 なら本文・Enter それぞれ計 4 回まで送る。
+ *                                                   バナー churn を跨いでエコーを確認できるよう #172 で 2→3 に引き上げ）
  * @returns {Promise<object>} `/api/send`（Enter 送信）のレスポンスに `bodyConfirmed` を
  *   加えたオブジェクト（例: `{ ok: true, bodyConfirmed: true }`）。`bodyConfirmed` は
  *   本文が入力欄にエコーされたことを確認できたか:
@@ -652,7 +680,7 @@ function confirmBodyEchoed(baseline, echoFragment) {
  *     - `null`  … `confirm:false` のため確認自体を行っていない（true/false と区別する）。
  *   既存の呼び出し側は `result.ok` を見るだけなので、この追加フィールドは後方互換。
  */
-export async function submitToClaude(port, termId, prompt, delayMs = 500, options = {}) {
+export async function submitToClaude(port, termId, prompt, delayMs = 1_000, options = {}) {
   // 数値オプションを有限な非負整数に正規化するヘルパー（NaN/Infinity/負数はフォールバック）
   const toNonNegativeInt = (value, fallback) => {
     const n = Number(value);
@@ -663,19 +691,27 @@ export async function submitToClaude(port, termId, prompt, delayMs = 500, option
     confirm          = true,
     confirmTimeoutMs = 8_000,
     pollIntervalMs   = 500,
-    maxRetries       = 2,
+    maxRetries       = 3,
   } = options;
 
   const safeConfirmTimeoutMs = toNonNegativeInt(confirmTimeoutMs, 8_000);
   const safePollIntervalMs   = Math.max(50, toNonNegativeInt(pollIntervalMs, 500));
-  const safeMaxRetries       = toNonNegativeInt(maxRetries, 2);
+  const safeMaxRetries       = toNonNegativeInt(maxRetries, 3);
+  // delayMs でも算術（linear backoff の乗算）を行うため、他オプション同様に健全化する。
+  const safeDelayMs          = toNonNegativeInt(delayMs, 1_000);
+
+  // 本文フェーズの待機を linear backoff（safeDelayMs × 送信回数）で伸ばす。step は
+  // 初回送信後の待機を 1 回目として数え、以降 2,3,... と増やす。バナー描画が数秒かかる
+  // コールドスタートでも、再送のたびに待機が伸びて描画完了を跨げるようにするため（#172）。
+  let bodyWaitStep = 0;
+  const waitAfterBodySend = () => new Promise(r => setTimeout(r, safeDelayMs * (++bodyWaitStep)));
 
   const body = String(prompt).replace(/[\r\n]+$/, '');
   const echoFragment = pickEchoFragment(body);
 
-  // 1) 本文を送信し、入力欄の再描画が落ち着くまで待機
+  // 1) 本文を送信し、入力欄の再描画が落ち着くまで待機（linear backoff の 1 回目）
   await sendToTerminal(port, termId, body);
-  await new Promise(r => setTimeout(r, delayMs));
+  await waitAfterBodySend();
 
   if (!confirm) {
     // 従来通り、確認せず即 Enter して return（bodyConfirmed は「未確認」を表す null）
@@ -701,7 +737,7 @@ export async function submitToClaude(port, termId, prompt, delayMs = 500, option
     } catch (err) {
       console.warn(`  [submitToClaude] 本文再送失敗（処理は継続）: ${err.message}`);
     }
-    await new Promise(r => setTimeout(r, delayMs));
+    await waitAfterBodySend();
     baseline      = await getTerminalBaseline(port, termId);
     bodyConfirmed = confirmBodyEchoed(baseline, echoFragment);
   }
