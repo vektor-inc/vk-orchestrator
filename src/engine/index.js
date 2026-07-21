@@ -385,7 +385,7 @@ const scanWaitingMarkers = createWaitingMarkerScanner({
 // 何度呼んでも重複しない。送信失敗は警告のみで握りつぶし、dispatch を止めない。
 async function syncOrchestratorMenu() {
   try {
-    const section = buildOrchestratorMenu({ owner: GITHUB_OWNER, repo: GITHUB_REPO });
+    const section = buildOrchestratorMenu();
     await postMenu(VK_PORT, section);
   } catch (err) {
     console.log(`[warn] VK Terminals サイドバーメニューの更新に失敗しました: ${err.message}`);
