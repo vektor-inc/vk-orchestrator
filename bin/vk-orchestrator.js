@@ -29,6 +29,8 @@ try {
 
 // 統合設定(config.json)を読み込み、env に反映する（env > config.json > 既定）。
 // config.js は Node 標準モジュールのみに依存するため npm install 前でも安全。
+const [, , sub] = process.argv;
+
 const {
   loadUnifiedConfig,
   applyConfigToEnv,
@@ -38,11 +40,24 @@ const {
 } = await import('../src/config.js');
 migrateLegacyOrchestratorConfig();
 migrateLegacyVkAgentsGuiKeys();
-const unifiedConfig = loadUnifiedConfig();
-applyConfigToEnv(unifiedConfig);
-ensureGitHubToken();
 
-const [, , sub] = process.argv;
+// 統合設定の読み込み・env 反映は、config.json の不正 JSON などで例外を投げうる。
+// doctor は「設定が壊れている人を助ける」診断ツールなので、ここで生スタックで落とさず、
+// doctor case（下の try/catch）に委ねて分かりやすいメッセージへ変換させる。
+// それ以外のサブコマンドは有効な設定が前提のため、従来どおり要約を出して終了する
+// （main の catch と同じ formatErrorSummary で、生スタックは見せない）。
+let unifiedConfig = {};
+try {
+  unifiedConfig = loadUnifiedConfig();
+  applyConfigToEnv(unifiedConfig);
+  ensureGitHubToken();
+} catch (err) {
+  if (sub !== 'doctor') {
+    console.error(formatErrorSummary(err));
+    process.exit(1);
+  }
+  // doctor はフォールスルー：runDoctor が config を読み直して例外を投げ、case 側で友好的に扱う。
+}
 
 // 同梱の VK Terminals のインストールディレクトリを解決する。未導入なら分かりやすく終了。
 async function resolveVkDirOrExit() {
@@ -63,13 +78,47 @@ async function resolveVkDirOrExit() {
   }
 }
 
-async function warnIfVkAgentsNotSetup() {
-  const { isVkAgentsSetup, vkAgentsSkillsManifestPath } = await import('../src/config.js');
-  if (isVkAgentsSetup()) return;
-  console.warn(
-    `[up] vk-agents のスキル展開が見つかりません（${vkAgentsSkillsManifestPath()} がありません）。\n` +
-    '  初回セットアップとして `npm run setup:agents` を実行してください。'
-  );
+// up 起動時のセットアップ充足チェック（doctor ベースに一般化）。
+//
+// 従来は vk-agents 展開の有無だけを警告していたが、doctor の要件チェックリストを使い、
+// モード（queue.backend）に応じた required && !ok の項目が 1 つでもあれば
+// `/vk-orchestrator-setup` の実行を案内する。既存ユーザーの up を壊さないよう非致命（警告のみ）。
+//
+// 全 required が ok なら A（統合 config）に setup.completedAt を記録し、次回以降の案内を省く
+// （真実はあくまで毎回の doctor。フラグは案内スキップ用のヒントに過ぎない）。
+async function warnIfNotReady() {
+  const { runDoctor, summarizeDoctor } = await import('../src/doctor.js');
+  let requirements;
+  try {
+    requirements = runDoctor();
+  } catch (err) {
+    console.warn(`[up] セットアップ診断（doctor）に失敗しました（処理は継続）: ${err.message}`);
+    return;
+  }
+  const summary = summarizeDoctor(requirements);
+
+  if (!summary.allRequiredOk) {
+    console.warn(
+      `[up] 初回セットアップが未完了です（未充足の必須項目 ${summary.missingRequired.length} 件）。\n` +
+      summary.missingRequired.map((r) => `  - ${r.label}: ${r.hint}`).join('\n') + '\n' +
+      '  Claude Code でこのリポジトリを開き `/vk-orchestrator-setup` を実行してください（詳細は `vk-orchestrator doctor`）。'
+    );
+    return;
+  }
+
+  // 全 required 充足 → A に setup.completedAt を記録（既記録ならスキップして冪等）。
+  try {
+    const { resolveConfigPath, loadUnifiedConfig, writeJsonAtomic } = await import('../src/config.js');
+    const configPath = resolveConfigPath();
+    const cfg = loadUnifiedConfig(configPath);
+    if (!cfg?.setup?.completedAt) {
+      cfg.setup = { ...(cfg.setup ?? {}), completedAt: new Date().toISOString() };
+      writeJsonAtomic(configPath, cfg);
+      console.log(`[up] 初回セットアップ完了を記録しました → ${configPath}`);
+    }
+  } catch (err) {
+    console.warn(`[up] setup.completedAt の記録に失敗しました（処理は継続）: ${err.message}`);
+  }
 }
 
 const ORCHESTRATOR_REPO_URL = 'https://github.com/vektor-inc/vk-orchestrator.git';
@@ -302,6 +351,33 @@ async function main() {
       await runLocalTaskCommand(process.argv.slice(3));
       break;
     }
+    case 'doctor': {
+      // 初回セットアップ充足判定。既定は人間可読レポート、--json で要件配列＋要約を出力。
+      // 診断コマンドのため、未充足でも例外扱いにはせず exit 0 で返す（スクリプトからは --json の
+      // requirements[].ok / summary.allRequiredOk を読んで判定する）。
+      const asJson = process.argv.includes('--json');
+      const { runDoctor, summarizeDoctor, formatDoctorReport } = await import('../src/doctor.js');
+      // doctor は「設定が壊れている人を助ける」ツールなので、config.json の不正 JSON などで
+      // runDoctor 自身が例外を投げても、生スタックで落ちず分かりやすいメッセージにして返す。
+      // 人間可読・--json 双方で破綻しないよう、ここで捕捉する（main の catch まで抜けさせない）。
+      try {
+        const requirements = runDoctor();
+        const summary = summarizeDoctor(requirements);
+        if (asJson) {
+          console.log(JSON.stringify({ requirements, summary }, null, 2));
+        } else {
+          console.log(formatDoctorReport(requirements, summary));
+        }
+      } catch (err) {
+        const hint = 'config.json が正しい JSON か確認してください（既定の探索先は VK_ORCHESTRATOR_CONFIG > ~/.vk-orchestrator/config.json > リポ直下 config.json）。';
+        if (asJson) {
+          console.error(JSON.stringify({ error: err.message, hint }, null, 2));
+        } else {
+          console.error(`[doctor] 設定の読み込みに失敗しました: ${err.message}\n  ${hint}`);
+        }
+      }
+      break;
+    }
     case 'apply': {
       // vk-agents 共通設定は従来どおり apply/up タイミングで派生設定へ投影する。
       const { writeVkAgentsSettings } = await import('../src/config.js');
@@ -347,7 +423,7 @@ async function main() {
       // GUI 起動前に、orchestrator 自身と固定タグ・実際に入っている版のズレを解消しておく。
       await reconcileOrchestratorVersion();
       await reconcileVkTerminalsVersion();
-      await warnIfVkAgentsNotSetup();
+      await warnIfNotReady();
 
       const vkDir = await resolveVkDirOrExit();
       const vkAgents = writeVkAgentsSettings(unifiedConfig);
@@ -612,6 +688,7 @@ commands:
   up [--no-orchestrator]                config.json を反映し VK Terminals(GUI) と orchestrator を起動
                                         （--no-orchestrator で GUI のみ起動）
   start [--once] [--assignee <login>]   キューを監視して実行（--once で 1 周のみ）
+  doctor [--json]                       初回セットアップの充足状況を診断（✅/❌ と次にやるコマンド。--json で要件配列を出力）
   check-status                          現在のキュー／pane 状態を表示
   unblock                               waiting-input の issue を status:ready に戻す
   task add|list|set-status              queue.backend: local 専用の純ローカルタスク操作
