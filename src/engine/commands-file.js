@@ -1,23 +1,17 @@
 import { promises as fsPromises, watch as fsWatch } from 'fs';
 import { basename, dirname, join } from 'path';
 import { DEFAULT_LABELS, getLabelsConfig, resolveCommandsPath, writeJsonAtomic } from '../config.js';
+import { ALLOWED_TRANSITIONS, isAllowedTransition } from './task-domain.js';
+
+// 遷移マトリクスは task-domain.js を正本とし、ここからは import して使う（挙動不変のリファクタ）。
+// 従来 commands-file.js から import していた呼び出し元（テスト等）との後方互換のため再エクスポートする。
+export { ALLOWED_TRANSITIONS, isAllowedTransition };
 
 const STATUS_PREFIX = 'status:';
 const PRIORITY_PREFIX = 'priority:';
 const STATE_VERSION = 1;
 const DEFAULT_RECENT_ID_LIMIT = 1000;
 const DEFAULT_TRANSIENT_RETRY_LIMIT = 3;
-const ALLOWED_TRANSITIONS = new Set([
-  'awaiting-approval->ready',
-  'ready->awaiting-approval',
-  'in-progress->awaiting-approval',
-  'waiting-input->awaiting-approval',
-  'waiting-merge->awaiting-approval',
-  'failed->awaiting-approval',
-  'waiting-merge->done',
-  'failed->ready',
-  'ready->failed',
-]);
 const SEQUENTIAL_VALUES = new Set(['sequential', 'parallel']);
 
 function labelName(label) {
@@ -105,16 +99,6 @@ export function normalizeSequentialName(value, labelsConfig = getLabelsConfig())
   if (!raw) return null;
   if (SEQUENTIAL_VALUES.has(raw)) return raw;
   return raw === labelsConfig?.sequential ? 'sequential' : null;
-}
-
-export function isAllowedTransition(from, to) {
-  const normalizedFrom = typeof from === 'string' && from.startsWith(STATUS_PREFIX)
-    ? from.slice(STATUS_PREFIX.length)
-    : String(from ?? '');
-  const normalizedTo = typeof to === 'string' && to.startsWith(STATUS_PREFIX)
-    ? to.slice(STATUS_PREFIX.length)
-    : String(to ?? '');
-  return ALLOWED_TRANSITIONS.has(`${normalizedFrom}->${normalizedTo}`);
 }
 
 export function extractIssueStatus(issue, labelsConfig = getLabelsConfig()) {
