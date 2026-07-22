@@ -13,6 +13,13 @@ const STATE_VERSION = 1;
 const DEFAULT_RECENT_ID_LIMIT = 1000;
 const DEFAULT_TRANSIENT_RETRY_LIMIT = 3;
 const SEQUENTIAL_VALUES = new Set(['sequential', 'parallel']);
+const SINGLE_COMMAND_ACTIONS = new Set(['set-status', 'set-priority', 'set-sequential']);
+const BATCH_OPERATION_ORDER = ['set-priority', 'set-sequential', 'set-status'];
+const BATCH_FIELD_BY_ACTION = {
+  'set-status': 'status',
+  'set-priority': 'priority',
+  'set-sequential': 'sequential',
+};
 
 function labelName(label) {
   return typeof label === 'string' ? label : label?.name;
@@ -273,12 +280,124 @@ function validateCommand(command, logger) {
     return null;
   }
 
-  if (command.action == null || command.to == null || command.expected == null || command.requestedAt == null) {
+  if (command.action == null || command.requestedAt == null) {
     logger.warn?.(`[commands-file] id=${logId(id)}: 必須キーが不足しているため無視します`);
     return null;
   }
 
+  if (SINGLE_COMMAND_ACTIONS.has(command.action) && (command.to == null || command.expected == null)) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: 必須キーが不足しているため無視します`);
+    return null;
+  }
+
+  if (command.action === 'apply-batch') {
+    if (!Array.isArray(command.ops) || command.ops.length === 0) {
+      logger.warn?.(`[commands-file] id=${logId(id)}: ops が非空配列ではないため拒否します`);
+      return null;
+    }
+  }
+
   return { id, taskId };
+}
+
+function normalizeBatchOperation(op, id, labelsConfig, logger) {
+  if (!op || typeof op !== 'object' || Array.isArray(op)) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: ops に不正な項目があるため拒否します`);
+    return { ok: false, reason: 'invalid-batch' };
+  }
+
+  if (op.action == null || op.to == null || op.expected == null) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: ops の必須キーが不足しているため拒否します`);
+    return { ok: false, reason: 'invalid-batch' };
+  }
+
+  const field = BATCH_FIELD_BY_ACTION[op.action];
+  if (!field) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: ops に未対応 action "${sanitizeLogText(op.action)}" があるため拒否します`);
+    return { ok: false, reason: 'invalid-batch' };
+  }
+
+  if (op.action === 'set-status') {
+    const expected = normalizeStatusName(op.expected, labelsConfig);
+    const to = normalizeStatusName(op.to, labelsConfig);
+    if (!expected || !to) {
+      logger.warn?.(`[commands-file] id=${logId(id)}: ops のステータス名が不正なため拒否します`);
+      return { ok: false, reason: 'invalid-status' };
+    }
+    if (!isAllowedTransition(expected, to)) {
+      logger.warn?.(`[commands-file] id=${logId(id)}: ops の許可されていない遷移 ${sanitizeLogText(expected)} → ${sanitizeLogText(to)} のため拒否します`);
+      return { ok: false, reason: 'disallowed-transition' };
+    }
+    return { ok: true, op: { action: op.action, field, expected, to } };
+  }
+
+  if (op.action === 'set-priority') {
+    const expected = normalizePriorityName(op.expected, labelsConfig);
+    const to = normalizePriorityName(op.to, labelsConfig);
+    if (!expected || !to) {
+      logger.warn?.(`[commands-file] id=${logId(id)}: ops の優先度名が不正なため拒否します`);
+      return { ok: false, reason: 'invalid-priority' };
+    }
+    return { ok: true, op: { action: op.action, field, expected, to } };
+  }
+
+  const expected = normalizeSequentialName(op.expected, labelsConfig);
+  const to = normalizeSequentialName(op.to, labelsConfig);
+  if (!expected || !to) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: ops の直列指定が不正なため拒否します`);
+    return { ok: false, reason: 'invalid-sequential' };
+  }
+  return { ok: true, op: { action: op.action, field, expected, to } };
+}
+
+function prepareBatchOperations(command, id, labelsConfig, logger) {
+  if (command.ops.length > BATCH_OPERATION_ORDER.length) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: ops の件数が上限を超えているため拒否します`);
+    return { ok: false, reason: 'invalid-batch' };
+  }
+
+  const fields = new Set();
+  const operations = [];
+  for (const rawOp of command.ops) {
+    const normalized = normalizeBatchOperation(rawOp, id, labelsConfig, logger);
+    if (!normalized.ok) return normalized;
+
+    if (fields.has(normalized.op.field)) {
+      logger.warn?.(`[commands-file] id=${logId(id)}: ops に同一項目の重複があるため拒否します`);
+      return { ok: false, reason: 'invalid-batch' };
+    }
+    fields.add(normalized.op.field);
+    operations.push(normalized.op);
+  }
+
+  operations.sort((a, b) => BATCH_OPERATION_ORDER.indexOf(a.action) - BATCH_OPERATION_ORDER.indexOf(b.action));
+  return { ok: true, operations };
+}
+
+function extractActualForBatchOperation(issue, op, labelsConfig) {
+  switch (op.action) {
+    case 'set-status':
+      return extractIssueStatus(issue, labelsConfig);
+    case 'set-priority':
+      return extractIssuePriority(issue, labelsConfig);
+    case 'set-sequential':
+      return extractIssueSequential(issue, labelsConfig);
+    default:
+      return null;
+  }
+}
+
+async function applyBatchOperation(taskId, op, github, labelsConfig) {
+  switch (op.action) {
+    case 'set-status':
+      return github.setStatus(taskId, statusLabelFor(op.to, labelsConfig));
+    case 'set-priority':
+      return github.setPriority(taskId, op.to);
+    case 'set-sequential':
+      return github.setSequential(taskId, op.to);
+    default:
+      return undefined;
+  }
 }
 
 export async function processSetStatusCommand(command, dependencies = {}) {
@@ -381,6 +500,46 @@ export async function processSetSequentialCommand(command, dependencies = {}) {
   return { evaluated: true, applied: true, reason: 'applied', id };
 }
 
+export async function processApplyBatchCommand(command, dependencies = {}) {
+  const logger = dependencies.logger ?? console;
+  const labelsConfig = dependencies.labelsConfig ?? getLabelsConfig();
+  const github = dependencies.github;
+  const getMetaIssue = dependencies.getMetaIssue;
+
+  const valid = validateCommand(command, logger);
+  if (!valid) return { evaluated: false, applied: false, reason: 'invalid' };
+
+  const { id, taskId } = valid;
+  const prepared = prepareBatchOperations(command, id, labelsConfig, logger);
+  if (!prepared.ok) return { evaluated: true, applied: false, reason: prepared.reason, id };
+
+  const issue = await getMetaIssue(taskId);
+  const operations = prepared.operations.map((op) => ({
+    ...op,
+    actual: extractActualForBatchOperation(issue, op, labelsConfig),
+  }));
+
+  const mismatch = operations.find((op) => op.actual !== op.expected && op.actual !== op.to);
+  if (mismatch) {
+    logger.info?.(`[commands-file] id=${logId(id)}: CAS 不一致（${sanitizeLogText(mismatch.field)} expected=${sanitizeLogText(mismatch.expected)}, to=${sanitizeLogText(mismatch.to)}, actual=${sanitizeLogText(mismatch.actual ?? 'none')}）のため一括破棄します`);
+    return { evaluated: true, applied: false, reason: 'cas-mismatch', id };
+  }
+
+  let applied = false;
+  for (const op of operations) {
+    if (op.action === 'set-status') {
+      if (op.actual === op.to) continue;
+    } else if (op.actual === op.to) {
+      continue;
+    }
+    await applyBatchOperation(taskId, op, github, labelsConfig);
+    applied = true;
+    logger.info?.(`[commands-file] id=${logId(id)}: issue #${taskId} の ${sanitizeLogText(op.field)} を ${sanitizeLogText(op.to)} へ変更しました`);
+  }
+
+  return { evaluated: true, applied, reason: applied ? 'applied' : 'already-applied', id };
+}
+
 export async function processCommand(command, dependencies = {}) {
   const logger = dependencies.logger ?? console;
   const valid = validateCommand(command, logger);
@@ -393,6 +552,8 @@ export async function processCommand(command, dependencies = {}) {
       return processSetPriorityCommand(command, dependencies);
     case 'set-sequential':
       return processSetSequentialCommand(command, dependencies);
+    case 'apply-batch':
+      return processApplyBatchCommand(command, dependencies);
     default:
       logger.warn?.(`[commands-file] id=${logId(valid.id)}: 未対応 action "${sanitizeLogText(command.action)}" のため無視します`);
       return { evaluated: true, applied: false, reason: 'unsupported-action', id: valid.id };
