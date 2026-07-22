@@ -1,5 +1,8 @@
 # Changelog
 
+- [ 仕様変更 ] vk-terminals を 1.40.0 から 1.43.0 にアップデート
+- [ 開発環境 ] リリース時に同梱 vk-terminals / vk-agents を最新へそろえる release スキルと preflight スクリプトを新設
+
 = 0.22.0 =
 
 - [ 機能追加 ] タスク一覧ウィジェット宣言の各タスクに対象 issue の URL を rel:"target" リンクとして出力（ローカルモードでのタイトルリンク先に利用可能）
