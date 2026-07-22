@@ -5,6 +5,9 @@
   "staff_wp_dev": {
     "engine": "claude"
   },
+  "staff_review": {
+    "engine": "claude"
+  },
   "features": {
     "coderabbit": true,
     "coderabbit_ignore": false,
