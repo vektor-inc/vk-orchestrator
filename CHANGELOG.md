@@ -1,5 +1,7 @@
 # Changelog
 
+= 0.21.0 =
+
 - [ 機能追加 ] 設定画面に staff-review（麗美）の実行エンジン（Claude / Codex）を選択するドロップダウンを追加
 - [ 機能追加 ] `queue.backend=local` で GitHub issue に紐づかない純ローカルタスクを登録・一覧・ステータス変更できる CLI を追加
 - [ 機能追加 ] タスクキューの保存先を `queue.backend=local` でローカル JSON（`~/.task-queue/queue.json`）へ切り替えられる中核機能を追加
@@ -14,6 +16,7 @@
 - [ 仕様変更 ] 設定画面「タスク登録リポジトリ名」の説明文を task-queue 依存の表現からオーケストレーター基準の表現に修正
 - [ 仕様変更 ] 設定ディスクリプタの保存後反映タイミング案内をタブごとの note として出力し、誤解を招く全体 note を撤去
 - [ 仕様変更 ] VK Terminals サイドバーの「VK Orchestrator」セクションから task-queue 項目を削除（導線はタスク一覧見出しのリンクへ一本化）
+- [ 仕様変更 ] vk-terminals を 1.38.0 から 1.40.0 にアップデート（タスク一覧の宣言的ウィジェット描画・設定パネルのタブ別 note・サイドバー／モバイルのステータス表示や PR バッジの共通化などに対応）
 - [ 不具合修正 ] コールドスタート時に起動バナーがタスク本文を飲み込み、ラベルだけ in-progress・ペインが空プロンプトのまま放置される不具合を修正（readiness 待ちと本文再送を強化し、本文未達時は status:ready へ戻して自動再ディスパッチ。`CLAUDE_READY_TIMEOUT_MS` / `CLAUDE_SUBMIT_DELAY_MS` / `CLAUDE_SUBMIT_MAX_RETRIES` で調整可）
 - [ 不具合修正 ] 自前 PR を持たない親調整 issue が全 sub-issue 完了後も in-progress のまま残る不具合を修正
 - [ 不具合修正 ] GitHub API 障害（5xx）で status:in-progress への遷移に失敗した ready タスクが、poll のたびに新規ペインを量産する不具合を修正
