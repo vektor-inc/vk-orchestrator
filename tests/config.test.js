@@ -35,6 +35,7 @@ import {
   writeVkTerminalsTasksViewConfig,
   getTaskConfig,
   getQueueBackend,
+  isCoderabbitEnabled,
   getTaskCwd,
   getProtocolConfig,
   getLabelsConfig,
@@ -1440,6 +1441,20 @@ test('getQueueBackend: 未知の値は local にフォールバックする', ()
       console.warn = savedWarn;
     }
   });
+});
+
+test('isCoderabbitEnabled: features.coderabbit 未設定は既定 true', () => {
+  assert.equal(isCoderabbitEnabled({}), true);
+  assert.equal(isCoderabbitEnabled({ features: {} }), true);
+});
+
+test('isCoderabbitEnabled: features.coderabbit=false（真偽値・文字列）は false', () => {
+  assert.equal(isCoderabbitEnabled({ features: { coderabbit: false } }), false);
+  assert.equal(isCoderabbitEnabled({ features: { coderabbit: 'false' } }), false);
+});
+
+test('isCoderabbitEnabled: features.coderabbit=true は true', () => {
+  assert.equal(isCoderabbitEnabled({ features: { coderabbit: true } }), true);
 });
 
 test('getTaskCwd: config 無しで専用ディレクトリを既定値として作成して返す', () => {

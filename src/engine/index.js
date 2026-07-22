@@ -14,6 +14,7 @@ import {
   getQueueBackend,
   getTaskConfig,
   getTaskCwd,
+  isCoderabbitEnabled,
   loadUnifiedConfig,
   resolveVkAgentsConfigPath,
   resolveVkTerminalsApiHost,
@@ -617,6 +618,14 @@ async function resolveWpEnvEnabled(issue, target = resolveTarget(issue)) {
 // - decision-record コメント検知のため、対象 issue と PR のコメントを時系列で結合
 // 失敗は warn で握り、取得できた範囲を返す（次ループで再試行）。
 // -------------------------------------------------------
+// checkPRCompletion に渡すオプションを解決する。
+// CodeRabbit 監視が無効なリポジトリ（features.coderabbit=false）では CodeRabbit の
+// 静観（既定 30 分）を待つ意味がないため idle を 0 にし、CI・mergeable・レビューマーカーが
+// 揃った時点で即マージできるようにする。有効時は checkPRCompletion 既定の 30 分をそのまま使う。
+function prCompletionOptions() {
+  return isCoderabbitEnabled() ? {} : { coderabbitIdleMs: 0 };
+}
+
 async function gatherTargetState(issue) {
   const target = resolveTarget(issue);
 
@@ -638,7 +647,7 @@ async function gatherTargetState(issue) {
     }
     if (prState && prState.state === 'open' && !prState.merged) {
       try {
-        const completion = await github.checkPRCompletion(target.owner, target.repo, pr.number);
+        const completion = await github.checkPRCompletion(target.owner, target.repo, pr.number, prCompletionOptions());
         prCompletionReady = completion.ready;
       } catch (err) {
         console.warn(`  [scan] issue #${issue.number}: PR 完了判定失敗: ${err.message}`);
@@ -1193,11 +1202,12 @@ async function tryAutoMerge(issue, prRef, prState, prUrl) {
     return;
   }
 
-  // CI + CodeRabbit 30 分静観を再検証する。
+  // CI + CodeRabbit 静観を再検証する。
   // waiting-merge 到達後に CodeRabbit が再コメントしたケースで誤マージを防ぐ。
+  // CodeRabbit 無効リポでは静観 0 分（即時）になる（prCompletionOptions）。
   let completion;
   try {
-    completion = await github.checkPRCompletion(prRef.owner, prRef.repo, prRef.number);
+    completion = await github.checkPRCompletion(prRef.owner, prRef.repo, prRef.number, prCompletionOptions());
   } catch (err) {
     console.warn(`  ${tag}: PR完了条件の再検証に失敗（次ループで再試行）: ${err.message}`);
     return;
@@ -1230,9 +1240,12 @@ async function tryAutoMerge(issue, prRef, prState, prUrl) {
       method: 'squash',
       sha: completion.headSha,
     });
+    const coderabbitLine = isCoderabbitEnabled()
+      ? '- CodeRabbitAI のコメントが 30 分間なし'
+      : '- CodeRabbit 監視は無効（静観待機なし）';
     await github.addComment(
       issue.number,
-      `🤖 automerge ラベルに基づき PR を自動マージしました: ${prUrl}\n\n- CI 全通過\n- CodeRabbitAI のコメントが 30 分間なし\n- mergeable=true`
+      `🤖 automerge ラベルに基づき PR を自動マージしました: ${prUrl}\n\n- CI 全通過\n${coderabbitLine}\n- mergeable=true`
     );
     console.log(`  ${tag}: PR #${prRef.number} を squash merge しました`);
   } catch (err) {

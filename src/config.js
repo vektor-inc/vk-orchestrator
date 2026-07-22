@@ -1223,6 +1223,19 @@ export function getQueueBackend(cfg = loadUnifiedConfig()) {
 }
 
 /**
+ * CodeRabbit 監視が有効かどうかを解決する（automerge の CodeRabbit 静観ゲートの要否判定に使う）。
+ * features.coderabbit は既定 true。明示的に false（真偽値 / 文字列 "false"）のときだけ無効扱いにする。
+ * 未設定・不正値は安全側で有効（true）とみなす。
+ * @param {object} [cfg] loadUnifiedConfig() の戻り値
+ * @returns {boolean}
+ */
+export function isCoderabbitEnabled(cfg = loadUnifiedConfig()) {
+  if (!hasOwnPath(cfg, 'features.coderabbit')) return true;
+  const raw = getByPath(cfg, 'features.coderabbit');
+  return !(raw === false || raw === 'false');
+}
+
+/**
  * タスク用ペイン（Claude Code）の起点ディレクトリを返す。
  * 優先順位: 環境変数 TASK_CWD > 専用ディレクトリ。
  * 未設定時は `~/vk-orchestrator-tasks` を使う。これは $HOME 直下や特定リポジトリ、
