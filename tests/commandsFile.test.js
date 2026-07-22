@@ -8,6 +8,7 @@ import {
   consumeCommandsFile,
   createCommandsFileProcessor,
   isAllowedTransition,
+  processApplyBatchCommand,
   startCommandsFileWatcher,
 } from '../src/engine/commands-file.js';
 
@@ -648,6 +649,41 @@ test('consumeCommandsFile: apply-batch は不正 batch を API 取得前に拒�
       });
     });
   }
+});
+
+test('processApplyBatchCommand: apply-batch はプロトタイプチェーン由来 action を invalid-batch で拒否する', async () => {
+  const githubCalls = [];
+  let getMetaIssueCalls = 0;
+  const result = await processApplyBatchCommand({
+    id: 'batch-prototype-action',
+    taskId: 64,
+    action: 'apply-batch',
+    ops: [
+      { action: 'set-priority', expected: 'medium', to: 'high' },
+      { action: '__proto__', expected: 'parallel', to: 'sequential' },
+    ],
+    requestedAt: '2026-07-22T00:00:00.000Z',
+  }, {
+    logger: silentLogger(),
+    github: {
+      setPriority: async (...args) => githubCalls.push(['setPriority', ...args]),
+      setSequential: async (...args) => githubCalls.push(['setSequential', ...args]),
+      setStatus: async (...args) => githubCalls.push(['setStatus', ...args]),
+    },
+    getMetaIssue: async () => {
+      getMetaIssueCalls += 1;
+      return { labels: [{ name: 'status:ready' }, { name: 'priority:medium' }] };
+    },
+  });
+
+  assert.deepEqual(result, {
+    evaluated: true,
+    applied: false,
+    reason: 'invalid-batch',
+    id: 'batch-prototype-action',
+  });
+  assert.deepEqual(githubCalls, []);
+  assert.equal(getMetaIssueCalls, 0);
 });
 
 test('consumeCommandsFile: apply-batch は waiting-merge→done のリトライで setStatus を二重に呼ばない', async () => {

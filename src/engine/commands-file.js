@@ -311,11 +311,11 @@ function normalizeBatchOperation(op, id, labelsConfig, logger) {
     return { ok: false, reason: 'invalid-batch' };
   }
 
-  const field = BATCH_FIELD_BY_ACTION[op.action];
-  if (!field) {
+  if (typeof op.action !== 'string' || !SINGLE_COMMAND_ACTIONS.has(op.action)) {
     logger.warn?.(`[commands-file] id=${logId(id)}: ops に未対応 action "${sanitizeLogText(op.action)}" があるため拒否します`);
     return { ok: false, reason: 'invalid-batch' };
   }
+  const field = BATCH_FIELD_BY_ACTION[op.action];
 
   if (op.action === 'set-status') {
     const expected = normalizeStatusName(op.expected, labelsConfig);
@@ -527,11 +527,8 @@ export async function processApplyBatchCommand(command, dependencies = {}) {
 
   let applied = false;
   for (const op of operations) {
-    if (op.action === 'set-status') {
-      if (op.actual === op.to) continue;
-    } else if (op.actual === op.to) {
-      continue;
-    }
+    // 既に目標値の op は set を呼ばない（二重適用・set-status の完了コメント二重投稿を防ぐ）。
+    if (op.actual === op.to) continue;
     await applyBatchOperation(taskId, op, github, labelsConfig);
     applied = true;
     logger.info?.(`[commands-file] id=${logId(id)}: issue #${taskId} の ${sanitizeLogText(op.field)} を ${sanitizeLogText(op.to)} へ変更しました`);
