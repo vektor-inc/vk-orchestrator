@@ -1,5 +1,7 @@
 # Changelog
 
+= 0.22.0 =
+
 - [ 機能追加 ] タスク一覧ウィジェット宣言の各タスクに対象 issue の URL を rel:"target" リンクとして出力（ローカルモードでのタイトルリンク先に利用可能）
 - [ 仕様変更 ] CodeRabbit 監視が無効（features.coderabbit=false）なリポジトリで automerge の CodeRabbit 静観 30 分待機を撤廃し、CI 全通過・mergeable・レビューマーカーが揃った時点で即時マージするよう変更
 
