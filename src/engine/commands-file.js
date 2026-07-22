@@ -368,13 +368,18 @@ function normalizeBatchOperation(op, id, labelsConfig, logger) {
     return { ok: true, op: { action: op.action, field, expected, to } };
   }
 
-  const expected = normalizeAutomergeName(op.expected, labelsConfig);
-  const to = normalizeAutomergeName(op.to, labelsConfig);
-  if (!expected || !to) {
-    logger.warn?.(`[commands-file] id=${logId(id)}: ops の自動マージ指定が不正なため拒否します`);
-    return { ok: false, reason: 'invalid-automerge' };
+  if (op.action === 'set-automerge') {
+    const expected = normalizeAutomergeName(op.expected, labelsConfig);
+    const to = normalizeAutomergeName(op.to, labelsConfig);
+    if (!expected || !to) {
+      logger.warn?.(`[commands-file] id=${logId(id)}: ops の自動マージ指定が不正なため拒否します`);
+      return { ok: false, reason: 'invalid-automerge' };
+    }
+    return { ok: true, op: { action: op.action, field, expected, to } };
   }
-  return { ok: true, op: { action: op.action, field, expected, to } };
+
+  logger.warn?.(`[commands-file] id=${logId(id)}: ops に想定外 action "${sanitizeLogText(op.action)}" があるため拒否します`);
+  return { ok: false, reason: 'invalid-batch' };
 }
 
 function prepareBatchOperations(command, id, labelsConfig, logger) {
