@@ -32,7 +32,7 @@ test('normalizeTaskIssue: status/担当者/対象 issue URL/PR URL を正規化�
       '',
       '**PR:** https://github.com/vektor-inc/vk-orchestrator/pull/140',
     ].join('\n'),
-    labels: [{ name: 'status:waiting-merge' }, { name: 'priority:high' }, { name: 'sequential' }],
+    labels: [{ name: 'status:waiting-merge' }, { name: 'priority:high' }, { name: 'sequential' }, { name: 'automerge' }],
     assignees: [{ login: 'wada' }, { login: 'tsukasa' }],
     html_url: 'https://github.com/vektor-inc/task-queue/issues/139',
     updated_at: '2026-07-17T01:02:03Z',
@@ -46,6 +46,7 @@ test('normalizeTaskIssue: status/担当者/対象 issue URL/PR URL を正規化�
     statusLabel: 'status:waiting-merge',
     priority: 'high',
     sequential: true,
+    automerge: true,
     assignee: 'wada',
     assignees: ['wada', 'tsukasa'],
     targetIssueUrl: 'https://github.com/vektor-inc/vk-orchestrator/issues/138',
@@ -55,7 +56,7 @@ test('normalizeTaskIssue: status/担当者/対象 issue URL/PR URL を正規化�
   });
 });
 
-test('normalizeTaskIssue: priority ラベルが無ければ null、sequential が無ければ false を返す', () => {
+test('normalizeTaskIssue: priority ラベルが無ければ null、sequential/automerge が無ければ false を返す', () => {
   const task = normalizeTaskIssue({
     number: 140,
     title: 'parallel task',
@@ -64,6 +65,19 @@ test('normalizeTaskIssue: priority ラベルが無ければ null、sequential �
 
   assert.equal(task.priority, null);
   assert.equal(task.sequential, false);
+  assert.equal(task.automerge, false);
+});
+
+test('normalizeTaskIssue: automerge ラベル名は設定値で判定する', () => {
+  const task = normalizeTaskIssue({
+    number: 141,
+    title: 'renamed automerge task',
+    labels: [{ name: 'status:ready' }, { name: 'auto-merge-ok' }],
+  }, {
+    labelsConfig: { automerge: 'auto-merge-ok' },
+  });
+
+  assert.equal(task.automerge, true);
 });
 
 test('buildTasksView: root updatedAt を含め、pull request は除外する', () => {

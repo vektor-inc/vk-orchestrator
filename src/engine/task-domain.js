@@ -155,6 +155,24 @@ export const SEQUENTIAL_TONES = Object.freeze({
   parallel: 'neutral',
 });
 
+// 自動マージの選択肢（プルダウン用）。
+export const AUTOMERGE_OPTIONS = Object.freeze([
+  Object.freeze({ value: 'automerge', label: 'する' }),
+  Object.freeze({ value: 'manual', label: 'しない' }),
+]);
+
+// 自動マージバッジの tone。automerge=成功(緑) / manual=中立(灰)。
+export const AUTOMERGE_TONES = Object.freeze({
+  automerge: 'success',
+  manual: 'neutral',
+});
+
+// バッジ単体でも意味が伝わるよう、選択肢ラベルとは別に短い表示名を持つ。
+export const AUTOMERGE_BADGE_LABELS = Object.freeze({
+  automerge: '自動マージ',
+  manual: '手動マージ',
+});
+
 // 宣言の言語。今回は日本語完成文のみ。
 export const DOMAIN_LANG = 'ja';
 
@@ -197,6 +215,24 @@ export function priorityLabel(value) {
  */
 export function sequentialLabel(value) {
   return SEQUENTIAL_OPTIONS.find((option) => option.value === value)?.label ?? String(value ?? '');
+}
+
+/**
+ * 自動マージ値の表示ラベルを返す。未知値はその値をそのまま返す。
+ * @param {string} value 'automerge' | 'manual'
+ * @returns {string}
+ */
+export function automergeLabel(value) {
+  return AUTOMERGE_OPTIONS.find((option) => option.value === value)?.label ?? String(value ?? '');
+}
+
+/**
+ * 自動マージバッジの表示ラベルを返す。未知値はその値をそのまま返す。
+ * @param {string} value 'automerge' | 'manual'
+ * @returns {string}
+ */
+export function automergeBadgeLabel(value) {
+  return AUTOMERGE_BADGE_LABELS[value] ?? String(value ?? '');
 }
 
 /**
@@ -269,6 +305,9 @@ export const TASK_DOMAIN = Object.freeze({
   priorityTones: PRIORITY_TONES,
   sequentialOptions: SEQUENTIAL_OPTIONS,
   sequentialTones: SEQUENTIAL_TONES,
+  automergeOptions: AUTOMERGE_OPTIONS,
+  automergeTones: AUTOMERGE_TONES,
+  automergeBadgeLabels: AUTOMERGE_BADGE_LABELS,
   defaultTone: DEFAULT_TONE,
   emptyText: EMPTY_TEXT,
   allowedTransitions: ALLOWED_TRANSITIONS,
@@ -277,6 +316,8 @@ export const TASK_DOMAIN = Object.freeze({
   statusTone,
   priorityLabel,
   sequentialLabel,
+  automergeLabel,
+  automergeBadgeLabel,
   getTransitionConfirm,
   isStatusOptionDisabled,
   statusSelectOrderFor,

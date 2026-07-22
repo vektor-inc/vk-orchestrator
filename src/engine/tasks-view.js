@@ -1,4 +1,4 @@
-import { resolveTasksViewPath, writeJsonAtomic } from '../config.js';
+import { DEFAULT_LABELS, getLabelsConfig, resolveTasksViewPath, writeJsonAtomic } from '../config.js';
 import { buildTasksWidget, writeTasksWidgetFile } from './tasks-widget.js';
 
 const ISSUE_URL_RE = /https:\/\/github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/issues\/\d+/;
@@ -26,7 +26,9 @@ export function extractPRUrl(body) {
   return matches.length > 0 ? matches.at(-1)[1] : null;
 }
 
-export function normalizeTaskIssue(issue) {
+export function normalizeTaskIssue(issue, options = {}) {
+  const labelsConfig = options.labelsConfig ?? getLabelsConfig();
+  const automergeLabel = labelsConfig.automerge ?? DEFAULT_LABELS.automerge;
   const labels = (issue.labels ?? [])
     .map(labelName)
     .filter((name) => typeof name === 'string' && name !== '');
@@ -45,6 +47,7 @@ export function normalizeTaskIssue(issue) {
     statusLabel,
     priority: PRIORITY_VALUES.has(priority) ? priority : null,
     sequential: labels.includes('sequential'),
+    automerge: labels.includes(automergeLabel),
     assignee: assignees[0] ?? null,
     assignees,
     targetIssueUrl: extractTargetIssueUrl(issue.body),
@@ -67,12 +70,13 @@ function resolveViewer(value) {
 export function buildTasksView(issues, options = {}) {
   const now = options.now ?? new Date();
   const updatedAt = now instanceof Date ? now.toISOString() : String(now);
+  const labelsConfig = options.labelsConfig ?? getLabelsConfig();
   return {
     updatedAt,
     viewer: resolveViewer(options.viewer),
     tasks: issues
       .filter((issue) => !issue.pull_request)
-      .map(normalizeTaskIssue),
+      .map((issue) => normalizeTaskIssue(issue, { labelsConfig })),
   };
 }
 

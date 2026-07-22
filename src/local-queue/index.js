@@ -244,6 +244,18 @@ export class LocalQueueClient {
     console.log(`  [LocalQueue] task #${issueNumber} execution → ${mode}`);
   }
 
+  async setAutomerge(issueNumber, mode) {
+    if (mode !== 'automerge' && mode !== 'manual') {
+      throw new Error(`不明な自動マージ指定です: ${mode}`);
+    }
+
+    await this.mutateTask(issueNumber, (task) => {
+      task.automerge = mode === 'automerge';
+    });
+
+    console.log(`  [LocalQueue] task #${issueNumber} automerge → ${mode}`);
+  }
+
   async addComment(issueNumber, body) {
     await this.mutateTask(issueNumber, (task, _queue, now) => {
       const comments = Array.isArray(task.comments) ? task.comments : [];

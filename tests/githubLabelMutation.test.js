@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 import { GitHubClient } from '../src/github/index.js';
 
@@ -19,6 +22,21 @@ function makeClient(labels) {
     },
   };
   return { client, calls };
+}
+
+async function withTmpConfig(config, fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'vko-github-labels-'));
+  const path = join(dir, 'config.json');
+  const saved = process.env.VK_ORCHESTRATOR_CONFIG;
+  writeFileSync(path, JSON.stringify(config));
+  process.env.VK_ORCHESTRATOR_CONFIG = path;
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env.VK_ORCHESTRATOR_CONFIG;
+    else process.env.VK_ORCHESTRATOR_CONFIG = saved;
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 describe('GitHubClient label mutations', () => {
@@ -79,5 +97,44 @@ describe('GitHubClient label mutations', () => {
     await client.setSequential(149, 'parallel');
 
     assert.deepEqual(calls.at(-1)[1].labels, ['status:ready', 'priority:low']);
+  });
+
+  it('setAutomerge: automerge だけを付け、status/priority/sequential を温存する', async () => {
+    const { client, calls } = makeClient([
+      { name: 'status:ready' },
+      { name: 'priority:high' },
+      { name: 'sequential' },
+    ]);
+
+    await client.setAutomerge(150, 'automerge');
+
+    assert.deepEqual(calls.at(-1)[1].labels, [
+      'status:ready',
+      'priority:high',
+      'sequential',
+      'automerge',
+    ]);
+  });
+
+  it('setAutomerge: manual は automerge を外すだけにする', async () => {
+    const { client, calls } = makeClient([
+      { name: 'status:ready' },
+      { name: 'priority:low' },
+      { name: 'automerge' },
+      { name: 'sequential' },
+    ]);
+
+    await client.setAutomerge(151, 'manual');
+
+    assert.deepEqual(calls.at(-1)[1].labels, ['status:ready', 'priority:low', 'sequential']);
+  });
+
+  it('hasAutomergeLabel: 設定変更後のラベル名で判定する', async () => {
+    await withTmpConfig({ labels: { automerge: 'auto-merge-ok' } }, async () => {
+      const { client } = makeClient([]);
+
+      assert.equal(client.hasAutomergeLabel({ labels: [{ name: 'auto-merge-ok' }] }), true);
+      assert.equal(client.hasAutomergeLabel({ labels: [{ name: 'automerge' }] }), false);
+    });
   });
 });
