@@ -1,5 +1,7 @@
 # Changelog
 
+= 0.22.1 =
+
 - [ 仕様変更 ] vk-terminals を 1.40.0 から 1.43.0 にアップデート
 - [ 開発環境 ] リリース時に同梱 vk-terminals / vk-agents を最新へそろえる release スキルと preflight スクリプトを新設
 
