@@ -25,7 +25,7 @@ function httpUrlOrNull(url) {
   return typeof url === 'string' && HTTP_URL_RE.test(url.trim()) ? url.trim() : null;
 }
 
-// タスクの外部リンク（キュー Issue / PR）を宣言用に組み立てる。
+// タスクの外部リンク（キュー Issue / PR / 対象 Issue）を宣言用に組み立てる。
 function buildLinks(task) {
   const links = [];
   const queueUrl = httpUrlOrNull(task.queueIssueUrl);
@@ -35,6 +35,10 @@ function buildLinks(task) {
   const prUrl = httpUrlOrNull(task.prUrl);
   if (prUrl) {
     links.push({ rel: 'pr', url: prUrl, label: 'PR' });
+  }
+  const targetUrl = httpUrlOrNull(task.targetIssueUrl);
+  if (targetUrl) {
+    links.push({ rel: 'target', url: targetUrl, label: 'Target' });
   }
   return links;
 }

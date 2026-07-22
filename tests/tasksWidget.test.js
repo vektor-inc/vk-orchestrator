@@ -103,10 +103,11 @@ test('buildTasksWidget: item に links / badges / editable / emphasis を焼き�
   assert.equal(item.updatedAt, '2026-07-17T01:02:03Z');
   assert.equal(item.assignee, 'wada');
 
-  // links: queue（実 http URL）と pr
+  // links: queue（実 http URL）と pr と target
   assert.deepEqual(item.links, [
     { rel: 'queue', url: 'https://github.com/vektor-inc/task-queue/issues/139', label: 'Issue' },
     { rel: 'pr', url: 'https://github.com/vektor-inc/vk-orchestrator/pull/140', label: 'PR' },
+    { rel: 'target', url: 'https://github.com/vektor-inc/vk-orchestrator/issues/138', label: 'Target' },
   ]);
 
   // badges: priority(high=danger) + sequential(直列=info)
