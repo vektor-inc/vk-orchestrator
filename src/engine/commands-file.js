@@ -13,12 +13,14 @@ const STATE_VERSION = 1;
 const DEFAULT_RECENT_ID_LIMIT = 1000;
 const DEFAULT_TRANSIENT_RETRY_LIMIT = 3;
 const SEQUENTIAL_VALUES = new Set(['sequential', 'parallel']);
-const SINGLE_COMMAND_ACTIONS = new Set(['set-status', 'set-priority', 'set-sequential']);
-const BATCH_OPERATION_ORDER = ['set-priority', 'set-sequential', 'set-status'];
+const AUTOMERGE_VALUES = new Set(['automerge', 'manual']);
+const SINGLE_COMMAND_ACTIONS = new Set(['set-status', 'set-priority', 'set-sequential', 'set-automerge']);
+const BATCH_OPERATION_ORDER = ['set-priority', 'set-sequential', 'set-automerge', 'set-status'];
 const BATCH_FIELD_BY_ACTION = {
   'set-status': 'status',
   'set-priority': 'priority',
   'set-sequential': 'sequential',
+  'set-automerge': 'automerge',
 };
 
 function labelName(label) {
@@ -108,6 +110,14 @@ export function normalizeSequentialName(value, labelsConfig = getLabelsConfig())
   return raw === labelsConfig?.sequential ? 'sequential' : null;
 }
 
+export function normalizeAutomergeName(value, labelsConfig = getLabelsConfig()) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (AUTOMERGE_VALUES.has(raw)) return raw;
+  return raw === (labelsConfig?.automerge ?? DEFAULT_LABELS.automerge) ? 'automerge' : null;
+}
+
 export function extractIssueStatus(issue, labelsConfig = getLabelsConfig()) {
   const labels = (issue?.labels ?? [])
     .map(labelName)
@@ -129,6 +139,13 @@ export function extractIssueSequential(issue, labelsConfig = getLabelsConfig()) 
     .map(labelName)
     .filter((name) => typeof name === 'string' && name !== '');
   return labels.includes(labelsConfig?.sequential ?? DEFAULT_LABELS.sequential) ? 'sequential' : 'parallel';
+}
+
+export function extractIssueAutomerge(issue, labelsConfig = getLabelsConfig()) {
+  const labels = (issue?.labels ?? [])
+    .map(labelName)
+    .filter((name) => typeof name === 'string' && name !== '');
+  return labels.includes(labelsConfig?.automerge ?? DEFAULT_LABELS.automerge) ? 'automerge' : 'manual';
 }
 
 function normalizeTaskId(value) {
@@ -341,13 +358,28 @@ function normalizeBatchOperation(op, id, labelsConfig, logger) {
     return { ok: true, op: { action: op.action, field, expected, to } };
   }
 
-  const expected = normalizeSequentialName(op.expected, labelsConfig);
-  const to = normalizeSequentialName(op.to, labelsConfig);
-  if (!expected || !to) {
-    logger.warn?.(`[commands-file] id=${logId(id)}: ops の直列指定が不正なため拒否します`);
-    return { ok: false, reason: 'invalid-sequential' };
+  if (op.action === 'set-sequential') {
+    const expected = normalizeSequentialName(op.expected, labelsConfig);
+    const to = normalizeSequentialName(op.to, labelsConfig);
+    if (!expected || !to) {
+      logger.warn?.(`[commands-file] id=${logId(id)}: ops の直列指定が不正なため拒否します`);
+      return { ok: false, reason: 'invalid-sequential' };
+    }
+    return { ok: true, op: { action: op.action, field, expected, to } };
   }
-  return { ok: true, op: { action: op.action, field, expected, to } };
+
+  if (op.action === 'set-automerge') {
+    const expected = normalizeAutomergeName(op.expected, labelsConfig);
+    const to = normalizeAutomergeName(op.to, labelsConfig);
+    if (!expected || !to) {
+      logger.warn?.(`[commands-file] id=${logId(id)}: ops の自動マージ指定が不正なため拒否します`);
+      return { ok: false, reason: 'invalid-automerge' };
+    }
+    return { ok: true, op: { action: op.action, field, expected, to } };
+  }
+
+  logger.warn?.(`[commands-file] id=${logId(id)}: ops に想定外 action "${sanitizeLogText(op.action)}" があるため拒否します`);
+  return { ok: false, reason: 'invalid-batch' };
 }
 
 function prepareBatchOperations(command, id, labelsConfig, logger) {
@@ -382,6 +414,8 @@ function extractActualForBatchOperation(issue, op, labelsConfig) {
       return extractIssuePriority(issue, labelsConfig);
     case 'set-sequential':
       return extractIssueSequential(issue, labelsConfig);
+    case 'set-automerge':
+      return extractIssueAutomerge(issue, labelsConfig);
     default:
       return null;
   }
@@ -395,6 +429,8 @@ async function applyBatchOperation(taskId, op, github, labelsConfig) {
       return github.setPriority(taskId, op.to);
     case 'set-sequential':
       return github.setSequential(taskId, op.to);
+    case 'set-automerge':
+      return github.setAutomerge(taskId, op.to);
     default:
       return undefined;
   }
@@ -500,6 +536,35 @@ export async function processSetSequentialCommand(command, dependencies = {}) {
   return { evaluated: true, applied: true, reason: 'applied', id };
 }
 
+export async function processSetAutomergeCommand(command, dependencies = {}) {
+  const logger = dependencies.logger ?? console;
+  const labelsConfig = dependencies.labelsConfig ?? getLabelsConfig();
+  const github = dependencies.github;
+  const getMetaIssue = dependencies.getMetaIssue;
+
+  const valid = validateCommand(command, logger);
+  if (!valid) return { evaluated: false, applied: false, reason: 'invalid' };
+
+  const { id, taskId } = valid;
+  const expected = normalizeAutomergeName(command.expected, labelsConfig);
+  const to = normalizeAutomergeName(command.to, labelsConfig);
+  if (!expected || !to) {
+    logger.warn?.(`[commands-file] id=${logId(id)}: expected/to の自動マージ指定が不正なため拒否します`);
+    return { evaluated: true, applied: false, reason: 'invalid-automerge', id };
+  }
+
+  const issue = await getMetaIssue(taskId);
+  const actual = extractIssueAutomerge(issue, labelsConfig);
+  if (actual !== expected) {
+    logger.info?.(`[commands-file] id=${logId(id)}: CAS 不一致（expected=${sanitizeLogText(expected)}, actual=${sanitizeLogText(actual)}）のため破棄します`);
+    return { evaluated: true, applied: false, reason: 'cas-mismatch', id };
+  }
+
+  await github.setAutomerge(taskId, to);
+  logger.info?.(`[commands-file] id=${logId(id)}: issue #${taskId} の自動マージを ${sanitizeLogText(to)} へ変更しました`);
+  return { evaluated: true, applied: true, reason: 'applied', id };
+}
+
 export async function processApplyBatchCommand(command, dependencies = {}) {
   const logger = dependencies.logger ?? console;
   const labelsConfig = dependencies.labelsConfig ?? getLabelsConfig();
@@ -549,6 +614,8 @@ export async function processCommand(command, dependencies = {}) {
       return processSetPriorityCommand(command, dependencies);
     case 'set-sequential':
       return processSetSequentialCommand(command, dependencies);
+    case 'set-automerge':
+      return processSetAutomergeCommand(command, dependencies);
     case 'apply-batch':
       return processApplyBatchCommand(command, dependencies);
     default:

@@ -20,7 +20,7 @@ export function runTasksWidgetContract({ buildWidget, schemaVersion }) {
       tasks: [
         {
           id: '1', number: 1, title: 'in-progress task', status: 'in-progress',
-          priority: 'high', sequential: true, assignee: 'wada',
+          priority: 'high', sequential: true, automerge: true, assignee: 'wada',
           targetIssueUrl: 'https://github.com/vektor-inc/vk-orchestrator/issues/196',
           prUrl: 'https://github.com/vektor-inc/vk-orchestrator/pull/2',
           queueIssueUrl: 'https://github.com/vektor-inc/task-queue/issues/1',
@@ -28,18 +28,18 @@ export function runTasksWidgetContract({ buildWidget, schemaVersion }) {
         },
         {
           id: '3', number: 3, title: 'waiting-input task', status: 'waiting-input',
-          priority: null, sequential: false, assignee: null,
+          priority: null, sequential: false, automerge: false, assignee: null,
           targetIssueUrl: null, prUrl: null, queueIssueUrl: null, updatedAt: null,
         },
         {
           id: '4', number: 4, title: 'waiting-merge task', status: 'waiting-merge',
-          priority: 'medium', sequential: false, assignee: null,
+          priority: 'medium', sequential: false, automerge: false, assignee: null,
           targetIssueUrl: null, prUrl: 'https://github.com/vektor-inc/vk-orchestrator/pull/5',
           queueIssueUrl: null, updatedAt: null,
         },
         {
           id: '6', number: 6, title: 'done task', status: 'done',
-          priority: 'low', sequential: false, assignee: null,
+          priority: 'low', sequential: false, automerge: false, assignee: null,
           targetIssueUrl: null, prUrl: null, queueIssueUrl: null, updatedAt: null,
         },
       ],
@@ -47,7 +47,7 @@ export function runTasksWidgetContract({ buildWidget, schemaVersion }) {
   }
 
   const TONES = new Set(['warning', 'info', 'progress', 'success', 'danger', 'neutral', 'attention']);
-  const ACTIONS = new Set(['set-status', 'set-priority', 'set-sequential']);
+  const ACTIONS = new Set(['set-status', 'set-priority', 'set-sequential', 'set-automerge']);
 
   test(`[contract:${label}] トップレベルのスキーマ`, () => {
     const w = buildWidget(fixtureView(), { staleThresholdMs: 120000 });
@@ -118,7 +118,7 @@ export function runTasksWidgetContract({ buildWidget, schemaVersion }) {
     assert.ok(editableItems.length > 0);
     for (const item of editableItems) {
       const fields = item.controls.map((c) => c.field);
-      assert.deepEqual(fields, ['status', 'priority', 'sequential']);
+      assert.deepEqual(fields, ['status', 'priority', 'sequential', 'automerge']);
       for (const control of item.controls) {
         assert.equal(control.type, 'select');
         assert.equal(typeof control.label, 'string');

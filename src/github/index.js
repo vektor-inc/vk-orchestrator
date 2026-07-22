@@ -1,5 +1,5 @@
 import { Octokit } from '@octokit/rest';
-import { getLabelsConfig } from '../config.js';
+import { DEFAULT_LABELS, getLabelsConfig } from '../config.js';
 
 // エージェントレビュー完了マーカーのラベル名 / SHA コメント接頭辞。
 // automerge を使うタスクコマンドがレビュー完了時に付ける公開規約として固定し、
@@ -340,6 +340,35 @@ export class GitHubClient {
     });
 
     console.log(`  [GitHub] issue #${issueNumber} execution → ${mode}`);
+  }
+
+  // issue の自動マージラベルを更新する。
+  // automerge 以外のラベルは維持し、manual の場合は automerge ラベルを外すだけにする。
+  async setAutomerge(issueNumber, mode) {
+    const labelsConfig = getLabelsConfig();
+    const automergeLabel = labelsConfig.automerge ?? DEFAULT_LABELS.automerge;
+    if (mode !== 'automerge' && mode !== 'manual') {
+      throw new Error(`不明な自動マージ指定です: ${mode}`);
+    }
+
+    const { data: issue } = await this.octokit.issues.get({
+      owner: this.owner,
+      repo: this.repo,
+      issue_number: issueNumber,
+    });
+
+    const currentLabels = issue.labels.map(l => l.name);
+    const otherLabels = currentLabels.filter(name => name !== automergeLabel);
+    const labels = mode === 'automerge' ? [...otherLabels, automergeLabel] : otherLabels;
+
+    await this.octokit.issues.setLabels({
+      owner: this.owner,
+      repo: this.repo,
+      issue_number: issueNumber,
+      labels,
+    });
+
+    console.log(`  [GitHub] issue #${issueNumber} automerge → ${mode}`);
   }
 
   // 作業対象リポジトリの Issue の repository_url（"https://api.github.com/repos/{owner}/{repo}" 形式）から
@@ -1046,7 +1075,9 @@ export class GitHubClient {
 
   // issue オブジェクトから automerge ラベルが付いているかを判定する。
   hasAutomergeLabel(issue) {
-    return (issue.labels ?? []).some(l => (typeof l === 'string' ? l : l.name) === 'automerge');
+    const labelsConfig = getLabelsConfig();
+    const automergeLabel = labelsConfig.automerge ?? DEFAULT_LABELS.automerge;
+    return (issue.labels ?? []).some(l => (typeof l === 'string' ? l : l.name) === automergeLabel);
   }
 
   // -------------------------------------------------------

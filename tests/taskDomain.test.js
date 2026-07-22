@@ -13,10 +13,15 @@ import {
   PRIORITY_BADGE_VALUES,
   PRIORITY_TONES,
   SEQUENTIAL_OPTIONS,
+  AUTOMERGE_OPTIONS,
+  AUTOMERGE_TONES,
+  AUTOMERGE_BADGE_LABELS,
   statusDisplayLabel,
   statusTone,
   priorityLabel,
   sequentialLabel,
+  automergeLabel,
+  automergeBadgeLabel,
   getTransitionConfirm,
   isStatusOptionDisabled,
   statusSelectOrderFor,
@@ -97,6 +102,15 @@ test('直列/並列の選択肢', () => {
   assert.deepEqual(SEQUENTIAL_OPTIONS.map((o) => o.value), ['sequential', 'parallel']);
 });
 
+test('自動マージの選択肢', () => {
+  assert.deepEqual(AUTOMERGE_OPTIONS.map((o) => o.value), ['automerge', 'manual']);
+  assert.deepEqual(AUTOMERGE_OPTIONS.map((o) => o.label), ['する', 'しない']);
+  assert.equal(AUTOMERGE_TONES.automerge, 'success');
+  assert.equal(AUTOMERGE_TONES.manual, 'neutral');
+  assert.equal(AUTOMERGE_BADGE_LABELS.automerge, '自動マージ');
+  assert.equal(AUTOMERGE_BADGE_LABELS.manual, '手動マージ');
+});
+
 test('表示ラベル: 既知は日本語、未知は bare 名フォールバック', () => {
   assert.equal(statusDisplayLabel('awaiting-approval'), '承認待ち');
   assert.equal(statusDisplayLabel('done'), '完了');
@@ -104,6 +118,8 @@ test('表示ラベル: 既知は日本語、未知は bare 名フォールバッ
   assert.equal(priorityLabel('high'), '高');
   assert.equal(priorityLabel('none'), 'なし');
   assert.equal(sequentialLabel('sequential'), '直列');
+  assert.equal(automergeLabel('automerge'), 'する');
+  assert.equal(automergeBadgeLabel('manual'), '手動マージ');
 });
 
 test('statusTone: 未知値は既定 tone（neutral）', () => {

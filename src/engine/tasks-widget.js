@@ -43,8 +43,9 @@ function buildLinks(task) {
   return links;
 }
 
-// 優先度・直列/並列のバッジを組み立てる。優先度は high/medium/low のみバッジ化し、
-// none はバッジにしない（選択肢集合とバッジ集合は別）。直列/並列は常に表示。
+// 優先度・直列/並列・自動マージのバッジを組み立てる。優先度は high/medium/low のみ
+// バッジ化し、none はバッジにしない（選択肢集合とバッジ集合は別）。
+// 直列/並列と自動マージは常に表示。
 function buildBadges(task, domain) {
   const badges = [];
   const priority = task.priority;
@@ -53,6 +54,8 @@ function buildBadges(task, domain) {
   }
   const sequential = task.sequential === true ? 'sequential' : 'parallel';
   badges.push({ label: domain.sequentialLabel(sequential), tone: domain.sequentialTones[sequential] });
+  const automerge = task.automerge === true ? 'automerge' : 'manual';
+  badges.push({ label: domain.automergeBadgeLabel(automerge), tone: domain.automergeTones[automerge] });
   return badges;
 }
 
@@ -134,6 +137,27 @@ function buildSequentialControl(task, domain) {
   };
 }
 
+// 自動マージ切り替えの select コントロールを組み立てる。
+function buildAutomergeControl(task, domain) {
+  const current = task.automerge === true ? 'automerge' : 'manual';
+  const options = domain.automergeOptions.map((option) => {
+    const entry = { value: option.value, label: option.label, disabled: false };
+    if (option.value !== current) {
+      entry.command = { action: 'set-automerge', taskId: task.id, to: option.value, expected: current };
+    }
+    return entry;
+  });
+
+  return {
+    type: 'select',
+    field: 'automerge',
+    label: '自動マージ',
+    ariaLabel: `${task.title} の自動マージを変更`,
+    current,
+    options,
+  };
+}
+
 // 1 タスクを宣言アイテムへ変換する。
 function buildItem(task, domain) {
   const editable = domain.editableStatuses.has(task.status);
@@ -149,6 +173,7 @@ function buildItem(task, domain) {
           buildStatusControl(task, domain),
           buildPriorityControl(task, domain),
           buildSequentialControl(task, domain),
+          buildAutomergeControl(task, domain),
         ]
       : [],
   };

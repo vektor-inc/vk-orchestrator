@@ -90,7 +90,7 @@ test('buildTasksWidget: item に links / badges / editable / emphasis を焼き�
         'https://github.com/vektor-inc/vk-orchestrator/issues/138',
         '**PR:** https://github.com/vektor-inc/vk-orchestrator/pull/140',
       ].join('\n'),
-      labels: [{ name: 'status:waiting-input' }, { name: 'priority:high' }, { name: 'sequential' }],
+      labels: [{ name: 'status:waiting-input' }, { name: 'priority:high' }, { name: 'sequential' }, { name: 'automerge' }],
       assignees: [{ login: 'wada' }],
       html_url: 'https://github.com/vektor-inc/task-queue/issues/139',
       updated_at: '2026-07-17T01:02:03Z',
@@ -110,20 +110,24 @@ test('buildTasksWidget: item に links / badges / editable / emphasis を焼き�
     { rel: 'target', url: 'https://github.com/vektor-inc/vk-orchestrator/issues/138', label: 'Target' },
   ]);
 
-  // badges: priority(high=danger) + sequential(直列=info)
+  // badges: priority(high=danger) + sequential(直列=info) + automerge(自動マージ=success)
   assert.deepEqual(item.badges, [
     { label: '高', tone: 'danger' },
     { label: '直列', tone: 'info' },
+    { label: '自動マージ', tone: 'success' },
   ]);
 });
 
-test('buildTasksWidget: priority none はバッジ化しない、parallel は neutral バッジ', () => {
+test('buildTasksWidget: priority none はバッジ化しない、parallel/manual は neutral バッジ', () => {
   const widget = buildTasksWidget(viewFrom([
     { number: 1, title: 'plain', labels: [{ name: 'status:ready' }], assignees: [] },
   ]));
   const item = findGroup(widget, 'ready').items[0];
-  // priority バッジ無し、sequential(並列=neutral) のみ
-  assert.deepEqual(item.badges, [{ label: '並列', tone: 'neutral' }]);
+  // priority バッジ無し、sequential(並列=neutral) + automerge(手動マージ=neutral)
+  assert.deepEqual(item.badges, [
+    { label: '並列', tone: 'neutral' },
+    { label: '手動マージ', tone: 'neutral' },
+  ]);
 });
 
 test('buildTasksWidget: local:// のキュー URL は queue リンクにしない', () => {
@@ -191,11 +195,12 @@ test('status control: waiting-merge→done の confirm は PR 有無で body が
   assert.equal(doneOpt2.confirm.body, '');
 });
 
-test('priority / sequential control: 現在値以外の選択肢に CAS 付き command を持つ', () => {
+test('priority / sequential / automerge control: 現在値以外の選択肢に CAS 付き command を持つ', () => {
   const widget = buildTasksWidget(viewFrom([
     { number: 3, title: 'task', labels: [{ name: 'status:ready' }, { name: 'priority:medium' }], assignees: [] },
   ]));
   const item = findGroup(widget, 'ready').items[0];
+  assert.deepEqual(item.controls.map((control) => control.field), ['status', 'priority', 'sequential', 'automerge']);
 
   const priority = findControl(item, 'priority');
   assert.equal(priority.current, 'medium');
@@ -208,6 +213,13 @@ test('priority / sequential control: 現在値以外の選択肢に CAS 付き c
   assert.equal(sequential.current, 'parallel');
   const toSeq = sequential.options.find((o) => o.value === 'sequential');
   assert.deepEqual(toSeq.command, { action: 'set-sequential', taskId: '3', to: 'sequential', expected: 'parallel' });
+
+  const automerge = findControl(item, 'automerge');
+  assert.equal(automerge.current, 'manual');
+  assert.equal(automerge.label, '自動マージ');
+  assert.deepEqual(automerge.options.map((option) => option.label), ['する', 'しない']);
+  const toAutomerge = automerge.options.find((o) => o.value === 'automerge');
+  assert.deepEqual(toAutomerge.command, { action: 'set-automerge', taskId: '3', to: 'automerge', expected: 'manual' });
 });
 
 test('writeTasksWidgetFile: 一時ファイル経由で JSON を書き出す', async () => {

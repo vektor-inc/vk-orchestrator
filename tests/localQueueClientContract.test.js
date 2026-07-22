@@ -103,6 +103,20 @@ function createLocalQueueClient(seedIssues, options = {}) {
   });
 }
 
+async function withTmpConfig(config, fn) {
+  const dir = makeTempDir();
+  const configPath = join(dir, 'config.json');
+  const saved = process.env.VK_ORCHESTRATOR_CONFIG;
+  writeFileSync(configPath, JSON.stringify(config));
+  process.env.VK_ORCHESTRATOR_CONFIG = configPath;
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env.VK_ORCHESTRATOR_CONFIG;
+    else process.env.VK_ORCHESTRATOR_CONFIG = saved;
+  }
+}
+
 async function importNewTasksLikeEngine(client, sourceOrg, queueLabel) {
   const sourceIssues = await client.searchSourceIssuesByLabel(sourceOrg, queueLabel);
   const createdIssues = [];
@@ -168,16 +182,36 @@ test('LocalQueueClient: closeIssue は物理削除せず一覧から除外する
   assert.equal(closed.state, 'closed');
 });
 
-test('LocalQueueClient: setPriority / setSequential は issue 互換 labels に反映される', async () => {
+test('LocalQueueClient: setPriority / setSequential / setAutomerge は issue 互換 labels に反映される', async () => {
   const client = createLocalQueueClient([{ number: 31, title: 'label task' }]);
 
   await client.setPriority(31, 'high');
   await client.setSequential(31, 'sequential');
+  await client.setAutomerge(31, 'automerge');
 
   const [issue] = await client.listAllQueueIssues();
   assert.ok(issue.labels.includes('priority:high'));
   assert.ok(issue.labels.includes('sequential'));
+  assert.ok(issue.labels.includes('automerge'));
   assert.equal(client.isSequential(issue), true);
+  assert.equal(client.hasAutomergeLabel(issue), true);
+
+  await client.setAutomerge(31, 'manual');
+
+  const [updated] = await client.listAllQueueIssues();
+  const stored = readQueue(client.queuePath).tasks.find(task => task.id === 31);
+  assert.equal(stored.automerge, false);
+  assert.equal(updated.labels.includes('automerge'), false);
+});
+
+test('LocalQueueClient: hasAutomergeLabel は設定変更後のラベル名で判定する', async () => {
+  await withTmpConfig({ labels: { automerge: 'auto-merge-ok' } }, async () => {
+    const client = createLocalQueueClient([{ number: 34, title: 'renamed automerge', automerge: true }]);
+    const [issue] = await client.listAllQueueIssues();
+
+    assert.ok(issue.labels.includes('auto-merge-ok'));
+    assert.equal(client.hasAutomergeLabel(issue), true);
+  });
 });
 
 test('LocalQueueClient: getIssueState は自キューのメタ issue を queue.json から返す', async () => {
