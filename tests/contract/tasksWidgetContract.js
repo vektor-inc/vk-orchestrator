@@ -21,7 +21,7 @@ export function runTasksWidgetContract({ buildWidget, schemaVersion }) {
         {
           id: '1', number: 1, title: 'in-progress task', status: 'in-progress',
           priority: 'high', sequential: true, assignee: 'wada',
-          targetIssueUrl: null,
+          targetIssueUrl: 'https://github.com/vektor-inc/vk-orchestrator/issues/196',
           prUrl: 'https://github.com/vektor-inc/vk-orchestrator/pull/2',
           queueIssueUrl: 'https://github.com/vektor-inc/task-queue/issues/1',
           updatedAt: '2026-07-20T00:00:00.000Z',
@@ -83,7 +83,7 @@ export function runTasksWidgetContract({ buildWidget, schemaVersion }) {
         assert.equal(typeof item.title, 'string');
         assert.ok(Array.isArray(item.links));
         for (const link of item.links) {
-          assert.ok(['queue', 'pr'].includes(link.rel), `unknown link rel: ${link.rel}`);
+          assert.ok(['queue', 'pr', 'target'].includes(link.rel), `unknown link rel: ${link.rel}`);
           assert.match(link.url, /^https?:\/\//);
           assert.equal(typeof link.label, 'string');
         }
@@ -98,6 +98,18 @@ export function runTasksWidgetContract({ buildWidget, schemaVersion }) {
         if (!item.editable) assert.equal(item.controls.length, 0);
       }
     }
+  });
+
+  test(`[contract:${label}] 対象 issue URL は target link として出力する`, () => {
+    const w = buildWidget(fixtureView());
+    const items = w.groups.flatMap((g) => g.items);
+    const item = items.find((i) => i.id === '1');
+    assert.ok(item);
+    assert.deepEqual(item.links.find((link) => link.rel === 'target'), {
+      rel: 'target',
+      url: 'https://github.com/vektor-inc/vk-orchestrator/issues/196',
+      label: 'Target',
+    });
   });
 
   test(`[contract:${label}] コントロール・オプション・command のスキーマ`, () => {
