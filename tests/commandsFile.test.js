@@ -8,6 +8,7 @@ import {
   consumeCommandsFile,
   createCommandsFileProcessor,
   isAllowedTransition,
+  processApplyBatchCommand,
   startCommandsFileWatcher,
 } from '../src/engine/commands-file.js';
 
@@ -384,6 +385,349 @@ test('consumeCommandsFile: set-sequential は不正値を拒否してメタ issu
 
     assert.deepEqual(calls, []);
     assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+  });
+});
+
+test('consumeCommandsFile: apply-batch は全 op 一致時に優先度、直列指定、ステータスの順で適用する', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'batch-all-match',
+      taskId: 57,
+      action: 'apply-batch',
+      ops: [
+        { action: 'set-status', expected: 'ready', to: 'awaiting-approval' },
+        { action: 'set-sequential', expected: 'parallel', to: 'sequential' },
+        { action: 'set-priority', expected: 'medium', to: 'high' },
+      ],
+      requestedAt: '2026-07-22T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async (...args) => calls.push(['setPriority', ...args]),
+        setSequential: async (...args) => calls.push(['setSequential', ...args]),
+        setStatus: async (...args) => calls.push(['setStatus', ...args]),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'status:ready' }, { name: 'priority:medium' }],
+      }),
+    });
+
+    assert.deepEqual(calls, [
+      ['setPriority', 57, 'high'],
+      ['setSequential', 57, 'sequential'],
+      ['setStatus', 57, 'status:awaiting-approval'],
+    ]);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 1, skipped: 0 });
+  });
+});
+
+test('consumeCommandsFile: apply-batch は単一スナップショットだけで全 op を判定する', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'batch-single-snapshot',
+      taskId: 58,
+      action: 'apply-batch',
+      ops: [
+        { action: 'set-priority', expected: 'medium', to: 'high' },
+        { action: 'set-sequential', expected: 'parallel', to: 'sequential' },
+        { action: 'set-status', expected: 'ready', to: 'awaiting-approval' },
+      ],
+      requestedAt: '2026-07-22T00:00:00.000Z',
+    }]);
+
+    let getCalls = 0;
+    await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async () => {},
+        setSequential: async () => {},
+        setStatus: async () => {},
+      },
+      getMetaIssue: async () => {
+        getCalls += 1;
+        return { labels: [{ name: 'status:ready' }, { name: 'priority:medium' }] };
+      },
+    });
+
+    assert.equal(getCalls, 1);
+  });
+});
+
+test('consumeCommandsFile: apply-batch は一部 CAS 不一致なら全 op を破棄してカーソルを進める', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'batch-cas-mismatch',
+      taskId: 59,
+      action: 'apply-batch',
+      ops: [
+        { action: 'set-priority', expected: 'medium', to: 'high' },
+        { action: 'set-sequential', expected: 'parallel', to: 'sequential' },
+        { action: 'set-status', expected: 'ready', to: 'awaiting-approval' },
+      ],
+      requestedAt: '2026-07-22T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    const summary = await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async (...args) => calls.push(['setPriority', ...args]),
+        setSequential: async (...args) => calls.push(['setSequential', ...args]),
+        setStatus: async (...args) => calls.push(['setStatus', ...args]),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'status:ready' }, { name: 'priority:low' }],
+      }),
+    });
+
+    assert.deepEqual(calls, []);
+    assert.deepEqual(summary, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+    assert.equal(JSON.parse(readFileSync(processedPath, 'utf8')).consumedLines, 1);
+  });
+});
+
+test('consumeCommandsFile: apply-batch は同一 id を二重適用しない', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    const command = {
+      id: 'batch-idempotent',
+      taskId: 60,
+      action: 'apply-batch',
+      ops: [
+        { action: 'set-priority', expected: 'medium', to: 'high' },
+        { action: 'set-sequential', expected: 'parallel', to: 'sequential' },
+        { action: 'set-status', expected: 'ready', to: 'awaiting-approval' },
+      ],
+      requestedAt: '2026-07-22T00:00:00.000Z',
+    };
+    writeCommands(commandsPath, [command, command]);
+
+    const calls = [];
+    await consumeCommandsFile({
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async (...args) => calls.push(['setPriority', ...args]),
+        setSequential: async (...args) => calls.push(['setSequential', ...args]),
+        setStatus: async (...args) => calls.push(['setStatus', ...args]),
+      },
+      getMetaIssue: async () => ({
+        labels: [{ name: 'status:ready' }, { name: 'priority:medium' }],
+      }),
+    });
+
+    assert.deepEqual(calls, [
+      ['setPriority', 60, 'high'],
+      ['setSequential', 60, 'sequential'],
+      ['setStatus', 60, 'status:awaiting-approval'],
+    ]);
+  });
+});
+
+test('consumeCommandsFile: apply-batch は一時失敗後のリトライで適用済み op を飛ばして収束する', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'batch-transient-converges',
+      taskId: 61,
+      action: 'apply-batch',
+      ops: [
+        { action: 'set-priority', expected: 'medium', to: 'high' },
+        { action: 'set-sequential', expected: 'parallel', to: 'sequential' },
+        { action: 'set-status', expected: 'ready', to: 'awaiting-approval' },
+      ],
+      requestedAt: '2026-07-22T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    let getCalls = 0;
+    let sequentialAttempts = 0;
+    const common = {
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setPriority: async (...args) => calls.push(['setPriority', ...args]),
+        setSequential: async (...args) => {
+          calls.push(['setSequential', ...args]);
+          sequentialAttempts += 1;
+          if (sequentialAttempts === 1) throw httpError(500, 'temporary failure');
+        },
+        setStatus: async (...args) => calls.push(['setStatus', ...args]),
+      },
+      getMetaIssue: async () => {
+        getCalls += 1;
+        return getCalls === 1
+          ? { labels: [{ name: 'status:ready' }, { name: 'priority:medium' }] }
+          : { labels: [{ name: 'status:ready' }, { name: 'priority:high' }] };
+      },
+    };
+
+    const first = await consumeCommandsFile(common);
+    const second = await consumeCommandsFile(common);
+
+    assert.deepEqual(first, { read: 1, evaluated: 0, applied: 0, skipped: 0 });
+    assert.deepEqual(second, { read: 1, evaluated: 1, applied: 1, skipped: 0 });
+    assert.deepEqual(calls, [
+      ['setPriority', 61, 'high'],
+      ['setSequential', 61, 'sequential'],
+      ['setSequential', 61, 'sequential'],
+      ['setStatus', 61, 'status:awaiting-approval'],
+    ]);
+  });
+});
+
+test('consumeCommandsFile: apply-batch は不正 batch を API 取得前に拒否する', async (t) => {
+  const cases = [
+    ['ops-missing', { ops: undefined }],
+    ['ops-empty', { ops: [] }],
+    ['duplicate-field', {
+      ops: [
+        { action: 'set-priority', expected: 'medium', to: 'high' },
+        { action: 'set-priority', expected: 'low', to: 'medium' },
+      ],
+    }],
+    ['unknown-op-action', {
+      ops: [{ action: 'set-label', expected: 'old', to: 'new' }],
+    }],
+    ['disallowed-transition', {
+      ops: [{ action: 'set-status', expected: 'in-progress', to: 'done' }],
+    }],
+  ];
+
+  for (const [name, patch] of cases) {
+    await t.test(name, async () => {
+      await withTmpDir(async (dir) => {
+        const commandsPath = join(dir, 'commands.jsonl');
+        const processedPath = join(dir, 'commands-processed.json');
+        const command = {
+          id: `batch-invalid-${name}`,
+          taskId: 62,
+          action: 'apply-batch',
+          requestedAt: '2026-07-22T00:00:00.000Z',
+        };
+        if ('ops' in patch) command.ops = patch.ops;
+        writeCommands(commandsPath, [command]);
+
+        const calls = [];
+        const summary = await consumeCommandsFile({
+          commandsPath,
+          processedPath,
+          logger: silentLogger(),
+          github: {
+            setPriority: async (...args) => calls.push(['setPriority', ...args]),
+            setSequential: async (...args) => calls.push(['setSequential', ...args]),
+            setStatus: async (...args) => calls.push(['setStatus', ...args]),
+          },
+          getMetaIssue: async () => {
+            throw new Error('getMetaIssue should not be called for invalid batch');
+          },
+        });
+
+        assert.deepEqual(calls, []);
+        assert.equal(summary.read, 1);
+        assert.equal(summary.applied, 0);
+        assert.equal(JSON.parse(readFileSync(processedPath, 'utf8')).consumedLines, 1);
+      });
+    });
+  }
+});
+
+test('processApplyBatchCommand: apply-batch はプロトタイプチェーン由来 action を invalid-batch で拒否する', async () => {
+  const githubCalls = [];
+  let getMetaIssueCalls = 0;
+  const result = await processApplyBatchCommand({
+    id: 'batch-prototype-action',
+    taskId: 64,
+    action: 'apply-batch',
+    ops: [
+      { action: 'set-priority', expected: 'medium', to: 'high' },
+      { action: '__proto__', expected: 'parallel', to: 'sequential' },
+    ],
+    requestedAt: '2026-07-22T00:00:00.000Z',
+  }, {
+    logger: silentLogger(),
+    github: {
+      setPriority: async (...args) => githubCalls.push(['setPriority', ...args]),
+      setSequential: async (...args) => githubCalls.push(['setSequential', ...args]),
+      setStatus: async (...args) => githubCalls.push(['setStatus', ...args]),
+    },
+    getMetaIssue: async () => {
+      getMetaIssueCalls += 1;
+      return { labels: [{ name: 'status:ready' }, { name: 'priority:medium' }] };
+    },
+  });
+
+  assert.deepEqual(result, {
+    evaluated: true,
+    applied: false,
+    reason: 'invalid-batch',
+    id: 'batch-prototype-action',
+  });
+  assert.deepEqual(githubCalls, []);
+  assert.equal(getMetaIssueCalls, 0);
+});
+
+test('consumeCommandsFile: apply-batch は waiting-merge→done のリトライで setStatus を二重に呼ばない', async () => {
+  await withTmpDir(async (dir) => {
+    const commandsPath = join(dir, 'commands.jsonl');
+    const processedPath = join(dir, 'commands-processed.json');
+    writeCommands(commandsPath, [{
+      id: 'batch-done-comment-once',
+      taskId: 63,
+      action: 'apply-batch',
+      ops: [
+        { action: 'set-status', expected: 'waiting-merge', to: 'done' },
+      ],
+      requestedAt: '2026-07-22T00:00:00.000Z',
+    }]);
+
+    const calls = [];
+    let getCalls = 0;
+    let statusAttempts = 0;
+    const common = {
+      commandsPath,
+      processedPath,
+      logger: silentLogger(),
+      github: {
+        setStatus: async (...args) => {
+          calls.push(args);
+          statusAttempts += 1;
+          if (statusAttempts === 1) throw httpError(500, 'post-side-effect failure');
+        },
+      },
+      getMetaIssue: async () => {
+        getCalls += 1;
+        return getCalls === 1
+          ? { labels: [{ name: 'status:waiting-merge' }] }
+          : { labels: [{ name: 'status:done' }] };
+      },
+    };
+
+    await consumeCommandsFile(common);
+    const second = await consumeCommandsFile(common);
+
+    assert.deepEqual(calls, [[63, 'status:done']]);
+    assert.deepEqual(second, { read: 1, evaluated: 1, applied: 0, skipped: 0 });
+    assert.equal(JSON.parse(readFileSync(processedPath, 'utf8')).consumedLines, 1);
   });
 });
 
