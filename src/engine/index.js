@@ -39,6 +39,7 @@ import { canTransitionToDone as canTransitionToDoneImpl } from './done-gate.js';
 import { closeSourceIssueBeforeGate as closeSourceIssueBeforeGateImpl } from './source-close.js';
 import { handlePaneMissing, handleUndeliveredBody, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
+import { selectAutomergeCandidates } from './automerge-candidates.js';
 import { createScanInProgressMergedHandler } from './scan-in-progress-merged.js';
 import { createPrLessParentDoneHandler } from './pr-less-parent-done.js';
 import { createReconcileOrphanedMergedTasks } from './reconcile-orphaned-merged.js';
@@ -1105,19 +1106,43 @@ async function getOccupiedRepoKeys() {
 async function checkWaitingMergeIssues() {
   // GitHub 連携無効時はマージ検知・automerge を行わない（純ローカルタスクは手動で done にする）。
   if (!GITHUB_INTEGRATION) return;
-  let issues;
+  let waitingMergeIssues;
   try {
-    issues = await github.fetchWaitingMergeIssues();
+    waitingMergeIssues = await github.fetchWaitingMergeIssues();
   } catch (err) {
     console.warn(`[merge-watch] waiting-merge issue 取得失敗: ${err.message}`);
     return;
   }
 
-  if (issues.length === 0) return;
+  // 後付け automerge（#207）: automerge ラベルを PR 作成後に付けた場合、司の
+  // 「マージ判断をお願いします」で issue が status:waiting-input に落ちているため、
+  // waiting-merge しか見ない従来の判定に乗らず永久にマージされなかった。automerge ラベル
+  // 付きの waiting-input issue も automerge 候補に含める（本物の質問待ちは tryAutoMerge 内の
+  // 完了条件・レビューマーカーゲートで自然に保留される＝安全側）。
+  let waitingInputIssues = [];
+  try {
+    waitingInputIssues = await github.fetchWaitingInputIssues();
+  } catch (err) {
+    // waiting-input の取得失敗は後付け automerge を諦めるだけ。waiting-merge の検知は続行する。
+    console.warn(`[merge-watch] waiting-input issue 取得失敗（後付け automerge をスキップ）: ${err.message}`);
+  }
 
-  console.log(`[merge-watch] マージ待ち ${issues.length} 件をチェック`);
+  const candidates = selectAutomergeCandidates({
+    waitingMergeIssues,
+    waitingInputIssues,
+    hasAutomergeLabel: (issue) => github.hasAutomergeLabel(issue),
+  });
 
-  for (const issue of issues) {
+  if (candidates.length === 0) return;
+
+  const waitingInputCount = candidates.filter((c) => c.source === 'waiting-input').length;
+  console.log(
+    `[merge-watch] マージ待ち ${waitingMergeIssues.length} 件` +
+      (waitingInputCount > 0 ? ` + 後付け automerge の waiting-input ${waitingInputCount} 件` : '') +
+      ' をチェック'
+  );
+
+  for (const { issue, source } of candidates) {
     const prUrl = github.extractPRUrlFromIssueBody(issue.body);
     if (!prUrl) {
       console.warn(`  [merge-watch] issue #${issue.number}: 本文からPR URLを抽出できませんでした`);
@@ -1140,6 +1165,20 @@ async function checkWaitingMergeIssues() {
       prState = await github.getPRState(prRef.owner, prRef.repo, prRef.number);
     } catch (err) {
       console.warn(`  [merge-watch] issue #${issue.number}: PR状態取得失敗: ${err.message}`);
+      continue;
+    }
+
+    // 後付け automerge（waiting-input 由来）は automerge 試行のみを行う。
+    // merged → close+done の遷移は tryAutoMerge 内処理が担うため、ここでは open のときだけ試みる。
+    // マーカー・完了条件ゲートは tryAutoMerge 内で再検証されるので、本物の質問待ちは保留のまま。
+    if (source === 'waiting-input') {
+      if (prState.state === 'open') {
+        await tryAutoMerge(issue, prRef, prState, prUrl);
+      } else {
+        console.log(
+          `  [merge-watch] issue #${issue.number}: 後付け automerge 候補だが PR #${prRef.number} は ${prState.state}${prState.merged ? '(merged)' : ''} のため automerge 試行なし`
+        );
+      }
       continue;
     }
 
