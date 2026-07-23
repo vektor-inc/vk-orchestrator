@@ -1,5 +1,7 @@
 # Changelog
 
+- [ 不具合修正 ] automerge ラベルを PR 作成後に付与すると waiting-input で滞留した issue がマージ判定に乗らず永久に自動マージされない不具合を修正
+
 = 0.23.1 =
 
 - [ 開発環境 ] リリースタグ push をトリガーに、解凍して npm start で動く zip を生成し vk-blocks-pro と同じ VWS サーバーへ自動デプロイするワークフローを新設
