@@ -40,6 +40,7 @@ import { closeSourceIssueBeforeGate as closeSourceIssueBeforeGateImpl } from './
 import { handlePaneMissing, handleUndeliveredBody, normalizeResumeMax } from './pane-resume.js';
 import { decideInProgressAction } from './in-progress-decision.js';
 import { selectAutomergeCandidates } from './automerge-candidates.js';
+import { resolveWaitingMergeAction } from './waiting-merge-action.js';
 import { createScanInProgressMergedHandler } from './scan-in-progress-merged.js';
 import { createPrLessParentDoneHandler } from './pr-less-parent-done.js';
 import { createReconcileOrphanedMergedTasks } from './reconcile-orphaned-merged.js';
@@ -1168,31 +1169,28 @@ async function checkWaitingMergeIssues() {
       continue;
     }
 
-    // 後付け automerge（waiting-input 由来）は automerge 試行のみを行う。
-    // merged → close+done の遷移は tryAutoMerge 内処理が担うため、ここでは open のときだけ試みる。
-    // マーカー・完了条件ゲートは tryAutoMerge 内で再検証されるので、本物の質問待ちは保留のまま。
-    if (source === 'waiting-input') {
-      if (prState.state === 'open') {
-        await tryAutoMerge(issue, prRef, prState, prUrl);
-      } else {
-        console.log(
-          `  [merge-watch] issue #${issue.number}: 後付け automerge 候補だが PR #${prRef.number} は ${prState.state}${prState.merged ? '(merged)' : ''} のため automerge 試行なし`
-        );
-      }
-      continue;
-    }
+    // merged 判定を source 分岐より前に共通化する（#209）。
+    // prState.merged なら source（waiting-merge / waiting-input）を問わず完了ルートへ流す。
+    // これにより、automerge ラベル付きで waiting-input に滞留した issue の PR が GitHub UI 等で
+    // 外部から手動マージされても、close + done + cleanup 経路に確実に乗る。
+    const action = resolveWaitingMergeAction({
+      source,
+      prState,
+      hasAutomergeLabel: github.hasAutomergeLabel(issue),
+    });
 
-    if (prState.merged) {
+    if (action === 'complete-merge') {
+      // automerge・外部マージ（GitHub UI 等）いずれで merged になった場合も共通の完了ルート。
       console.log(`  [merge-watch] issue #${issue.number}: PR #${prRef.number} がマージ済み → 完了`);
       await notifyPaneMerged(issue.number, prUrl, '[merge-watch]');
       // 対象 issue が open のままなら部分対応マージの可能性があるため done へ進めず、
-      // waiting-merge ラベルを維持して次ループで再評価する。
+      // waiting ラベルを維持して次ループで再評価する。
       await closeSourceIssueBeforeGate(issue, '[merge-watch]');
       if (!(await canTransitionToDone(issue, '[merge-watch]'))) {
         continue;
       }
       // close を先に行い、成功した場合のみ status:done に切り替える。
-      // 途中で失敗してもラベルが waiting-merge のまま残り、次ループで再試行される。
+      // 途中で失敗してもラベルが waiting のまま残り、次ループで再試行される（冪等）。
       try {
         await github.addComment(issue.number, `✅ 完了\n\nPR: ${prUrl} がマージされました。`);
         await github.closeIssue(issue.number);
@@ -1201,21 +1199,22 @@ async function checkWaitingMergeIssues() {
         console.warn(`  [merge-watch] issue #${issue.number}: 完了処理失敗（次ループで再試行）: ${err.message}`);
       }
 
-      // automerge・外部マージ（GitHub UI 等）いずれで merged になった場合も、
       // 残った wp-env コンテナ・worktree・マージ済みブランチをここで掃除する。
       await runPostMergeCleanup(issue, prRef, prState, '[merge-watch]');
-    } else {
-      // open / 未マージで closed のどちらも「待ち続ける」方針（手動で再open or 再マージされる可能性を考慮）
-      console.log(`  [merge-watch] issue #${issue.number}: PR #${prRef.number} は ${prState.state}${prState.merged ? '(merged)' : ''} のため待機継続`);
-
-      // automerge ラベル付き issue は条件を再検証して自動 squash merge する。
-      // - waiting-merge 到達後に CodeRabbit が新たにコメントしたケースを避けるため毎ループで再検証
-      // - 後から automerge ラベルを付けても拾われるよう、ここで毎回チェックする
-      // - 実 merge 後は次ループの merged 判定で通常の close + done ルートに乗る
-      if (prState.state === 'open' && github.hasAutomergeLabel(issue)) {
-        await tryAutoMerge(issue, prRef, prState, prUrl);
-      }
+      continue;
     }
+
+    if (action === 'try-automerge') {
+      // 未マージ・open。automerge 条件（Draft 除外・mergeable・CI + CodeRabbit 静観・
+      // agent-review-passed マーカー）は tryAutoMerge 内で再検証されるため、本物の質問待ちは保留のまま。
+      // 実 merge 後は次ループの complete-merge 判定で close + done ルートに乗る。
+      await tryAutoMerge(issue, prRef, prState, prUrl);
+      continue;
+    }
+
+    // action === 'skip': 未マージで closed、または automerge 対象外の open。
+    // どちらも「待ち続ける」方針（手動で再 open / 再マージ・後付け automerge ラベルを考慮）。
+    console.log(`  [merge-watch] issue #${issue.number}: PR #${prRef.number} は ${prState.state}${prState.merged ? '(merged)' : ''} のため待機継続`);
   }
 }
 
